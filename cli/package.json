@@ -1,0 +1,19 @@
+{
+  "name": "@finexio/fqe",
+  "version": "0.1.0",
+  "description": "Finexio Quality Engine — deterministic CI gate CLI",
+  "bin": {
+    "fqe": "bin/fqe.js"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "files": [
+    "bin/",
+    "lib/"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

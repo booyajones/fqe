@@ -1,0 +1,97 @@
+# FQE Second Approve — reusable workflow
+#
+# Triggers on PR label `fqe-second-approved`. Re-emits the
+# `fqe/second-reviewer-required` check as success ONLY when:
+#   1. The label adder is in the second-reviewer allowlist (at base commit)
+#   2. The label adder is NOT the same actor who set fqe-bypass
+#
+# Identity for BOTH actors comes from the GitHub Events API (server-recorded).
+# Receipt content is never consulted for identity (invariant #1).
+
+name: FQE Second Approve
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+
+jobs:
+  approve:
+    if: github.event.label.name == 'fqe-second-approved'
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/finexio/fqe:0.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}  # for the allowlist file
+
+      - name: Identify both actors via Events API
+        id: actors
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Bypass actor: most recent 'labeled' event for fqe-bypass
+          BYPASS_ACTOR=$(gh api \
+            "/repos/$REPO/issues/$PR_NUMBER/events" --paginate \
+            --jq '[.[] | select(.event=="labeled" and .label.name=="fqe-bypass")] | last | .actor.login')
+
+          if [ -z "$BYPASS_ACTOR" ] || [ "$BYPASS_ACTOR" = "null" ]; then
+            echo "::error::Cannot find original fqe-bypass label event; refusing to second-approve"
+            exit 1
+          fi
+
+          # Approver: the actor who added the fqe-second-approved label.
+          # github.event.sender.login is server-recorded for this trigger.
+          APPROVER='${{ github.event.sender.login }}'
+          if [ -z "$APPROVER" ]; then
+            echo "::error::Cannot determine approver from event"
+            exit 1
+          fi
+
+          echo "bypass_actor=$BYPASS_ACTOR" >> "$GITHUB_OUTPUT"
+          echo "approver=$APPROVER"          >> "$GITHUB_OUTPUT"
+          echo "Bypass actor: $BYPASS_ACTOR | Approver: $APPROVER"
+
+      - name: Validate approver against allowlist + same-actor rule
+        env:
+          BYPASS_ACTOR: ${{ steps.actors.outputs.bypass_actor }}
+          APPROVER: ${{ steps.actors.outputs.approver }}
+        run: |
+          set -euo pipefail
+
+          # Allowlist read from the BASE commit (not PR head).
+          # `.github/fqe-second-reviewers.yml` modifications require their own
+          # approved PR — adversary cannot self-add via this PR.
+          if ! yq '.allowed_actors[]' .github/fqe-second-reviewers.yml \
+               | grep -qx "$APPROVER"; then
+            echo "::error::Approver '$APPROVER' is not in second-reviewer allowlist (at base commit)"
+            exit 1
+          fi
+
+          # Same-actor rejection — collusion prevention.
+          if [ "$APPROVER" = "$BYPASS_ACTOR" ]; then
+            echo "::error::Second approver '$APPROVER' cannot be the original bypass requester '$BYPASS_ACTOR'"
+            exit 1
+          fi
+
+      - name: Re-emit fqe/second-reviewer-required = success
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          APPROVER: ${{ steps.actors.outputs.approver }}
+          BYPASS_ACTOR: ${{ steps.actors.outputs.bypass_actor }}
+        run: |
+          set -euo pipefail
+          fqe status publish \
+            --check fqe/second-reviewer-required \
+            --commit '${{ github.event.pull_request.head.sha }}' \
+            --state success \
+            --description "Approved by $APPROVER (bypass requester was $BYPASS_ACTOR)"

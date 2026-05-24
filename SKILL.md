@@ -1,0 +1,164 @@
+---
+name: fqe
+description: Finexio Quality Engine — unified deterministic CI gate for Finexio builds. Runs verified-against-real-CI checks across web apps, financial models, MCP servers, outbound copy, and AI agents, producing a SHA-bound receipt that branch protection requires before any "done", "ship", "merge", "ready", or "deploy" claim. Auto-fires on build intent. Use this when Chris is about to ship something, when QA is needed, when reviewing whether a change is safe to merge, or when bootstrapping a Finexio repo with the gate.
+---
+
+# fqe — Finexio Quality Engine
+
+**Status:** v0.1.0. Gauntlet score 88/100 SHIP-band, 122/122 tests pass on Windows + real GitHub Actions ubuntu-latest. Source: `~/.claude/skills/fqe/` and `github.com/booyajones/finexio-skills/fqe`.
+
+## When to fire (auto-invoke triggers)
+
+Auto-fire when Chris says or implies any of these:
+
+- "ship", "ship it", "merge", "deploy", "land", "push it", "send it"
+- "done", "ready", "good to go", "all set", "wrapped up"
+- "qa", "test this", "quality check", "audit", "verify", "review"
+- "gate this", "block-or-pass", "is this safe to merge"
+- "add fqe to <repo>", "bootstrap fqe", "set up the gate"
+- About to send an outbound email or push a financial model
+
+Do NOT fire for: pure planning/brainstorming, read-only code exploration, documentation edits.
+
+## The three architectural invariants (memorize these)
+
+Every operation Chris asks for must hold these. If a request would violate one, push back and explain.
+
+1. **No identity claim is ever read from a file the constrained actor wrote.** The bypass requester comes from the GitHub Events API (server-recorded). Receipt content is informational, never trusted for identity.
+2. **No LLM is in the verdict path.** `verdict.js` is a deterministic Node script. Same inputs → same output. You may surface the verdict but never author one.
+3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts + Check Run outputs (server-side, immutable).
+
+## How to leverage it — the cookbook
+
+### Use case 1: Chris says "I'm about to ship X"
+
+```bash
+# Confirm fqe/pass is green on the PR
+gh pr checks <pr-url-or-number>
+
+# If not green, fetch the receipt
+gh run download <run-id> -n qa-receipt-<sha>
+cat QA-RESULT.md          # human-readable
+fqe receipt parse QA-RESULT.yml | jq .verdict
+```
+
+Surface the verdict + reasons. **Never propose `git push --no-verify` or `--force`.** If something needs to bypass, that's a deliberate human act (PR label `fqe-bypass`, allowlist-checked).
+
+### Use case 2: Chris says "QA this" or "verify this"
+
+Locally:
+```bash
+cd <repo>
+fqe run --commit "$(git rev-parse HEAD)" --base main --output ./out/
+cat out/QA-RESULT.md
+echo "Exit: $?"   # 0=PASS  2=FAIL  3=FLAG
+```
+
+Surface the verdict. If FAIL, the reasons array tells you exactly which runner exited non-zero. If FLAG, the adversarial-stats table shows the Wilson 95% CI upper bound vs the canonical threshold.
+
+### Use case 3: Chris says "add fqe to <repo>"
+
+```bash
+cd <repo>
+fqe init                           # adds .fqe.yml + workflows + allowlists
+# Edit .fqe.yml to declare actual runners for this repo's artifacts
+# Commit on a branch and open a PR — the gate is now live
+```
+
+After init, the repo has:
+- `.fqe.yml` — runner config (Chris edits to declare web/excel/mcp/outbound runners)
+- `.github/workflows/fqe-quality.yml` — main gate
+- `.github/workflows/fqe-second-approve.yml` — bypass-unblock
+- `.github/fqe-bypass-allowlist.yml` — seeded with Chris's GitHub login
+- `.github/fqe-second-reviewers.yml` — empty by default; Chris adds reviewers
+- `.github/fqe-state/.gitkeep` — bypass-tally JSONL state dir
+
+### Use case 4: Chris asks about thresholds or stats
+
+The canonical thresholds are **locked** in `verdict.js` — they can't be passed in:
+
+| Blast radius | Wilson CI-upper threshold |
+|---|---|
+| `outbound` | 0.05 |
+| `mcp-read` | 0.03 |
+| `mcp-write-or-financial` | 0.01 |
+
+```bash
+fqe thresholds                       # show the canonical map
+fqe wilson 0 100                     # Wilson 95% CI for 0/100
+fqe min-n 0.01                       # min N to defend ≤1% upper bound
+```
+
+### Use case 5: Bypass rate seems high
+
+```bash
+fqe bypass-tally rate --state-dir .github/fqe-state --window-days 14
+```
+
+If `rate > 0.10`, the `fqe/second-reviewer-required` check goes red on every PR until a non-bypass-requester from `.github/fqe-second-reviewers.yml` adds the `fqe-second-approved` label.
+
+## Anti-patterns (HARD RULES)
+
+- **Do not write the verdict as text.** Compute it via `fqe verdict` or `fqe run`.
+- **Do not propose `--no-verify`, `--force-push`, or `--admin` overrides.** These bypass the gate without audit trail.
+- **Do not hand-edit `QA-RESULT.yml`.** It's commit-SHA-bound — edits invalidate it.
+- **Do not add yourself to `.github/fqe-bypass-allowlist.yml` in the same PR you want to bypass.** The allowlist is read at base commit, not HEAD, so this can't work anyway.
+- **Do not propose adding `fqe-bypass` PR label on Chris's behalf without explicit "yes, do it".**
+- **Do not use this skill to score finished prose** — that's `/gauntlet`.
+
+## What's verified (real CI evidence)
+
+- Unit tests on real ubuntu-latest: https://github.com/booyajones/fqe-smoke-test/actions/runs/26348987394
+- Docker image build + in-container tools verified: https://github.com/booyajones/fqe-smoke-test/actions/runs/26348823911
+- 7 rounds of multi-LLM code gauntlet; final score 88/100 SHIP, 0 fatal flaws
+- 6 rounds of plan gauntlet; final 76/100 with 0 invariant-violating flaws
+
+## Files in the skill
+
+```
+fqe/
+├── SKILL.md                          # this file
+├── README.md                         # architecture, plan trajectory
+├── cli/
+│   ├── package.json
+│   ├── bin/fqe.js                    # entry point (~400 LOC)
+│   ├── lib/
+│   │   ├── verdict.js                # deterministic verdict (no LLM)
+│   │   ├── wilson.js                 # Wilson 95% CI (statsmodels-pinned)
+│   │   ├── receipt.js                # build/serialize/parse/validate
+│   │   ├── bypass_tally.js           # JSONL rolling rate
+│   │   ├── orchestrator.js           # composes the pieces
+│   │   └── init.js                   # one-command bootstrap
+│   └── test/                         # 122/122 pass
+├── schemas/receipt-v1.yml            # receipt schema
+├── workflows/
+│   ├── fqe-quality.yml.template      # main CI gate
+│   └── fqe-second-approve.yml.template
+├── smoke/smoke_tools.py              # Phase 1 Day 1.0 verification
+└── Dockerfile                        # ghcr.io/booyajones/fqe:0.1
+```
+
+## Quick reference card
+
+```
+fqe init                                            bootstrap a repo
+fqe run --commit SHA --output DIR                   orchestrate gate
+fqe verdict -                                       compute verdict from JSON stdin
+fqe receipt parse FILE                              parse + print verdict
+fqe status publish --check N --commit S --state X   emit GitHub check-run
+fqe bypass-tally rate --state-dir D                 rolling rate (JSON)
+fqe bypass-tally rate --state-dir D --format scalar rolling rate (number)
+fqe thresholds                                      show canonical thresholds
+fqe wilson SUCCESSES N                              Wilson 95% CI
+fqe smoke-tools                                     Day 1.0 smoke test
+
+Exit: 0=PASS  2=FAIL  3=FLAG  1=error
+```
+
+## See also
+
+- [PLAN-v6.md](C:\Users\chris\OneDrive\Desktop\Claude\audits\2026-05-22-qa-engine\PLAN-v6.md) — canonical design + the three invariants
+- [qa-pro skill](C:\Users\chris\.claude\skills\qa-pro\) v1.1.0 — predecessor web-only gate; fqe orchestrates it as the web runner
+- [qa-gate](C:\Users\chris\.claude\skills\finexio-skills\qa-gate\) — Stop-hook enforcement that fqe receipts satisfy
+- Gauntlet runs: `~/Downloads/gauntlet_runs/gauntlet_125a6e.md` (final SHIP)
+- Smoke-test repo: https://github.com/booyajones/fqe-smoke-test

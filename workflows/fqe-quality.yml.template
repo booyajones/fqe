@@ -1,0 +1,262 @@
+# FQE Quality Gate — reusable GitHub Actions workflow
+#
+# Copy this file into each Finexio repo at `.github/workflows/fqe-quality.yml`
+# (or call as a reusable workflow once published).
+#
+# Architectural invariants enforced here (PLAN-v6 Section 0):
+#   1. Identity (bypass requester) is sourced ONLY from GitHub Events API,
+#      never from PR-branch files.
+#   2. Verdict is computed by the fqe CLI, never authored by an LLM.
+#   3. Receipts are persisted as workflow artifacts AND Check Run outputs;
+#      no required state lives only in the PR branch.
+#
+# Phase 1.0 verification (Day 1.0): every "VERIFY" comment below marks a
+# behavior that must be confirmed against the real GitHub API + Docker image
+# before this workflow ships. Smoke-test scripts at smoke/ exercise these.
+
+name: FQE Quality
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+  actions: read   # required to read events / re-emit checks
+
+jobs:
+  fqe:
+    runs-on: ubuntu-latest
+    container:
+      # VERIFY in Phase 1.2: image is cosign-signed; pin by digest before
+      # going to production. Tag pin shown here for readability.
+      image: ghcr.io/finexio/fqe:0.1
+
+    outputs:
+      verdict: ${{ steps.run-fqe.outputs.verdict }}
+      bypass: ${{ steps.bypass-eligibility.outputs.bypass }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch full history so content-hash binding works for receipts.
+          fetch-depth: 0
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 1 — Bypass eligibility check
+      # Identity comes from GitHub Events API (server-recorded), NOT from
+      # any file. This closes the v5 "receipt-controlled identity" flaw.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Check bypass eligibility
+        id: bypass-eligibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Read labels on the current PR (server-side, not file-based).
+          LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '[.labels[].name] | join(",")')
+          echo "PR labels: $LABELS"
+
+          if ! echo ",$LABELS," | grep -q ',fqe-bypass,'; then
+            echo "bypass=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Find who added fqe-bypass — Events API, server-recorded actor.
+          # VERIFY in Phase 1.0 smoke: gh api supports this issues/events query
+          # against a real PR and returns expected actor.login field.
+          BYPASS_ACTOR=$(gh api \
+            "/repos/$REPO/issues/$PR_NUMBER/events" \
+            --paginate \
+            --jq '[.[] | select(.event=="labeled" and .label.name=="fqe-bypass")] | last | .actor.login')
+
+          if [ -z "$BYPASS_ACTOR" ] || [ "$BYPASS_ACTOR" = "null" ]; then
+            echo "::error::fqe-bypass label present but no labeled event found"
+            exit 1
+          fi
+          echo "Bypass requester (from Events API): $BYPASS_ACTOR"
+
+          # Allowlist lookup uses the file AT THE BASE COMMIT, not PR HEAD.
+          # This prevents a PR from sneaking itself onto the allowlist.
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          ALLOWLIST=$(git show "$BASE_SHA:.github/fqe-bypass-allowlist.yml" \
+                     | yq '.allowed_actors[]' -)
+
+          if ! echo "$ALLOWLIST" | grep -qx "$BYPASS_ACTOR"; then
+            echo "::error::Actor '$BYPASS_ACTOR' is not in fqe-bypass allowlist at base commit"
+            exit 1
+          fi
+
+          echo "bypass=true" >> "$GITHUB_OUTPUT"
+          echo "bypass_actor=$BYPASS_ACTOR" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 2 — Bypass path: generate annotated receipt and tally.
+      # The receipt records bypass.requester for AUDIT only; the second-
+      # approve workflow will re-query Events API rather than read it.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Generate bypass receipt
+        if: steps.bypass-eligibility.outputs.bypass == 'true'
+        id: bypass-path
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          fqe receipt generate-bypass \
+            --commit '${{ github.event.pull_request.head.sha }}' \
+            --pr '${{ github.event.pull_request.number }}' \
+            --actor '${{ steps.bypass-eligibility.outputs.bypass_actor }}' \
+            --requester-source github_events_api_v3 \
+            --events-url 'https://github.com/${{ github.repository }}/pull/${{ github.event.pull_request.number }}' \
+            --output out/
+          # Writes out/QA-RESULT.yml and out/QA-RESULT.md
+          VERDICT=$(fqe receipt parse out/QA-RESULT.yml | jq -r .verdict)
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 3 — Normal path: run all applicable runners + verdict.js
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Detect changed paths
+        if: steps.bypass-eligibility.outputs.bypass != 'true'
+        id: paths
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            web: ['**/*.tsx', '**/*.jsx', '**/*.html', '**/*.css']
+            excel: ['**/*.xlsx']
+            mcp: ['**/mcp/**', '**/manifest.json']
+            outbound: ['**/templates/**', '**/emails/**']
+            agent: ['**/agents/**', '**/prompts/**']
+
+      - name: Run fqe (normal path)
+        if: steps.bypass-eligibility.outputs.bypass != 'true'
+        id: run-fqe
+        env:
+          FQE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          FQE_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+          FQE_CHANGED_WEB: ${{ steps.paths.outputs.web }}
+          FQE_CHANGED_EXCEL: ${{ steps.paths.outputs.excel }}
+          FQE_CHANGED_MCP: ${{ steps.paths.outputs.mcp }}
+          FQE_CHANGED_OUTBOUND: ${{ steps.paths.outputs.outbound }}
+          FQE_CHANGED_AGENT: ${{ steps.paths.outputs.agent }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          # NOTE: `fqe run` is the orchestrator that invokes per-class runners
+          # and writes QA-RESULT.yml + QA-RESULT.md. Implementation of `fqe run`
+          # itself is a Phase 1.2 deliverable; the components it composes
+          # (verdict.js, receipt.js, wilson.js, bypass_tally.js) all exist.
+          fqe run --full \
+            --commit "$FQE_COMMIT_SHA" \
+            --output out/ || true
+          # Parse verdict from the machine-readable YAML, not the markdown.
+          VERDICT=$(fqe receipt parse out/QA-RESULT.yml | jq -r .verdict)
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 4 — Persist the receipt server-side (invariant #3)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Upload receipt as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-receipt-${{ github.event.pull_request.head.sha }}
+          # Both files: machine-readable YAML for downstream workflows,
+          # human-readable markdown for PR comments.
+          path: |
+            out/QA-RESULT.yml
+            out/QA-RESULT.md
+          retention-days: 90
+
+      - name: Determine fqe/pass state from verdict
+        if: always()
+        id: pass-state
+        run: |
+          set -euo pipefail
+          if [ ! -f out/QA-RESULT.yml ]; then
+            echo "::error::No QA-RESULT.yml produced by fqe run"
+            echo "state=failure" >> "$GITHUB_OUTPUT"
+            exit 0  # we still want to publish the failure status below
+          fi
+          STATE=$(fqe status print out/QA-RESULT.yml | jq -r .check_state)
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish fqe/pass Check Run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -f out/QA-RESULT.md ]; then
+            BODY=$(head -c 65000 out/QA-RESULT.md)
+          else
+            BODY="No receipt produced"
+          fi
+          fqe status publish \
+            --check fqe/pass \
+            --commit '${{ github.event.pull_request.head.sha }}' \
+            --state '${{ steps.pass-state.outputs.state }}' \
+            --output-text "$BODY"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 5 — Bypass-rate check on the second required check.
+      # Required checks are pre-registered in branch protection (Phase 1.4);
+      # we only manipulate their STATE here.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Tally this run + compute rolling bypass rate
+        if: always()
+        id: bypass-rate
+        env:
+          # State dir lives at repo root in a hidden directory; CI workflows
+          # share workspace, so the file persists across runs ONLY if the workflow
+          # commits it back. For v1: state is queried per-run from the Events API
+          # (gh api ... events?per_page=100) since GitHub Actions doesn't have
+          # native cross-run state — see runs/v1.1 design note.
+          STATE_DIR: .github/fqe-state
+        run: |
+          set -euo pipefail
+          mkdir -p "$STATE_DIR"
+          # Always tally the run (denominator)
+          fqe bypass-tally append-run \
+            --state-dir "$STATE_DIR" \
+            --pr '${{ github.event.pull_request.number }}' \
+            --commit '${{ github.event.pull_request.head.sha }}'
+          # Only tally as a bypass if eligibility step set it
+          if [ "${{ steps.bypass-eligibility.outputs.bypass }}" = "true" ]; then
+            fqe bypass-tally append-bypass \
+              --state-dir "$STATE_DIR" \
+              --actor '${{ steps.bypass-eligibility.outputs.bypass_actor }}' \
+              --pr '${{ github.event.pull_request.number }}' \
+              --commit '${{ github.event.pull_request.head.sha }}'
+          fi
+          # --format scalar emits just the number for shell comparison
+          RATE=$(fqe bypass-tally rate --state-dir "$STATE_DIR" --window-days 14 --format scalar)
+          echo "rate=$RATE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish fqe/second-reviewer-required Check Run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RATE='${{ steps.bypass-rate.outputs.rate }}'
+          if awk -v r="$RATE" 'BEGIN{exit !(r > 0.10)}'; then
+            fqe status publish \
+              --check fqe/second-reviewer-required \
+              --commit '${{ github.event.pull_request.head.sha }}' \
+              --state failure \
+              --description "Rolling bypass rate $RATE exceeds 10%; second reviewer approval required"
+          else
+            fqe status publish \
+              --check fqe/second-reviewer-required \
+              --commit '${{ github.event.pull_request.head.sha }}' \
+              --state success \
+              --description "Bypass rate $RATE within tolerance"
+          fi
