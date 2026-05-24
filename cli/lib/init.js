@@ -91,8 +91,8 @@ jobs:
           # this entire step can be replaced with: container: ghcr.io/booyajones/fqe:0.1
           FQE_TAG="fqe-v0.1.0"
           git clone --depth=1 --branch "$FQE_TAG" \\
-            https://github.com/booyajones/finexio-skills.git /tmp/fqe-src
-          cd /tmp/fqe-src/fqe/cli
+            https://github.com/booyajones/fqe.git /tmp/fqe-src
+          cd /tmp/fqe-src/cli
           npm install --omit=dev
           chmod +x bin/fqe.js
           sudo ln -sf "$PWD/bin/fqe.js" /usr/local/bin/fqe
