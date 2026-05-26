@@ -259,11 +259,34 @@ function renderMarkdownBody(r) {
     }
   }
   if (r.verdict_reasons && r.verdict_reasons.length > 0) {
-    lines.push('');
-    lines.push('## Reasons');
-    lines.push('');
-    for (const reason of r.verdict_reasons) {
-      lines.push(`- ${reason}`);
+    // Engineer-grade explanation (plain-English + repro command + fix suggestion)
+    // — closes council 1613ed kill-feature #1 (explainability).
+    // The lazy import keeps receipt.js usable standalone without explainer in
+    // contexts that don't need rendering.
+    let explainVerdict;
+    try {
+      ({ explainVerdict } = require('./explainer'));
+    } catch (err) {
+      // Only suppress "module genuinely not installed". Re-throw syntax errors
+      // and runtime errors inside explainer.js so engineers see them loudly.
+      if (err && err.code !== 'MODULE_NOT_FOUND') throw err;
+    }
+    if (explainVerdict) {
+      lines.push('');
+      lines.push('## What this means');
+      lines.push('');
+      lines.push(explainVerdict(
+        { verdict: r.verdict, reasons: r.verdict_reasons },
+        { commit_sha: r.commit_sha }
+      ));
+    } else {
+      // Fallback if explainer is missing (shouldn't happen in normal use)
+      lines.push('');
+      lines.push('## Reasons');
+      lines.push('');
+      for (const reason of r.verdict_reasons) {
+        lines.push(`- ${reason}`);
+      }
     }
   }
   return lines.join('\n');
