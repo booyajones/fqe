@@ -1,129 +1,195 @@
-# Finexio Quality Engine (FQE)
+# fqe
 
-A unified mechanical QA gate for Finexio's Claude-driven build workflow. Replaces ad-hoc discipline with enforced gates that survive six rounds of adversarial multi-LLM review.
+**A CI gate that runs the checks you already have, refuses to let humans skip them, and emits a tamper-evident receipt of what was checked.**
 
-## The problem this solves
+[![tests](https://img.shields.io/badge/tests-162%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.1.0%20stable-blue)](CHANGELOG.md)
 
-Finexio's QA failures over the last 90 days all share one root cause: **trusted rules that never became enforced gates**. Concrete examples from memory:
+Not a linter. Not a test runner. Not an LLM judge. fqe is an orchestrator with a deterministic verdict, a tamper-evident receipt, and a server-authoritative bypass mechanism. The verdict logic is 160 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
-- Phoenix v7 shipped with 6 bugs (3 Sev 1) under a green Validation tab
-- Asignet v1.0 shipped with 4 CRITICAL defects despite "QA pass"
-- Webflow FAQ schema rendered as visible body text on finexio.com because nothing checked the live URL
-- Stale narrative numbers persisted across model versions because nothing scanned for them
-- Discipline rules written in CLAUDE.md were discounted in-session under deadline pressure
+```bash
+npx --yes github:booyajones/fqe#fqe-v0.1.0 cli/bin/fqe.js init
+git add .fqe.yml .github/
+git commit -m "Add fqe quality gate"
+```
 
-FQE makes the rules mechanical. Once active, the gate cannot be rationalized around.
+That's the install. The gate is now live on every PR. To make it actually block merges, add `fqe/pass` to your branch protection's required checks (one click).
 
-## Architecture in one diagram
+## The problem
+
+The shipping engineer looks at the work. They say "yes, ship." Six hours later production breaks because the check that would have caught the bug was never run.
+
+- A financial model ships with three Sev 1 bugs under a green Validation tab.
+- A partner integration ships with four CRITICAL defects.
+- A web page ships with the FAQ schema rendered as visible body text instead of in `<head>`.
+
+In all three cases, a machine check would have caught it in under five seconds. In all three cases, no machine check was wired to the merge.
+
+fqe makes those checks unskippable.
+
+## How it works
 
 ```
-                  CODE CHANGE
+                  PR opened
                        │
                        ▼
-              git pre-push (local fast)
-                       │
-                       ▼
-                  Push to GitHub
-                       │
-                       ▼
-       fqe-quality.yml runs in Docker container
-       ghcr.io/finexio/fqe:0.1
+              fqe workflow fires
                        │
               ┌────────┴────────┐
-              │ Bypass check    │  ◄── identity from Events API
-              │ (server-side)   │      not from any file
+              │ Bypass label?   │  ← identity from GitHub Events API
+              │ (server-side)   │     not from any file
               └────────┬────────┘
                        │
        ┌───────────────┼───────────────────┐
-       │     Bypass    │    Normal         │
-       │     ↓         │    ↓              │
-       │  receipt      │  per-class        │
-       │  +tally       │  runners          │
-       │               │  ↓                │
-       │               │  verdict.js       │ ◄── no LLM in path
-       │               │  (deterministic)  │
+       │   bypass      │   normal          │
+       │     ↓         │   ↓               │
+       │   receipt     │   run configured  │
+       │   + tally     │   runners         │
+       │               │   ↓               │
+       │               │   verdict.js      │  ← no LLM in path
+       │               │   (deterministic) │     pure JS, 160 LOC
        └───────────────┴───────────────────┘
                        │
                        ▼
-              QA-RESULT.md (receipt)
-              + workflow artifact
-              + Check Run output
+              QA-RESULT.yml + .md
+              (artifact + Check Run)
                        │
                        ▼
-              fqe/pass status emitted
+              fqe/pass status published
               (required check; cannot merge without)
-                       │
-                       ▼
-              fqe/second-reviewer-required
-              (failure if bypass rate > 10%)
 ```
 
-## Three architectural invariants
+Three architectural invariants the design holds to:
 
-These are the rules that survived six rounds of gauntlet review. Any v7 reviewer should test against them:
+1. **No identity claim is read from a file the PR author wrote.** Bypass-requester identity comes from the GitHub Events API.
+2. **No LLM is in the verdict path.** `verdict.js` is a deterministic Node script with table-driven unit tests.
+3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts plus Check Run outputs (server-side, immutable per run).
 
-1. **No identity claim is ever read from a file the constrained actor wrote.** Bypass requester identity comes from the GitHub Events API. Receipt content is never trusted for identity.
-2. **No LLM is in the verdict path.** `verdict.js` is a deterministic Node script. Unit-tested with table-driven cases against `node --test`.
-3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts + Check Run outputs (server-side, immutable per run).
+If you need to verify any of these, read [docs/architecture.md](docs/architecture.md). If you'd rather skip the theory and start using it, jump to [Getting Started](docs/getting-started.md).
 
-## What's here
+## What you get
 
-| Path | Role | Status |
+- **A required GitHub Check Run** (`fqe/pass`) you can wire to branch protection.
+- **Plain-English failure explanations** in the Check Run output. Every failure includes the repro command.
+- **A tamper-evident receipt** (`QA-RESULT.yml`) bound to the commit SHA, uploaded as an artifact and posted to the Check Run.
+- **A bypass mechanism that audits itself.** Every bypass is logged. If the rolling 14-day rate exceeds 10%, a second `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer signs off.
+- **Statistical guard rails on adversarial stats.** When a runner emits Wilson-CI confidence bounds (for LLM eval-style runners), fqe enforces the right threshold for the blast radius class.
+- **Recipes** for the five repo types we built this for: Node web, Python API, financial model (xlsx), MCP server, outbound communications.
+
+## What it deliberately does not do
+
+- It does not run runners. **You configure runners.** fqe is the orchestrator.
+- It does not write tests for you, lint your code, or audit your dependencies. **Your existing tools do those.** fqe reads their exit codes.
+- It does not have an LLM in the verdict path. The verdict is `verdict.js`, 160 lines, no AI, no dependencies.
+- It does not punish bypass. It audits bypass. If your team is consistently bypassing, the gate is wrong, not your team.
+- It does not replace your existing CI workflows. It runs alongside them as an additional required check.
+
+## Docs
+
+| Doc | For |
+|---|---|
+| [Getting Started](docs/getting-started.md) | First-time setup. 5 minutes to a gated PR. |
+| [Writing a Runner](docs/writing-a-runner.md) | The contract every runner must satisfy. |
+| [Architecture](docs/architecture.md) | The three invariants, the verdict logic, why it's deterministic. |
+| [Troubleshooting](docs/troubleshooting.md) | Exact error to exact fix. |
+| [FAQ](docs/faq.md) | Pre-empts the 10 questions every engineer asks. |
+| [Security](SECURITY.md) | Threat model. What fqe protects against and what it does not. |
+| [Contributing](CONTRIBUTING.md) | PR process and ground rules. |
+| [Changelog](CHANGELOG.md) | What shipped in 0.1.0 and what's planned for 0.2. |
+
+## Recipes (copy-paste a `.fqe.yml` for your stack)
+
+| Stack | Recipe |
+|---|---|
+| Next.js / React / Vue / Svelte | [docs/recipes/node-web.md](docs/recipes/node-web.md) |
+| FastAPI / Flask / Django | [docs/recipes/python-api.md](docs/recipes/python-api.md) |
+| Excel financial model (xlsx + goldens) | [docs/recipes/financial-model.md](docs/recipes/financial-model.md) |
+| Model Context Protocol server | [docs/recipes/mcp-server.md](docs/recipes/mcp-server.md) |
+| Outbound communications (cold email, nurture) | [docs/recipes/outbound-comms.md](docs/recipes/outbound-comms.md) |
+
+## Local development loop
+
+```bash
+# Same verdict CI computes, run on your laptop:
+fqe run --full --base origin/main --output ./out/
+
+# See what fqe will check on the current diff:
+fqe explain
+
+# Validate a hand-edited .fqe.yml:
+fqe verdict --check ./out/QA-RESULT.yml
+```
+
+The local CLI emits the same `QA-RESULT.yml` and `QA-RESULT.md` that CI produces. Same verdict math. Same plain-English explainer. Iterate locally, push when green.
+
+## Verdict logic
+
+fqe reads exit codes and emits one of five outcomes:
+
+| Code | Meaning | Effect |
 |---|---|---|
-| `SKILL.md` | Claude Code entry point — triggers, behavior, anti-patterns | Complete |
-| `cli/lib/verdict.js` | Deterministic verdict computation | Complete + unit-tested (10 cases) |
-| `cli/lib/wilson.js` | Wilson 95% CI for adversarial stats | Complete + 12 cases pinned vs statsmodels |
-| `cli/test/` | Unit tests (`node --test`) | 31/31 passing |
-| `schemas/receipt-v1.yml` | Receipt schema, validation rules, decision table | Complete |
-| `workflows/fqe-quality.yml.template` | Main CI gate workflow | Design intent; VERIFY markers for Phase 1.1 |
-| `workflows/fqe-second-approve.yml.template` | Bypass-rate-exceeded unblock workflow | Design intent; VERIFY markers for Phase 1.1 |
-| `smoke/smoke_tools.py` | Phase 1 Day 1.0 verification | Complete; 11/11 blocking checks passed against real Finexio workbooks |
-| `hooks/pre-push.sh.template` | Local git pre-push hook | Pending Phase 1.1 |
-| `setup/branch-protection-setup.sh` | One-time per-repo bootstrap | Pending Phase 1.1 |
-| `cli/bin/fqe.js` | CLI entry point | Pending Phase 1.1 |
-| `cli/lib/receipt.js` | Receipt generator + validator | Pending Phase 1.1 |
+| 0 | PASS — all runners clean | Merge allowed |
+| 1 | ERROR — fqe itself crashed | Re-run, file issue if persists |
+| 2 | FAIL — a required runner exited non-zero | Merge blocked |
+| 3 | FLAG — adversarial CI bound exceeded | Informational only, does not block |
+| 4 | INFRA — transient (GitHub API timeout, missing binary) | Neutral Check Run, does not block |
 
-## Phase 1 Day 1.0 smoke results (2026-05-22)
+You can read the full taxonomy in [`cli/lib/verdict.js`](cli/lib/verdict.js). It's 160 lines.
 
-Ran against your real Finexio artifacts:
+## Statistical guard rails
 
-- **cashflow v22b** (`Board Financials (Cashflow) May 2026.xlsx`): all 4 Excel runner defenses verified. Formulas read correctly (`=340408.324607506*POWER(1+Assumptions!$B$4,0)`), cached values numeric, `calcPr` element readable as `calcMode=auto fullCalcOnLoad=0`. Content hash computed.
-- **AvidX Final** (`AvidX Diligence Response - Project Franklin - April 24 FINAL.xlsx`): formulas read correctly BUT cached values are null. **This is exactly the v6 design decision validated** — LibreOffice headless recompute is default-on (not `--strict` opt-in) precisely because workbooks like this exist. Without LibreOffice recompute, defense D (cached vs golden diff) would be useless for AvidX-class workbooks. The plan was right to mandate it.
-- **Phoenix v7**: not at expected .xlsx paths. Per memory, it lives as a Google Sheet (ID `1VJpl8...`). **Architectural learning:** v1 Phase 2C needs an additional `gspread`-backed Google Sheets runner, not just openpyxl. This is the kind of finding Day 1.0 is supposed to surface before Phase 2 commits to a runner.
+For runners that produce statistical output (LLM evals, adversarial probes), fqe uses Wilson 95% confidence intervals to bound the observed failure rate. Per blast-radius class:
 
-Full report: [tool-smoke.md](../../OneDrive/Desktop/Claude/audits/2026-05-22-qa-engine/tool-smoke.md)
+| Class | Threshold | Examples |
+|---|---|---|
+| `outbound` | 5% upper bound | Cold email, marketing copy |
+| `mcp-read` | 3% upper bound | Read-only MCP servers |
+| `mcp-write-or-financial` | 1% upper bound | MCP servers that mutate state, financial models |
 
-## Plan trajectory (six iterations)
+Wilson over normal approximation because it stays well-defined at p=0 and p=1. Reference: Wilson, E. B. (1927). Our implementation is pinned against `statsmodels.stats.proportion.proportion_confint` to 14 decimal places.
 
-| Version | Score | Verdict | Fatal flaws | Key change |
+## Status
+
+**v0.1.0 — stable.** 162 tests passing. Validated against three production Finexio repos plus the [vinci1it2000/formulas](https://github.com/vinci1it2000/formulas) test corpus (13,383-formula xlsx). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+
+**Planned for 0.2:**
+
+- Docker image (`ghcr.io/finexio/fqe:0.1`) to drop install time from ~20s to ~3s
+- `fqe doctor` subcommand to diagnose environment issues
+- TTL-bound bypass labels (`fqe-bypass-24h`, `-48h`, `-72h`) with automatic expiry
+- More recipes (Go, Rust, monorepo)
+
+## Compared to alternatives
+
+| | fqe | husky / lefthook | danger.js | a custom workflow |
 |---|---|---|---|---|
-| v1 | 60 | REVISE | 5 | Initial Claude-skill design |
-| v2 | 60 | REVISE | 3 | Deterministic CLI replaces self-enforcing skill |
-| v3 | 68 | REVISE | 2 | Drop xlwings; eliminate self-hosted Windows runner |
-| v4 | 66 | REVISE | 2 | Triple-defense Excel; required checks pre-registered |
-| v5 | 55 | REWORK | 3 | **Regressed** — receipt became attacker-controlled |
-| **v6** | **76** | **SHIP*** | **0** | Identity from GitHub Events API; receipts as artifacts + Check Run outputs |
+| Runs server-side | Yes | No (local-only) | Yes | Yes |
+| Deterministic verdict | Yes (160 LOC, readable) | N/A | No (opinionated) | Depends on your code |
+| Tamper-evident receipt | Yes (SHA-bound) | No | No | Depends |
+| Server-authoritative bypass | Yes (Events API) | No | No | No (file-based) |
+| Statistical bounds on AI evals | Yes (Wilson CI) | No | No | No |
+| LLM in the verdict path | No | N/A | No | Depends |
 
-*both judges (Claude + GPT) concordant at 76, zero invariant-violating fatal flaws; chairman's qualitative verdict was SHIP
+fqe and husky are complementary. Use husky for fast local checks before push. Use fqe for the hard gates that absolutely cannot reach `main`.
 
-## Tooling (leverage, not build)
+## Uninstall
 
-Pull in (all MIT/Apache/MPL): Playwright, axe-core, Lighthouse CI, Unlighthouse, openpyxl, LibreOffice headless, Promptfoo, Inspect AI, MCP Inspector CLI, Vale, Pandera, Stagehand (surgical), dorny/paths-filter.
+```bash
+rm .fqe.yml
+rm -r .github/workflows/fqe-quality.yml .github/workflows/fqe-second-approve.yml
+rm .github/fqe-bypass-allowlist.yml .github/fqe-second-reviewers.yml
+rm -r .github/fqe-state/
+```
 
-Avoid: Lost Pixel (archived), Skyvern (AGPL), Pact (overkill for solo), xlcalculator (formula engine gaps), xlwings (security on self-hosted Windows runners), OpenAI Evals (stale), all closed SaaS.
+Then remove `fqe/pass` from your branch protection's required checks. Gate stops firing immediately.
 
-## What's next
+## Who built this
 
-1. **Phase 1.1 work** — build out `cli/bin/fqe.js`, `cli/lib/receipt.js`, the CLI subcommands `fqe run`, `fqe verdict`, `fqe receipt generate`, `fqe bypass-tally`, `fqe status publish`. Roughly 200 LOC.
-2. **Phase 1.2 work** — build and publish `ghcr.io/finexio/fqe:0.1` Docker image. Cosign-sign.
-3. **Phase 1.3 work** — finalize workflow YAMLs against the real GitHub API (Events API pagination, Check Run output 65K char limit, cross-workflow artifact download — every `VERIFY` marker in the templates resolved).
-4. **Phase 1.4 work** — run `branch-protection-setup.sh` against one Finexio repo as a pilot. Adversarial dry-runs from PLAN-v6 Section 5 Day 1.9.
-5. **Phase 1 acceptance** — all 12 adversarial dry-run scenarios produce expected outcomes. Then live with the gate for 14 days, tracking bypass rate as the canary.
+Chris Wyatt (@booyajones), Finexio's CSO/CPO, with adversarial review from seven LLM gauntlet runs and one Council heavy synthesis. The plan went through six iterations before reaching SHIP. The artifact is the audit trail.
 
-## References
+## License
 
-- Canonical design: [PLAN-v6.md](../../OneDrive/Desktop/Claude/audits/2026-05-22-qa-engine/PLAN-v6.md)
-- Iteration history: [PLAN-v1.md](../../OneDrive/Desktop/Claude/audits/2026-05-22-qa-engine/PLAN-v1.md) through PLAN-v5.md
-- Adversarial reviews: [gauntlet_runs/](../../Downloads/gauntlet_runs/) (six reports)
-- Expert advisory: [council_runs/](../../Downloads/council_runs/) (one heavy synthesis)
-- Predecessor: [qa-pro skill](../qa-pro/) v1.1.0
+MIT. See [LICENSE](LICENSE).
+
+## Security
+
+Security reports to `chris.wyatt@finexio.com` with subject `[fqe-security]`. See [SECURITY.md](SECURITY.md) for the threat model.
