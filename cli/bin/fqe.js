@@ -38,12 +38,27 @@ const {
 const tally = require('../lib/bypass_tally');
 const orchestrator = require('../lib/orchestrator');
 const initLib = require('../lib/init');
+const explainLib = require('../lib/explain');
 
 const FQE_VERSION = '0.1.0';
 
-function die(msg, code = 1) {
+// Exit code taxonomy (per council 1613ed kill-feature #5):
+//   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
+const EXIT = Object.freeze({ PASS: 0, ERROR: 1, FAIL: 2, FLAG: 3, INFRA: 4 });
+
+function die(msg, code = EXIT.ERROR) {
   process.stderr.write(`fqe: error: ${msg}\n`);
   process.exit(code);
+}
+
+/**
+ * Wrap a function so that exceptions explicitly tagged as `{infra: true}`
+ * exit with EXIT.INFRA (4) instead of EXIT.ERROR (1). CI workflows map exit 4
+ * to a NEUTRAL Check Run (never blocks a merge — closes council kill-feature #5).
+ */
+function failInfra(msg) {
+  process.stderr.write(`fqe: infra: ${msg}\n`);
+  process.exit(EXIT.INFRA);
 }
 
 function readJsonInput(arg) {
@@ -61,6 +76,19 @@ const SUBCOMMANDS = {
     process.stdout.write(`fqe ${FQE_VERSION}\n`);
   },
 
+  explain(args) {
+    // fqe explain [--dir D] [--json]
+    // The staff-engineer 5-minute audit: invariants + thresholds + current
+    // config + where to find the source. Council 1613ed kill-feature #2.
+    const opts = parseFlags(args);
+    const data = explainLib.explain({ dir: opts.dir || process.cwd() });
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    } else {
+      process.stdout.write(explainLib.renderExplainText(data) + '\n');
+    }
+  },
+
   init(args) {
     // fqe init [--dir D] [--force] [--actor LOGIN]
     // Bootstrap a repo with .fqe.yml + GitHub workflows + allowlists.
@@ -72,11 +100,8 @@ const SUBCOMMANDS = {
     });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     if (result.skipped.length > 0 && result.written.length === 0) {
-      // Nothing written, all skipped — exit non-zero so CI catches it
-      process.stderr.write(
-        `\nAll files already exist. Pass --force to overwrite, or this is a no-op.\n`
-      );
-      process.exit(1);
+      // Nothing written, all skipped — exit via die() so taxonomy is consistent
+      die('init: all files already exist. Pass --force to overwrite, or this is a no-op.');
     }
   },
 
@@ -295,20 +320,23 @@ const SUBCOMMANDS = {
         input: JSON.stringify(body),
         encoding: 'utf8',
       });
-      // ENOENT: gh binary not found. Surface a useful message
-      // (closes gauntlet 125a6e polish item #2).
+      // All failure paths below are INFRASTRUCTURE failures (gh missing, gh
+      // timed out, GitHub API 5xx). They exit 4 (INFRA) so CI maps them to a
+      // NEUTRAL Check Run that does NOT block merges. Closes council 1613ed
+      // kill-feature #5 — fqe's own bugs / GitHub flakes shouldn't lock the
+      // team out of shipping.
       if (r.error && r.error.code === 'ENOENT') {
-        die(
+        failInfra(
           "status publish: 'gh' CLI not found on PATH. Install from https://cli.github.com/ " +
           "and run 'gh auth login', or set GH_TOKEN env in a CI environment that has it pre-installed."
         );
       }
       if (r.error) {
-        die(`status publish: failed to invoke gh: ${r.error.message}`);
+        failInfra(`status publish: failed to invoke gh: ${r.error.message}`);
       }
       if (r.status !== 0) {
         process.stderr.write(r.stderr || '');
-        die(`status publish: gh api call failed with exit ${r.status}`);
+        failInfra(`status publish: gh api call failed with exit ${r.status}`);
       }
       process.stdout.write(`published check ${opts.check} state=${opts.state} commit=${opts.commit}\n`);
     } else {
@@ -341,9 +369,10 @@ const SUBCOMMANDS = {
       'usage: fqe <subcommand> [args...]',
       '',
       'gate workflow:',
-      '  init [--dir D]                      bootstrap a repo with .fqe.yml + GitHub workflows',
+      '  init [--dir D] [--force]            bootstrap a repo with .fqe.yml + GitHub workflows',
       '  run --commit SHA --output DIR       orchestrate: classify diff -> spawn runners -> verdict + receipt',
       '                                        [--base SHA] [--config .fqe.yml] [--pr N] [--repo-dir D]',
+      '  explain [--dir D] [--json]          5-minute architectural audit: invariants, thresholds, current config',
       '',
       'verdict + receipt primitives:',
       '  verdict <results-json|->            compute verdict deterministically (no LLM in path)',
@@ -372,7 +401,12 @@ const SUBCOMMANDS = {
       '  thresholds                          canonical blast-radius thresholds (Object.freeze\'d in verdict.js)',
       '  smoke-tools                         Phase 1 Day 1.0 verification (local)',
       '',
-      'exit codes: 0 = PASS / success    2 = FAIL (block)    3 = FLAG (informational)    1 = error',
+      'exit codes:',
+      '   0  PASS — gate is green, merge can proceed',
+      '   2  FAIL — policy violation, merge blocked',
+      '   3  FLAG — informational, merge can proceed but a concern was raised',
+      '   4  INFRA — fqe itself errored (gh API timeout, missing binary); Check Run is neutral, never blocks',
+      '   1  ERROR — unrecoverable script error before verdict (should be rare)',
       '',
       'docs: https://github.com/booyajones/finexio-skills/tree/main/fqe',
       '',
