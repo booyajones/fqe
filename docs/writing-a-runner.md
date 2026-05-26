@@ -155,6 +155,14 @@ Adversarial stats must specify a `blast_radius` class. The class determines the 
 
 These thresholds are locked in `cli/lib/verdict.js`. The orchestrator cannot pass arbitrary thresholds. Run `fqe thresholds` to see the current map.
 
+**Why these specific numbers?** Each threshold is the upper bound on the rate at which a defective output reaching its destination is operationally tolerable for that blast class:
+
+- `outbound` 5%: the recipient is a human who can recognize a bad email. A 1-in-20 bad-output rate is the boundary where the cost of false rejection (rejecting too much LLM output) starts to exceed the cost of a recipient seeing a bad one. This is the historical 95% confidence level for marketing-test sampling.
+- `mcp-read` 3%: read-only data leakage from a tool call is hard to undo (the consumer already saw it) and the consumer is usually downstream automation, not a human. A 3% rate is the rough ceiling where you start losing trust in the data layer.
+- `mcp-write-or-financial` 1%: state mutations and financial actions are typically irreversible or expensive to reverse. 1% is the rate where a typical 100-call/day workload sees ~3 bad actions per year, which is the audit floor for SOX-relevant systems.
+
+These numbers are calibration choices, not derived constants. If your blast model differs, fork and adjust `BLAST_RADIUS_THRESHOLDS` in `verdict.js`. They are `Object.freeze`'d at module load so the orchestrator cannot pass arbitrary values at runtime, only the codebase can change them.
+
 ## Debugging your runner
 
 1. **Run it standalone.** Just invoke `<command> <args>` directly with the env vars set. Verify your JSON line on stdout parses.

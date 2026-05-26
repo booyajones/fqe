@@ -4,7 +4,9 @@
 
 [![tests](https://img.shields.io/badge/tests-162%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.1.0%20stable-blue)](CHANGELOG.md)
 
-Not a linter. Not a test runner. Not an LLM judge. fqe is an orchestrator with a deterministic verdict, a tamper-evident receipt, and a server-authoritative bypass mechanism. The verdict logic is 160 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
+fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in 160 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
+
+It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
 ```bash
 npx --yes github:booyajones/fqe#fqe-v0.1.0 cli/bin/fqe.js init
@@ -127,11 +129,11 @@ fqe reads exit codes and emits one of five outcomes:
 
 | Code | Meaning | Effect |
 |---|---|---|
-| 0 | PASS — all runners clean | Merge allowed |
-| 1 | ERROR — fqe itself crashed | Re-run, file issue if persists |
-| 2 | FAIL — a required runner exited non-zero | Merge blocked |
-| 3 | FLAG — adversarial CI bound exceeded | Informational only, does not block |
-| 4 | INFRA — transient (GitHub API timeout, missing binary) | Neutral Check Run, does not block |
+| 0 | PASS: all runners clean | Merge allowed |
+| 1 | ERROR: fqe itself crashed | Re-run, file issue if persists |
+| 2 | FAIL: a required runner exited non-zero | Merge blocked |
+| 3 | FLAG: adversarial CI bound exceeded | Informational only, does not block |
+| 4 | INFRA: transient (GitHub API timeout, missing binary) | Neutral Check Run, does not block |
 
 You can read the full taxonomy in [`cli/lib/verdict.js`](cli/lib/verdict.js). It's 160 lines.
 
@@ -145,17 +147,36 @@ For runners that produce statistical output (LLM evals, adversarial probes), fqe
 | `mcp-read` | 3% upper bound | Read-only MCP servers |
 | `mcp-write-or-financial` | 1% upper bound | MCP servers that mutate state, financial models |
 
-Wilson over normal approximation because it stays well-defined at p=0 and p=1. Reference: Wilson, E. B. (1927). Our implementation is pinned against `statsmodels.stats.proportion.proportion_confint` to 14 decimal places.
+Wilson over normal approximation because it stays well-defined at p=0 and p=1. See [docs/faq.md#wilson](docs/faq.md) for the full citation and how the implementation is pinned against `statsmodels.stats.proportion.proportion_confint`.
 
 ## Status
 
-**v0.1.0 — stable.** 162 tests passing. Validated against three production Finexio repos plus the [vinci1it2000/formulas](https://github.com/vinci1it2000/formulas) test corpus (13,383-formula xlsx). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.1.0 stable.** 162 tests passing. Validated against three production Finexio repos plus the [vinci1it2000/formulas](https://github.com/vinci1it2000/formulas) test corpus (13,383-formula xlsx). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+
+## Known limitations in 0.1.0 (read this before adopting)
+
+The architectural invariants are real. The implementation does not yet enforce all of them on the hard threats. If you are putting fqe on the critical path of a production repo, you need to know these:
+
+1. **Default install uses a tag, not a SHA.** Git tags are force-pushable, so a maintainer-account compromise can silently change what `fqe-v0.1.0` resolves to. The README install command is tag-pinned for ergonomic onboarding. **For production: pin to a commit SHA.** See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned). The `ghcr.io/finexio/fqe:0.1` Docker image planned for 0.2 will be pinned by digest.
+
+2. **Bypass labels are not bound to the head SHA.** Once an allowlisted user adds `fqe-bypass`, the label persists across subsequent pushes to that PR. If the allowlisted account is compromised mid-PR, the attacker can push malicious commits without re-triggering the gate. **Mitigation today: branch protection rule "Dismiss stale pull request approvals when new commits are pushed" combined with a no-push-after-bypass team norm.** TTL-bound labels with head-SHA binding are the 0.2 fix.
+
+3. **Allowlist is read at the PR's BASE commit, not at `refs/heads/main` HEAD.** This means a long-lived PR branch that diverged before someone was removed from the allowlist still treats that person as allowlisted. **Mitigation today: short-lived PRs and pruning the allowlist on departure.** The 0.2 fix is to fetch the allowlist from the default branch at workflow-run time.
+
+4. **Receipt durability is bounded by GitHub artifact retention (90 days default).** The Check Run output text persists with the commit indefinitely but is limited to ~65KB and not exportable in bulk. **For SOX-grade (7-year) retention: mirror receipts to an external object store via a post-merge workflow.** See [docs/recipes/](docs/recipes/) for the pattern, or wait for 0.2 which ships an opt-in `audits/<sha>/` post-merge archiver.
+
+5. **The rolling bypass tally writes JSONL to the protected branch from a workflow.** Fork PRs (read-only `GITHUB_TOKEN`) cannot bypass at all, which is intentional. First-party PRs that bypass record to `.github/fqe-state/bypass-tally.jsonl` via a `workflow_run` event after merge, not from the PR's own workflow. **Concurrency:** if two bypasses are recorded inside the same second, the second one rebases on top. Stress-tested up to ~5 concurrent merges. **For higher concurrency:** move state to an external KV in 0.2.
+
+These are documented because they are real. If they are deal-breakers for your repo, do not enable `fqe/pass` as a required check until 0.2.
 
 **Planned for 0.2:**
 
-- Docker image (`ghcr.io/finexio/fqe:0.1`) to drop install time from ~20s to ~3s
+- Docker image (`ghcr.io/finexio/fqe:0.1`) pinned by digest, default install path
+- TTL-bound bypass labels (`fqe-bypass-24h`, `-48h`, `-72h`) with head-SHA binding
+- Allowlist read from `refs/heads/main` at workflow-run time
+- Optional post-merge `audits/<sha>/` archiver for durable receipt retention
+- External KV state backend for bypass tally
 - `fqe doctor` subcommand to diagnose environment issues
-- TTL-bound bypass labels (`fqe-bypass-24h`, `-48h`, `-72h`) with automatic expiry
 - More recipes (Go, Rust, monorepo)
 
 ## Compared to alternatives
@@ -184,7 +205,7 @@ Then remove `fqe/pass` from your branch protection's required checks. Gate stops
 
 ## Who built this
 
-Chris Wyatt (@booyajones), Finexio's CSO/CPO, with adversarial review from seven LLM gauntlet runs and one Council heavy synthesis. The plan went through six iterations before reaching SHIP. The artifact is the audit trail.
+Chris Wyatt (@booyajones), Finexio's CSO/CPO. The artifact is the audit trail.
 
 ## License
 

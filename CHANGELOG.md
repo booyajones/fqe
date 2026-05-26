@@ -31,9 +31,18 @@ Initial public release. Tag: `fqe-v0.1.0`. Source: github.com/booyajones/fqe.
 
 ### Known limitations (planned for 0.2)
 
+These five were flagged unanimously by a 3-judge LLM council before release. They are real architectural gaps, documented in SECURITY.md with today's mitigations.
+
+- **Default install pins to a git tag**, which is force-pushable. Use the SHA-pinned install for production. 0.2 ships a digest-pinned Docker image.
+- **`fqe-bypass` label is not bound to the head SHA.** Once applied, it persists across subsequent pushes. 0.2 ships TTL-bound bypass labels (`fqe-bypass-24h`, `-48h`, `-72h`) with head-SHA binding.
+- **Allowlist is read at the PR's BASE commit**, not at default-branch HEAD. 0.2 fetches allowlist from `refs/heads/main` at workflow-run time.
+- **Receipts default to 90-day GitHub artifact retention.** Check Run output persists indefinitely (with a 65KB cap). 0.2 ships an opt-in post-merge `audits/<sha>/` archiver.
+- **Bypass-tally JSONL writes to the protected branch from a `workflow_run` event.** Fork PRs cannot bypass (intentional, read-only token). Concurrency stress-tested to ~5 simultaneous merges. 0.2 moves state to an external KV.
+
+Also:
+
 - **No JSON Schema for `.fqe.yml`** yet. VSCode autocomplete pending.
 - **No published Docker image**. Workflows clone-and-install (about 20s overhead per CI run). Once published, swap `container: ghcr.io/booyajones/fqe:0.1`.
-- **TTL bypass labels** (`fqe/bypass-24h`, `fqe/bypass-48h`, `fqe/bypass-72h`) are designed but not yet wired in the workflow template. v0.1 uses a single `fqe-bypass` label without TTL.
 - **No `create-fqe-runner` scaffold**. Plugin authoring is doc-driven only.
 
 ### Migration notes

@@ -34,7 +34,7 @@ Three commitments the codebase enforces. If you find code that violates one, tha
 
 1. **No identity claim is read from a file the constrained actor wrote.** Bypass requester identity comes from `gh api /repos/{owner}/{repo}/issues/{pr}/events` (server-recorded `actor.login`). Receipt content is informational only. `bypass.requester_source` MUST equal `github_events_api_v3` or `buildReceipt` throws.
 2. **No LLM is in the verdict path.** `cli/lib/verdict.js` is a pure deterministic Node function. Same inputs produce the same output. 162 unit + integration tests cover the failure paths. No language model is ever asked "is this PR good?"
-3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts AND Check Run outputs (server-side, immutable per run). Post-merge, receipts get committed to `audits/<sha>/` on the protected branch for human audit.
+3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts AND Check Run outputs (server-side, immutable per run). In 0.1.0, GitHub workflow artifacts default to 90-day retention (configurable down, not up without an Enterprise plan). Check Run outputs are limited to ~65KB but persist with the commit indefinitely. **For SOX-grade 7-year retention, mirror the receipt to an external object store via a post-merge `workflow_run` job.** The 0.2 release ships an opt-in `audits/<sha>/` archiver that commits the receipt to the protected branch automatically.
 
 ## Supply chain
 
@@ -43,6 +43,20 @@ Three commitments the codebase enforces. If you find code that violates one, tha
 - **LibreOffice**: installed from the Ubuntu apt repository inside the GitHub-hosted runner (no third-party mirror).
 - **No `curl | bash`**. All downloads are checksum-verified.
 - **No telemetry**. fqe does not phone home. The only network calls are to the GitHub API for Check Run publishing and event reading.
+
+## Known issues in 0.1.0 (acknowledged, prioritized for 0.2)
+
+Reviewed by three independent LLM judges plus a Gemini chairman. These five issues were flagged unanimously. They are real. They are documented here, prioritized for 0.2, and they have interim mitigations:
+
+| # | Issue | Today's mitigation | 0.2 fix |
+|---|---|---|---|
+| 1 | Default install pins to a force-pushable git tag | See `docs/getting-started.md#production-install-sha-pinned`. Pin to a SHA. | Docker image pinned by digest, default install path. |
+| 2 | `fqe-bypass` label is not bound to the head SHA | Branch protection rule "Dismiss stale PR approvals on push" + team norm "no push after bypass." | TTL-bound bypass labels with explicit head-SHA binding (`fqe-bypass-24h`, `-48h`, `-72h`). |
+| 3 | Allowlist is read at PR BASE commit, not at default-branch HEAD | Short-lived PRs (under one week) + prune the allowlist immediately on departure. | Workflow fetches allowlist from `refs/heads/main` at run time. |
+| 4 | Workflow artifacts (receipts) expire at 90 days by default | Mirror receipts to an external object store via post-merge `workflow_run`. Check Run output (~65KB cap, indefinite persistence) is still bound to the commit. | Opt-in post-merge `audits/<sha>/` archiver, commits the receipt to the protected branch. |
+| 5 | Bypass-tally JSONL writes to the protected branch from the workflow | The tally is updated by a `workflow_run` event AFTER merge, not from the PR's own workflow. Fork PRs have read-only `GITHUB_TOKEN` and cannot bypass. Concurrency stress-tested up to ~5 concurrent merges. | External KV state backend (SQLite cache + signed JSONL fallback). |
+
+If any of these is a deal-breaker for your repo, **do not enable `fqe/pass` as a required check until 0.2 ships.** Run it as informational only and tighten as the fixes land.
 
 ## What fqe does NOT protect against
 

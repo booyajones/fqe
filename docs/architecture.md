@@ -6,7 +6,9 @@ If you'd rather see them in your terminal: `fqe explain` prints these inline.
 
 ## The three invariants
 
-fqe survived seven rounds of multi-LLM adversarial review (gauntlet scores 60 → 56 → 68 → 69 → 68 → 76 → 88). Each round caught an architectural flaw. The invariants below are what's left when every fixable flaw is fixed.
+fqe's design was reviewed across seven rounds by multiple LLM judges (Claude, GPT, DeepSeek, Gemini chairman). Each round caught an architectural flaw and the next iteration fixed it. **This is design-time review by LLMs, not runtime gating by LLMs.** Invariant 2 below explicitly prohibits an LLM from being in the verdict path that decides whether a PR can merge. The two roles do not conflict: LLMs are useful for surfacing critique on a design, and they are unsuitable for non-deterministic operational decisions.
+
+The invariants below are what's left when every fixable flaw in those seven rounds was fixed.
 
 ### Invariant 1: No identity claim is read from a file the constrained actor wrote
 
@@ -104,7 +106,7 @@ Bounded scope is a trust signal. fqe does not:
 
 ## Three commitments that shape every decision
 
-1. **Engineers don't get locked out by fqe's own bugs.** Exit code 4 (INFRA) is neutral. GitHub API timeouts, missing `gh` binary, transient runner crashes all map here. Never blocks a merge.
+1. **Engineers don't get locked out by fqe's own bugs.** Exit code 4 (INFRA) emits a Check Run with conclusion `neutral`. GitHub API timeouts, missing `gh` binary, transient runner crashes all map here. **A neutral conclusion does NOT block merges in GitHub's branch protection model: required checks treat `neutral` as success.** If you observe `neutral` blocking, the issue is your branch-protection setting "Require branches to be up to date before merging" combined with a state quirk, not `fqe` policy. Tested behavior is documented in the integration test at `cli/test/check-run-neutral.test.js`.
 
 2. **Bypass is a deliberate, audited act.** Every bypass writes to `bypass-tally.jsonl`, posts to a Check Run, gets archived in `audits/<sha>/`. Rolling rate above 10% in 14 days flips the `fqe/second-reviewer-required` check to FAIL, requiring an allowlisted second approver.
 
