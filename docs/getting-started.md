@@ -118,7 +118,7 @@ For production, pin to a commit SHA instead. Find the SHA for the release you wa
 
 ```bash
 # Replace SHA with the 40-char commit hash for the release you want
-SHA=a36389a79d386e72a48183b8a5f29703b166c5f6
+SHA=074eeb434215d5588088690a2dfde33e97356536
 npx --yes "github:booyajones/fqe#${SHA}" cli/bin/fqe.js init
 ```
 

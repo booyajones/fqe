@@ -46,7 +46,7 @@ Three commitments the codebase enforces. If you find code that violates one, tha
 
 ## Known issues in 0.1.0 (acknowledged, prioritized for 0.2)
 
-Reviewed by three independent LLM judges plus a Gemini chairman. These five issues were flagged unanimously. They are real. They are documented here, prioritized for 0.2, and they have interim mitigations:
+Surfaced during adversarial design review and corroborated by Finexio's internal threat modeling. These five issues were flagged unanimously by independent reviewers. They are real. They are documented here, prioritized for 0.2, and they have interim mitigations:
 
 | # | Issue | Today's mitigation | 0.2 fix |
 |---|---|---|---|
