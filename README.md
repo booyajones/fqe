@@ -149,7 +149,7 @@ For runners that produce statistical output (LLM evals, adversarial probes), fqe
 | `mcp-read` | 3% upper bound | Read-only MCP servers |
 | `mcp-write-or-financial` | 1% upper bound | MCP servers that mutate state, financial models |
 
-Wilson over normal approximation because it stays well-defined at p=0 and p=1. See [docs/faq.md#wilson](docs/faq.md) for the full citation and how the implementation is pinned against `statsmodels.stats.proportion.proportion_confint`.
+Wilson over normal approximation because it stays well-defined at p=0 and p=1. See [the FAQ entry](docs/faq.md#why-wilson-confidence-intervals-specifically) for the full citation and how the implementation is pinned against `statsmodels.stats.proportion.proportion_confint`.
 
 ## Status
 
