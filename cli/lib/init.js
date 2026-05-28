@@ -22,7 +22,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 /**
- * Additional templates wired by `--with-mutation`. See the
+ * Additional templates wired by `--with-mutation` and `--with-qodo`. See the
  * docs/recipes/ai-test-generation.md for the full recipe.
  */
 const MUTATION_RUNNER_BLOCK = `
@@ -36,6 +36,20 @@ const MUTATION_RUNNER_BLOCK = `
     when: ["**/*.js", "**/*.ts", "test/**", "stryker.conf.json"]
     required: true
     timeout_ms: 900000
+`;
+
+const QODO_RUNNER_BLOCK = `
+  # Wired by 'fqe init --with-qodo'. Generates AI test candidates via Qodo
+  # Cover (Meta TestGen-LLM filter pipeline). Requires ANTHROPIC_API_KEY
+  # (preferred, uses Finexio's existing Claude key) or OPENAI_API_KEY in the
+  # workflow secrets. The generated tests are then mutation-tested by the
+  # stryker-mutation runner above; that's what actually gates the PR.
+  qodo-cover:
+    command: "bash"
+    args: ["scripts/fqe_qodo_runner.sh"]
+    when: ["**/*.js", "**/*.ts", "**/*.py"]
+    required: false
+    timeout_ms: 600000
 `;
 
 const FILES = {
@@ -431,7 +445,26 @@ function readPackagedTemplate(name) {
 }
 
 /**
- * @param {{ dir: string, force?: boolean, actor?: string, withMutation?: boolean }} opts
+ * Append a runner block to the existing .fqe.yml template's runners: section.
+ * Handles three states: (1) `runners: {}` (vanilla), (2) `runners:` already
+ * populated by a prior --with-X flag, (3) malformed. Returns the new yaml or
+ * the original if no anchor was found.
+ */
+function appendRunnerBlock(yml, block) {
+  // Case 1: vanilla "runners: {}"
+  if (/\nrunners:\s*\{\}\s*\n?$/m.test(yml)) {
+    return yml.replace(/\nrunners:\s*\{\}\s*\n?$/m, `\nrunners:${block}`);
+  }
+  // Case 2: already populated "runners:\n  <something>" — append at the end
+  if (/\nrunners:\s*\n/m.test(yml)) {
+    return yml.replace(/\s*$/, `${block}`);
+  }
+  // Case 3: no anchor found — append a runners: section
+  return yml.replace(/\s*$/, `\nrunners:${block}`);
+}
+
+/**
+ * @param {{ dir: string, force?: boolean, actor?: string, withMutation?: boolean, withQodo?: boolean }} opts
  */
 function init(opts) {
   const dir = path.resolve(opts.dir || process.cwd());
@@ -451,7 +484,7 @@ function init(opts) {
   const skipped = [];
   const notes = [];
 
-  // Build per-invocation FILES so we can conditionally append the mutation runner
+  // Build per-invocation FILES so we can conditionally append runner blocks
   // to .fqe.yml WITHOUT mutating the module-level FILES constant.
   const dynamicFiles = { ...FILES };
 
@@ -461,17 +494,19 @@ function init(opts) {
     if (!strykerRunner || !strykerConf) {
       notes.push('--with-mutation requested but templates/ not found on disk. Skipped mutation wiring.');
     } else {
-      // Inject runner block into .fqe.yml. The base template ends with
-      // "runners: {}" which means "no runners"; we replace that with
-      // "runners:\n  stryker-mutation: ..." so YAML parses as a non-empty map.
-      const baseYml = dynamicFiles['.fqe.yml'];
-      const newYml = baseYml.replace(
-        /\nrunners:\s*\{\}\s*\n?$/m,
-        `\nrunners:${MUTATION_RUNNER_BLOCK}`
-      );
-      dynamicFiles['.fqe.yml'] = newYml;
+      dynamicFiles['.fqe.yml'] = appendRunnerBlock(dynamicFiles['.fqe.yml'], MUTATION_RUNNER_BLOCK);
       dynamicFiles['scripts/fqe_stryker_runner.js'] = strykerRunner;
       dynamicFiles['stryker.conf.json'] = strykerConf;
+    }
+  }
+
+  if (opts.withQodo) {
+    const qodoRunner = readPackagedTemplate('fqe_qodo_runner.sh');
+    if (!qodoRunner) {
+      notes.push('--with-qodo requested but templates/fqe_qodo_runner.sh not found on disk. Skipped Qodo wiring.');
+    } else {
+      dynamicFiles['.fqe.yml'] = appendRunnerBlock(dynamicFiles['.fqe.yml'], QODO_RUNNER_BLOCK);
+      dynamicFiles['scripts/fqe_qodo_runner.sh'] = qodoRunner;
     }
   }
 
@@ -490,12 +525,23 @@ function init(opts) {
     written.push(relPath);
   }
 
-  // If we wired mutation, leave a breadcrumb for the engineer about what's next
+  // Leave breadcrumbs about what's next
   if (opts.withMutation && written.includes('scripts/fqe_stryker_runner.js')) {
     notes.push('Next: npm install --save-dev @stryker-mutator/core, then commit + open PR. See docs/recipes/ai-test-generation.md.');
+  }
+  if (opts.withQodo && written.includes('scripts/fqe_qodo_runner.sh')) {
+    notes.push('Next: chmod +x scripts/fqe_qodo_runner.sh and add ANTHROPIC_API_KEY to repo Secrets (Settings, Secrets and variables, Actions). Qodo Cover uses Finexio\'s existing Claude key by default.');
   }
 
   return { written, skipped, actor, defaultBranch, dir, notes };
 }
 
-module.exports = { init, FILES, currentGhActor, readPackagedTemplate, MUTATION_RUNNER_BLOCK };
+module.exports = {
+  init,
+  FILES,
+  currentGhActor,
+  readPackagedTemplate,
+  appendRunnerBlock,
+  MUTATION_RUNNER_BLOCK,
+  QODO_RUNNER_BLOCK,
+};

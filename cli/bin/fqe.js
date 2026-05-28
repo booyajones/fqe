@@ -90,17 +90,20 @@ const SUBCOMMANDS = {
   },
 
   init(args) {
-    // fqe init [--dir D] [--force] [--actor LOGIN] [--with-mutation]
+    // fqe init [--dir D] [--force] [--actor LOGIN] [--with-mutation] [--with-qodo]
     // Bootstrap a repo with .fqe.yml + GitHub workflows + allowlists.
     // --with-mutation also drops in the Stryker runner glue + stryker.conf.json
-    // and adds a stryker-mutation runner block to .fqe.yml. See
-    // docs/recipes/ai-test-generation.md for the full pipeline rationale.
+    //   and adds a stryker-mutation runner block to .fqe.yml.
+    // --with-qodo also drops in the Qodo Cover runner glue (uses ANTHROPIC_API_KEY
+    //   by default, falls back to OPENAI_API_KEY) and adds a qodo-cover runner block.
+    // See docs/recipes/ai-test-generation.md for the full pipeline rationale.
     const opts = parseFlags(args);
     const result = initLib.init({
       dir: opts.dir || process.cwd(),
       force: opts.force === true,
       actor: opts.actor,
       withMutation: opts['with-mutation'] === true,
+      withQodo: opts['with-qodo'] === true,
     });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     if (result.skipped.length > 0 && result.written.length === 0) {

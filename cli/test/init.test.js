@@ -126,3 +126,29 @@ test('init without --with-mutation: leaves runners: {} and no Stryker files', ()
   const yml = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
   assert.match(yml, /^runners:\s*\{\}\s*$/m, 'vanilla path must preserve empty runners');
 });
+
+test('init --with-qodo: writes the Qodo runner + appends a qodo-cover block', () => {
+  const dir = freshGitRepo();
+  const result = initLib.init({ dir, actor: 'chris-wyatt', withQodo: true });
+  assert.ok(result.written.includes('scripts/fqe_qodo_runner.sh'),
+    '--with-qodo should write the Qodo runner glue');
+  const yml = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
+  assert.match(yml, /qodo-cover:/, '.fqe.yml should have the qodo-cover runner block');
+  assert.match(yml, /scripts\/fqe_qodo_runner\.sh/, 'qodo block should reference the glue script');
+  assert.ok(result.notes.some((n) => n.includes('ANTHROPIC_API_KEY')),
+    'should hand the engineer the secret-set next-step');
+});
+
+test('init --with-mutation --with-qodo: both blocks coexist under one runners: map', () => {
+  const dir = freshGitRepo();
+  const result = initLib.init({ dir, actor: 'chris-wyatt', withMutation: true, withQodo: true });
+  assert.ok(result.written.includes('scripts/fqe_stryker_runner.js'));
+  assert.ok(result.written.includes('scripts/fqe_qodo_runner.sh'));
+  const yml = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
+  // Both runner names should appear under a single `runners:` key
+  assert.match(yml, /stryker-mutation:/);
+  assert.match(yml, /qodo-cover:/);
+  // The runners: declaration should appear exactly once (not duplicated)
+  const runnerHeaderMatches = (yml.match(/^runners:/gm) || []).length;
+  assert.equal(runnerHeaderMatches, 1, 'exactly one runners: header expected');
+});
