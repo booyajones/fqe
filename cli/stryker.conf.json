@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing for fqe. Targets the deterministic verdict path first because that's invariant #2 and the most critical surface.",
+  "packageManager": "npm",
+  "reporters": ["progress", "clear-text", "json"],
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "node --test test/verdict.test.js test/wilson.test.js"
+  },
+  "mutate": [
+    "lib/verdict.js",
+    "lib/wilson.js"
+  ],
+  "coverageAnalysis": "off",
+  "thresholds": {
+    "high": 90,
+    "low": 70,
+    "break": 60
+  },
+  "timeoutMS": 10000,
+  "concurrency": 4
+}
