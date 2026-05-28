@@ -101,3 +101,28 @@ test('init: state dir is created with .gitkeep', () => {
   initLib.init({ dir, actor: 'chris-wyatt' });
   assert.ok(fs.existsSync(path.join(dir, '.github/fqe-state/.gitkeep')));
 });
+
+test('init --with-mutation: writes the Stryker glue + config + runner block', () => {
+  const dir = freshGitRepo();
+  const result = initLib.init({ dir, actor: 'chris-wyatt', withMutation: true });
+  assert.ok(result.written.includes('scripts/fqe_stryker_runner.js'),
+    'mutation flag should write the runner glue script');
+  assert.ok(result.written.includes('stryker.conf.json'),
+    'mutation flag should write the Stryker config');
+  const yml = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
+  assert.match(yml, /stryker-mutation:/, '.fqe.yml should have the stryker runner block');
+  assert.match(yml, /scripts\/fqe_stryker_runner\.js/, 'runner block should reference the glue script');
+  assert.doesNotMatch(yml, /^runners:\s*\{\}\s*$/m,
+    'runners: {} should have been replaced with the populated map');
+  assert.ok(result.notes && result.notes.some((n) => n.includes('npm install')),
+    'should hand the engineer the npm install next-step');
+});
+
+test('init without --with-mutation: leaves runners: {} and no Stryker files', () => {
+  const dir = freshGitRepo();
+  const result = initLib.init({ dir, actor: 'chris-wyatt' });
+  assert.ok(!result.written.includes('scripts/fqe_stryker_runner.js'));
+  assert.ok(!result.written.includes('stryker.conf.json'));
+  const yml = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
+  assert.match(yml, /^runners:\s*\{\}\s*$/m, 'vanilla path must preserve empty runners');
+});

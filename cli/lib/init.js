@@ -21,6 +21,23 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+/**
+ * Additional templates wired by `--with-mutation`. See the
+ * docs/recipes/ai-test-generation.md for the full recipe.
+ */
+const MUTATION_RUNNER_BLOCK = `
+  # Wired by 'fqe init --with-mutation'. Reads Stryker's mutation report and
+  # emits Wilson-CI-bounded adversarial_stats. blast_radius defaults to
+  # mcp-write-or-financial (1% survival ceiling) which is correct for code
+  # that touches money or state. Re-tune via FQE_STRYKER_BLAST_RADIUS env var.
+  stryker-mutation:
+    command: "node"
+    args: ["scripts/fqe_stryker_runner.js"]
+    when: ["**/*.js", "**/*.ts", "test/**", "stryker.conf.json"]
+    required: true
+    timeout_ms: 900000
+`;
+
 const FILES = {
   '.fqe.yml': `# Finexio Quality Engine - repo config
 # Each runner declares: command, args, when (glob patterns), required, always_run
@@ -398,7 +415,23 @@ function detectDefaultBranch(dir) {
 }
 
 /**
- * @param {{ dir: string, force?: boolean, actor?: string }} opts
+ * Read a packaged template file (under cli/templates/). Returns null if missing,
+ * which is how we tell init() to skip mutation wiring on installs that didn't
+ * ship the templates dir.
+ */
+function readPackagedTemplate(name) {
+  const candidates = [
+    path.join(__dirname, '..', 'templates', name),
+    path.join(__dirname, '..', '..', 'cli', 'templates', name),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
+  }
+  return null;
+}
+
+/**
+ * @param {{ dir: string, force?: boolean, actor?: string, withMutation?: boolean }} opts
  */
 function init(opts) {
   const dir = path.resolve(opts.dir || process.cwd());
@@ -416,8 +449,33 @@ function init(opts) {
 
   const written = [];
   const skipped = [];
+  const notes = [];
 
-  for (const [relPath, template] of Object.entries(FILES)) {
+  // Build per-invocation FILES so we can conditionally append the mutation runner
+  // to .fqe.yml WITHOUT mutating the module-level FILES constant.
+  const dynamicFiles = { ...FILES };
+
+  if (opts.withMutation) {
+    const strykerRunner = readPackagedTemplate('fqe_stryker_runner.js');
+    const strykerConf = readPackagedTemplate('stryker.conf.json');
+    if (!strykerRunner || !strykerConf) {
+      notes.push('--with-mutation requested but templates/ not found on disk. Skipped mutation wiring.');
+    } else {
+      // Inject runner block into .fqe.yml. The base template ends with
+      // "runners: {}" which means "no runners"; we replace that with
+      // "runners:\n  stryker-mutation: ..." so YAML parses as a non-empty map.
+      const baseYml = dynamicFiles['.fqe.yml'];
+      const newYml = baseYml.replace(
+        /\nrunners:\s*\{\}\s*\n?$/m,
+        `\nrunners:${MUTATION_RUNNER_BLOCK}`
+      );
+      dynamicFiles['.fqe.yml'] = newYml;
+      dynamicFiles['scripts/fqe_stryker_runner.js'] = strykerRunner;
+      dynamicFiles['stryker.conf.json'] = strykerConf;
+    }
+  }
+
+  for (const [relPath, template] of Object.entries(dynamicFiles)) {
     const fullPath = path.join(dir, relPath);
     const exists = fs.existsSync(fullPath);
     if (exists && !opts.force) {
@@ -432,7 +490,12 @@ function init(opts) {
     written.push(relPath);
   }
 
-  return { written, skipped, actor, defaultBranch, dir };
+  // If we wired mutation, leave a breadcrumb for the engineer about what's next
+  if (opts.withMutation && written.includes('scripts/fqe_stryker_runner.js')) {
+    notes.push('Next: npm install --save-dev @stryker-mutator/core, then commit + open PR. See docs/recipes/ai-test-generation.md.');
+  }
+
+  return { written, skipped, actor, defaultBranch, dir, notes };
 }
 
-module.exports = { init, FILES, currentGhActor };
+module.exports = { init, FILES, currentGhActor, readPackagedTemplate, MUTATION_RUNNER_BLOCK };

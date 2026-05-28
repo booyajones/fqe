@@ -110,6 +110,17 @@ Now `main` cannot accept a merge without a green `fqe/pass`. To bypass in an eme
 
 Empty `.fqe.yml` (or a `.fqe.yml` with all suggestions still commented out) means **no runners**. The gate exists but always passes. This is intentional. fqe is a no-op until you tell it what to enforce.
 
+## Optional: wire AI test-gen + mutation testing in the same install
+
+For JS/TS repos that want the modern AI quality stack (Stryker mutation testing wired as a fqe runner, with Wilson-CI-bounded survival rate as the verdict), add the `--with-mutation` flag:
+
+```bash
+npx --yes github:booyajones/fqe#fqe-v0.1.0 cli/bin/fqe.js init --with-mutation
+npm install --save-dev @stryker-mutator/core
+```
+
+This drops in `stryker.conf.json`, `scripts/fqe_stryker_runner.js`, and a `stryker-mutation:` runner block in `.fqe.yml`. See [docs/recipes/ai-test-generation.md](recipes/ai-test-generation.md) for the rationale and the Qodo Cover layer that generates tests on PR.
+
 ## Production install (SHA-pinned)
 
 The default install command in Step 1 uses `fqe-v0.1.0`, a git tag. Tags can be force-pushed, so if upstream's tag is moved (accidentally or maliciously) every repo running the tag-pinned install picks up the new code on the next CI run.

@@ -29,11 +29,24 @@ fqe reads exit code + mutation kill rate from Stryker JSON
 verdict: PASS if kill rate >= threshold for blast class; FAIL otherwise
 ```
 
+## One-command install (JS/TS repos)
+
+```bash
+npx --yes github:booyajones/fqe#fqe-v0.1.0 cli/bin/fqe.js init --with-mutation
+npm install --save-dev @stryker-mutator/core
+git add .fqe.yml .github/ scripts/ stryker.conf.json package.json
+git commit -m "Wire fqe + Stryker mutation gate"
+```
+
+That's the full setup. `init --with-mutation` writes the `stryker.conf.json`, the runner glue script at `scripts/fqe_stryker_runner.js`, and the `stryker-mutation` runner block in `.fqe.yml`. Open a PR, the gate fires.
+
+For Python (mutmut), Java (PIT), or Go (go-mutesting), see "Common adjustments" below. The runner contract is the same; only the wrapped tool changes.
+
 ## Prerequisites
 
 - Node, Python, Java, Go, or Ruby project with an existing test runner.
-- Qodo Cover installed (`pip install qodo-cover` or use the [Qodo Cover GitHub Action](https://github.com/qodo-ai/qodo-cover-action)).
-- A mutation runner for your stack: [Stryker](https://stryker-mutator.io) (JS/TS), [mutmut](https://github.com/boxed/mutmut) (Python), [PIT](https://pitest.org) (Java), [go-mutesting](https://github.com/avito-tech/go-mutesting) (Go).
+- Qodo Cover (`pip install qodo-cover` or the [Qodo Cover GitHub Action](https://github.com/qodo-ai/qodo-cover-action)). Optional in week 1 (Stryker alone provides the gate; Qodo Cover provides the test author).
+- A mutation runner for your stack: [Stryker](https://stryker-mutator.io) (JS/TS, wired by `--with-mutation`), [mutmut](https://github.com/boxed/mutmut) (Python), [PIT](https://pitest.org) (Java), [go-mutesting](https://github.com/avito-tech/go-mutesting) (Go).
 
 ## `.fqe.yml`
 
