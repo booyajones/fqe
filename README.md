@@ -39,8 +39,8 @@ fqe makes those checks unskippable.
               fqe workflow fires
                        │
               ┌────────┴────────┐
-              │ Bypass label?   │  ← identity from GitHub Events API
-              │ (server-side)   │     not from any file
+              │ Bypass comment? │  ← /fqe-bypass <sha>, identity from
+              │ (server-side)   │     the comments API, not a file
               └────────┬────────┘
                        │
        ┌───────────────┼───────────────────┐
@@ -64,8 +64,8 @@ fqe makes those checks unskippable.
 
 Three architectural invariants the design holds to:
 
-1. **No identity claim is read from a file the PR author wrote.** Bypass-requester identity comes from the GitHub Events API.
-2. **No LLM is in the verdict path.** `verdict.js` is a deterministic Node script with table-driven unit tests.
+1. **No identity claim is read from a file the PR author wrote.** Bypass identity comes from the server-recorded comment author (the comments API), never a PR-branch file.
+2. **No LLM decides the verdict.** `verdict.js` is a deterministic Node script with table-driven unit tests. Claude reviews PRs and can write tests, but those advise and author around the gate, they never compute PASS/FAIL.
 3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts plus Check Run outputs (server-side, immutable per run).
 
 If you need to verify any of these, read [docs/architecture.md](docs/architecture.md). If you'd rather skip the theory and start using it, jump to [Getting Started](docs/getting-started.md).
@@ -81,13 +81,14 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 - **Fail-closed config validation.** `fqe validate` (and `fqe run`) reject a malformed `.fqe.yml` instead of silently skipping the misconfigured check.
 - **Recipes** for the repo types we built this for (Node web, Python API, financial model, MCP server, outbound comms) plus the payments QA set: property-based, partner-contract, golden-master, oracle-tamper, and flaky quarantine.
 
-## What it deliberately does not do
+## Where the LLM is, and is not
 
-- It does not run runners. **You configure runners.** fqe is the orchestrator.
-- It does not write tests for you, lint your code, or audit your dependencies. **Your existing tools do those.** fqe reads their exit codes.
-- It does not have an LLM in the verdict path. The verdict is `verdict.js`, 160 lines, no AI, no dependencies.
-- It does not punish bypass. It audits bypass. If your team is consistently bypassing, the gate is wrong, not your team.
-- It does not replace your existing CI workflows. It runs alongside them as an additional required check.
+fqe uses Claude in two places, both **around** the gate: it reviews every PR (advisory comments) and it can write tests for you (the optional auto-author, gated by the mutation bouncer). What it never does is let an LLM **decide the merge**.
+
+- **No LLM decides PASS/FAIL.** The verdict is `verdict.js`, about 160 lines of pure deterministic code, no AI, no dependencies. This is the point: a merge gate must be deterministic (same PR, same answer), auditable (you can show exactly what blocked it), and immune to prompt injection (a PR cannot talk its way to green). Claude advises and authors; the gate decides.
+- **It does not run your runners.** You configure runners (your tests, linters, dependency audits). fqe orchestrates them and reads their exit codes. It does not bring its own test/lint/audit tools.
+- **It does not punish bypass.** It audits bypass. If your team is consistently bypassing, the gate is wrong, not your team.
+- **It does not replace your CI.** It runs alongside your existing workflows as an additional required check.
 
 ## Docs
 
