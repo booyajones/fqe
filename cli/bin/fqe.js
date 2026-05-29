@@ -40,6 +40,7 @@ const orchestrator = require('../lib/orchestrator');
 const initLib = require('../lib/init');
 const explainLib = require('../lib/explain');
 const coverageRatchet = require('../lib/coverage_ratchet');
+const mutationGate = require('../lib/mutation_gate');
 
 const FQE_VERSION = '0.1.0';
 
@@ -406,6 +407,47 @@ const SUBCOMMANDS = {
     }
   },
 
+  'mutation-gate'(args) {
+    // fqe mutation-gate --report stryker.json [--threshold 70]
+    //                   [--changed "a.ts,b.ts"] [--min-mutants 1]
+    //   OR (Python/cosmic-ray): --killed N --surviving N [--threshold 70]
+    // Rejects tests that run code but would not catch it breaking.
+    // exit 0 pass / 2 FAIL (blocks) / 4 INFRA (insufficient mutants -> neutral).
+    const opts = parseFlags(args);
+    const threshold = opts.threshold !== undefined ? parseFloat(opts.threshold) : 70;
+    const minMutants = opts['min-mutants'] !== undefined ? parseInt(opts['min-mutants'], 10) : 1;
+    const changedFiles =
+      typeof opts.changed === 'string' ? opts.changed.split(',').map((s) => s.trim()).filter(Boolean) : null;
+
+    let gateInput;
+    if (opts.report) {
+      let text;
+      try {
+        text = fs.readFileSync(opts.report, 'utf8');
+      } catch (e) {
+        return failInfra(`mutation-gate: cannot read report ${opts.report}: ${e.message}`);
+      }
+      gateInput = { tally: mutationGate.parseStryker(text), threshold, changedFiles, minMutants };
+    } else if (opts.killed !== undefined && opts.surviving !== undefined) {
+      gateInput = { killed: parseFloat(opts.killed), surviving: parseFloat(opts.surviving), threshold, minMutants };
+    } else {
+      die('mutation-gate: provide --report <stryker.json> OR --killed N --surviving N');
+    }
+
+    const result = mutationGate.evaluateMutationGate(gateInput);
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+
+    if (result.insufficient) {
+      // Cannot judge (no/too-few mutants, or unreadable): neutral, never block.
+      for (const r of result.reasons) process.stderr.write(`  ${r}\n`);
+      return failInfra('mutation-gate: insufficient data to judge; neutral.');
+    }
+    if (!result.pass) {
+      for (const r of result.reasons) process.stderr.write(`  ${r}\n`);
+      process.exit(EXIT.FAIL);
+    }
+  },
+
   wilson(args) {
     // utility: fqe wilson <successes> <n>
     const s = parseInt(args[0], 10);
@@ -464,6 +506,9 @@ const SUBCOMMANDS = {
       '  coverage-ratchet --report FILE      enforce coverage never drops + new code is tested',
       '                   [--baseline coverage-baseline.json] [--patch PCT]',
       '                   [--patch-threshold 80] [--bump]   exit 2 blocks merge',
+      '  mutation-gate --report stryker.json  reject tests that run code but would not',
+      '                [--threshold 70] [--changed "a.ts,b.ts"]   catch it breaking.',
+      '                OR --killed N --surviving N (cosmic-ray/Python). exit 2 blocks; 4 if too few mutants',
       '  smoke-tools                         Phase 1 Day 1.0 verification (local)',
       '',
       'exit codes:',

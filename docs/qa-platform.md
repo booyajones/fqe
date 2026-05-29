@@ -1,0 +1,74 @@
+# The Finexio QA platform
+
+This is the plan for taking a team from "tests run on every PR" (table stakes) to a regression-and-unit-test capability that compounds on its own. It came out of a multi-LLM council review and is sequenced by what unlocks what.
+
+The principle: **the test suite should write and guard itself, so it survives without one person babysitting it.** Quantity is guarded by the coverage ratchet; quality is guarded by the mutation gate; the labor is done by AI, fenced in by the mutation gate so it cannot flood the repo with meaningless tests.
+
+## What fqe gives you today (shipped)
+
+| Capability | Command | What it enforces |
+|---|---|---|
+| Deterministic gate | `fqe run` | Reads runner exit codes, one verdict, tamper-evident receipt |
+| Coverage ratchet | `fqe coverage-ratchet` | New code is tested (patch rule) + total coverage never drops |
+| Mutation gate | `fqe mutation-gate` | Tests must actually catch bugs, not just run code |
+| Wilson-CI stat gate | built into `fqe run` | Bounds adversarial/eval failure rates by blast class |
+
+The ratchet guards quantity. The mutation gate guards quality. Together they are the floor under which coverage cannot fall and quality cannot be faked.
+
+## The rollout sequence
+
+### Phase 1: trust gates (do these before anything else)
+
+1. **Coverage ratchet** (shipped). Wire `fqe coverage-ratchet` into every repo's test workflow. See `docs/recipes/coverage-ratchet.md`. Without this, every other investment decays silently.
+
+2. **Flaky-test quarantine** (BUY, do not build). For a small team, buy **Trunk Flaky Tests** or **BuildPulse** (roughly $30-50/seat/mo or a flat team rate). They auto-detect flakes, move them to a non-blocking lane, and open a ticket. Do this *before* adding more tests: one flaky test that everyone learns to "re-run" destroys the gate's authority. Building this yourself is a maintenance project that is not worth it under ~50 engineers. Interim stopgap if you must wait: retry-once on failure and treat a retry-pass as a flake signal (vitest `retry`, pytest `pytest-rerunfailures`), but log the signal, do not just hide it.
+
+### Phase 2: the AI test factory (ends hand-writing tests)
+
+3. **Qodo Cover, gated by the mutation gate.** Install Qodo Cover as a GitHub App. On a PR that drops patch coverage, it generates tests for the uncovered lines and pushes them to the PR. The critical step that makes this safe: run mutation testing on the changed files and reject the generated tests if they do not clear the kill-rate bar. AI test generators are notorious for assertionless, snapshot-style tests that look green and prove nothing; the mutation gate is the bouncer. See `docs/recipes/ai-test-generation.md` and the workflow template below.
+
+   Requires (human action): install the Qodo Cover GitHub App, add `ANTHROPIC_API_KEY` to repo secrets (uses the existing Claude budget, no new vendor).
+
+### Phase 3: payments correctness (the bet-the-company tests)
+
+4. **Property-based tests** for money/state invariants. Python: Hypothesis. TS: fast-check. Test invariants, not example values: sum of debits equals sum of credits, idempotency keys never double-apply, rounding conserves cents, retries are idempotent. Three to five of these on the highest-value money flow catch the regressions example-based tests structurally cannot. See `docs/recipes/property-based-testing.md`.
+
+5. **Partner-API contract / record-replay tests.** A B2B payments company lives or dies by partner API drift (banks, processors, KYC). Record real (sanitized) partner responses with a TTL and replay them in CI, so a partner schema change fails in CI, not in production. Tools: vcrpy (Python), PollyJS/nock (TS); Pact for your own service-to-service.
+
+6. **Golden-master (approval) tests** for generated financial artifacts (NACHA files, remittance CSVs, invoice PDFs). Normalize timestamps/IDs, commit the verified output, and diff future output for human approval. Tool: ApprovalTests.
+
+### Deliberately deferred
+
+Visual-regression, end-to-end browser, and performance testing. For a backend-heavy payments shop, silent money-path corruption and partner drift are the real risks, not CSS. These earn their place later, not now.
+
+## The one liability to fix in parallel
+
+The fqe bypass mechanism must be token-gated, auto-expiring, and logged before a payments company puts it on the critical path. An auditor (SOC 2 / PCI) and an attacker both look there first. Tracked for the 0.2 hardening (TTL-bound bypass labels with head-SHA binding).
+
+## The Phase-2 workflow template (Qodo + mutation gate)
+
+See `docs/recipes/ai-test-generation.md` for the full version. The shape:
+
+```yaml
+name: ai-test-factory
+on: pull_request
+jobs:
+  generate-and-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      # 1. Patch coverage; if it dropped, Qodo Cover fills the gap
+      - run: npm test -- --coverage --coverage.reporter=json-summary
+      - name: qodo cover (only if patch coverage low)
+        env: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }
+        run: npx qodo-cover --source src/ --test test/ --max-iterations 3
+      # 2. Mutation gate on the changed files: reject weak/AI tests
+      - run: npx stryker run --reporters json --mutate "$(git diff --name-only origin/main... | tr '\n' ',')"
+      - run: |
+          npx --yes github:booyajones/fqe#fqe-v0.1.0 cli/bin/fqe.js mutation-gate \
+            --report reports/mutation/mutation.json --threshold 70 \
+            --changed "$(git diff --name-only origin/main... | tr '\n' ',')"
+```
