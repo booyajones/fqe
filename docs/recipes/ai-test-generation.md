@@ -10,6 +10,8 @@ You do not need a vendor for the author. The same `anthropics/claude-code-action
 
 It is label-triggered on purpose: you decide when to spend the tokens, and a flaky author never blocks a merge (the gate does). This is the lowest-cost path to "tests write themselves," and it upgrades cleanly to qodo-ci or hosted Qodo later (same bouncer, different author).
 
+> **Do not auto-author tests for money-path code.** The mutation gate proves a generated test detects code changes, not that it encodes the correct business rule. An LLM can write a test that kills mutants while asserting the wrong invariant (a debit where a credit belongs). For balances, idempotency, rounding, reconciliation, and partner contracts, a human writes the invariant and the gate checks its strength. Use the auto-author for plumbing and pure helpers, not the ledger.
+
 ## Why this recipe exists
 
 Two published findings drive the architecture:
@@ -38,7 +40,7 @@ verdict: PASS if kill rate >= threshold for blast class; FAIL otherwise
 ## One-command install (JS/TS repos)
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.5.0 cli/bin/fqe.js init --with-mutation
+npx --yes github:booyajones/fqe#fqe-v0.6.0 cli/bin/fqe.js init --with-mutation
 npm install --save-dev @stryker-mutator/core
 git add .fqe.yml .github/ scripts/ stryker.conf.json package.json
 git commit -m "Wire fqe + Stryker mutation gate"
@@ -178,7 +180,7 @@ jobs:
         run: npx stryker run --reporters json
       - name: fqe verdict
         run: |
-          npx --yes github:booyajones/fqe#fqe-v0.5.0 cli/bin/fqe.js run \
+          npx --yes github:booyajones/fqe#fqe-v0.6.0 cli/bin/fqe.js run \
             --full --base origin/main --output ./out/
       - name: upload receipt
         if: always()

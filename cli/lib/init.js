@@ -121,7 +121,7 @@ jobs:
           # To update fqe, push a new tag in finexio-skills and re-run fqe init.
           # When ghcr.io/booyajones/fqe:0.1 is published with cosign verify,
           # this entire step can be replaced with: container: ghcr.io/booyajones/fqe:0.1
-          FQE_TAG="fqe-v0.5.0"
+          FQE_TAG="fqe-v0.6.0"
           git clone --depth=1 --branch "$FQE_TAG" \\
             https://github.com/booyajones/fqe.git /tmp/fqe-src
           cd /tmp/fqe-src/cli
@@ -147,7 +147,6 @@ jobs:
           GH_TOKEN: \${{ github.token }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
           REPO: \${{ github.repository }}
-          BASE_REF: \${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
           # Bypass = an allowlisted maintainer posts a PR comment:
@@ -158,8 +157,12 @@ jobs:
           # never from a PR-branch file. See cli/lib/bypass_guard.js and the council
           # design. Fails CLOSED: any error -> bypass=false -> the gate runs.
           HEAD_SHA=$(gh api "/repos/$REPO/pulls/$PR_NUMBER" --jq '.head.sha')
-          # Allowlist read at the BASE branch, out of the PR author's reach.
-          ALLOW=$(gh api "/repos/$REPO/contents/.github/fqe-bypass-allowlist.yml?ref=$BASE_REF" \\
+          # Allowlist read at the DEFAULT-BRANCH HEAD (the current allowlist), so
+          # removing someone takes effect immediately, even on in-flight PRs. NOT
+          # the PR base: a PR branched from an old commit where the author was
+          # still allowlisted must not get a stale allowlist (offboarding hole).
+          DEFAULT_BRANCH=$(gh api "/repos/$REPO" --jq '.default_branch')
+          ALLOW=$(gh api "/repos/$REPO/contents/.github/fqe-bypass-allowlist.yml?ref=$DEFAULT_BRANCH" \\
                     --jq '.content' | base64 -d | yq '.allowed_actors[]' - | paste -sd, - || true)
           # Only comments within the max TTL window, normalized to the guard shape.
           SINCE=$(date -u -d '72 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-72H +%Y-%m-%dT%H:%M:%SZ)
@@ -215,7 +218,10 @@ jobs:
           path: |
             out/QA-RESULT.yml
             out/QA-RESULT.md
-          retention-days: 90
+          # 365 days for SOC2/PCI evidence retention (1-year minimum). The repo's
+          # max artifact-retention setting must allow this; the Check Run output
+          # also persists with the commit. For 7-year SOX, mirror to object storage.
+          retention-days: 365
 
       - name: Determine fqe/pass state from verdict
         if: always()

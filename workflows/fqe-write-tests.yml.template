@@ -62,7 +62,11 @@ jobs:
             - Match this repo's existing test framework and file layout.
             - Do NOT write snapshot-only or assertionless tests.
             - Do NOT modify non-test source files.
-            - For money or state code, cover idempotency, rounding, and error paths.
+            - Do NOT write tests for money-path code (balances, idempotency,
+              rounding, reconciliation, partner contracts). Skip those files and
+              list them in your summary for a human to test. Mutation survival
+              proves a test detects code changes, not that it encodes the correct
+              financial rule, so a person must author money invariants.
 
             When done, commit the new and changed test files to this branch with
             a clear message and push.

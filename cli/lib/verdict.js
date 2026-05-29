@@ -37,6 +37,14 @@ const BLAST_RADIUS_THRESHOLDS = Object.freeze({
 });
 
 /**
+ * Blast classes whose threshold breach is a hard FAIL (blocks the merge), not
+ * an advisory FLAG. A statistical breach on money/state code is not a "heads
+ * up" — it blocks. Looser classes (outbound copy, reads) stay FLAG.
+ * (Closes the council's "FLAG is advisory theater" finding, 2026-05-29.)
+ */
+const BLAST_RADIUS_BLOCKS = Object.freeze(new Set(['mcp-write-or-financial']));
+
+/**
  * @typedef {Object} RunnerResult
  * @property {string}  name
  * @property {boolean} required
@@ -53,6 +61,8 @@ const BLAST_RADIUS_THRESHOLDS = Object.freeze({
  * @typedef {Object} VerdictInput
  * @property {RunnerResult[]} runners
  * @property {AdversarialStat[]=} adversarial_stats
+ * @property {string[]=} require_stats_for  // runner names that MUST emit a stat,
+ *                                           // else FAIL (fail closed on dropped stats)
  *
  * @typedef {Object} VerdictOutput
  * @property {'PASS'|'FLAG'|'FAIL'} verdict
@@ -132,10 +142,30 @@ function computeVerdict(input) {
     const threshold = BLAST_RADIUS_THRESHOLDS[s.blast_radius];
     const ciUpper = s.ci_95[1];
     if (ciUpper > threshold) {
-      hasFlag = true;
-      reasons.push(
-        `Wilson CI upper ${ciUpper.toFixed(4)} exceeds canonical threshold ${threshold.toFixed(4)} for blast_radius=${s.blast_radius} on runner=${s.runner}`
-      );
+      const msg = `Wilson CI upper ${ciUpper.toFixed(4)} exceeds canonical threshold ${threshold.toFixed(4)} for blast_radius=${s.blast_radius} on runner=${s.runner}`;
+      if (BLAST_RADIUS_BLOCKS.has(s.blast_radius)) {
+        hasFail = true; // money/state breach blocks; it is not advisory
+        reasons.push(`BLOCKED (money/state breach): ${msg}`);
+      } else {
+        hasFlag = true;
+        reasons.push(msg);
+      }
+    }
+  }
+
+  // Pass 4: fail closed on a dropped stats payload. If the caller declares that
+  // certain runners MUST emit adversarial_stats (because they carry a blast
+  // class), and none are present, that is FAIL — a compromised or misconfigured
+  // orchestrator cannot pass by simply omitting the stats array.
+  // (Closes the council's "fails open if adversarial_stats omitted" finding.)
+  const requireStatsFor = Array.isArray(input.require_stats_for) ? input.require_stats_for : [];
+  if (requireStatsFor.length > 0) {
+    const runnersWithStats = new Set(stats.map((s) => s && s.runner));
+    for (const name of requireStatsFor) {
+      if (!runnersWithStats.has(name)) {
+        hasFail = true;
+        reasons.push(`runner "${name}" must emit adversarial_stats but none were present (failing closed: a dropped stats payload cannot pass)`);
+      }
     }
   }
 
@@ -153,4 +183,5 @@ module.exports = {
   FLAG,
   FAIL,
   BLAST_RADIUS_THRESHOLDS,
+  BLAST_RADIUS_BLOCKS,
 };

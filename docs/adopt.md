@@ -7,7 +7,7 @@ This is the playbook for turning fqe on and getting value from it without a big 
 The job is simple: make the checks you already have unskippable, and catch the bugs those checks cannot see. Three layers do that, and they do not overlap.
 
 1. **The gate (`fqe run`).** Deterministic and blocking. It runs your configured runners (tests, lint, type-check, mutation, whatever), reads their exit codes, and emits one verdict plus a tamper-evident receipt. No AI decides pass or fail. This is the layer that *blocks* a merge.
-2. **The mutation bouncer (`fqe mutation-gate`).** Quality, blocking. Coverage tells you a line ran. Mutation testing tells you a test would CATCH that line breaking. The bouncer rejects tests that run code without asserting anything. It is what lets you trust a test, yours or an AI's. We proved it on real code: a file with green coverage caught 0 of 6 injected bugs, and the bouncer flagged exactly that.
+2. **The mutation bouncer (`fqe mutation-gate`).** Quality, blocking. Coverage tells you a line ran. Mutation testing tells you a test would CATCH that line breaking. The bouncer rejects tests that run code without asserting anything. It is what lets you trust a test, yours or an AI's. We demonstrated it on real Finexio code: a file with green coverage left 6 of 14 mutations uncaught (a 57% kill rate), and the bouncer flagged exactly that and blocked.
 3. **Claude review.** Advisory, non-blocking. Anthropic's Claude action reviews every PR on your own API key (no per-seat vendor) and comments on logic bugs the gate cannot see: float money math, missing idempotency, swallowed errors. It advises. It does not block.
 
 Plus a **bypass** for emergencies: an allowlisted person posts `/fqe-bypass <head-sha> <24h|48h|72h>` on the PR. It is bound to that exact commit (a new push invalidates it), it expires, and every use is logged.
@@ -18,7 +18,7 @@ The rule of thumb: the gate and the bouncer block, Claude advises, the bypass is
 
 ```bash
 # 1. Bootstrap the gate (writes .fqe.yml, the workflow, the allowlists)
-npx --yes github:booyajones/fqe#fqe-v0.5.0 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.6.0 cli/bin/fqe.js init
 
 # 2. Tell it your real runners. Edit .fqe.yml: point each runner at the
 #    command you already use (npm test, pytest, your linter, Stryker).
@@ -29,7 +29,7 @@ npx --yes github:booyajones/fqe#fqe-v0.5.0 cli/bin/fqe.js init
 gh secret set ANTHROPIC_API_KEY -R <owner>/<repo>   # paste your Anthropic key
 
 # 4. Validate the config before it can silently disable a check:
-npx --yes github:booyajones/fqe#fqe-v0.5.0 cli/bin/fqe.js validate
+npx --yes github:booyajones/fqe#fqe-v0.6.0 cli/bin/fqe.js validate
 
 # 5. Commit and open a PR. The gate runs, Claude reviews. Both are advisory
 #    until you do the next step.
