@@ -32,7 +32,7 @@ verdict: PASS if kill rate >= threshold for blast class; FAIL otherwise
 ## One-command install (JS/TS repos)
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.3.0 cli/bin/fqe.js init --with-mutation
+npx --yes github:booyajones/fqe#fqe-v0.4.0 cli/bin/fqe.js init --with-mutation
 npm install --save-dev @stryker-mutator/core
 git add .fqe.yml .github/ scripts/ stryker.conf.json package.json
 git commit -m "Wire fqe + Stryker mutation gate"
@@ -178,7 +178,7 @@ jobs:
         run: npx stryker run --reporters json
       - name: fqe verdict
         run: |
-          npx --yes github:booyajones/fqe#fqe-v0.3.0 cli/bin/fqe.js run \
+          npx --yes github:booyajones/fqe#fqe-v0.4.0 cli/bin/fqe.js run \
             --full --base origin/main --output ./out/
       - name: upload receipt
         if: always()

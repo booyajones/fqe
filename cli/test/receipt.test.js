@@ -130,7 +130,7 @@ test('buildReceipt REJECTS bypass with wrong requester_source (closes v5 flaw)',
   };
   assert.throws(
     () => buildReceipt(validCtx({ bypass: bad })),
-    /requester_source MUST equal/
+    /requester_source MUST/
   );
 });
 
@@ -144,6 +144,18 @@ test('buildReceipt ACCEPTS bypass with correct requester_source', () => {
   };
   const r = buildReceipt(validCtx({ bypass: ok }));
   assert.equal(r.bypass.requester, 'chris-wyatt');
+});
+
+test('buildReceipt ACCEPTS the v0.4.0 comment-based identity source', () => {
+  const ok = {
+    requester: 'chris-wyatt',
+    requester_source: 'github_comments_api_v3',
+    events_url: 'https://github.com/x/y/pull/1',
+    allowlist_version: 'sha256:' + 'c'.repeat(64),
+    timestamp: '2026-05-22T23:34:00Z',
+  };
+  const r = buildReceipt(validCtx({ bypass: ok }));
+  assert.equal(r.bypass.requester_source, 'github_comments_api_v3');
 });
 
 test('buildReceipt rejects bypass missing required sub-field', () => {
@@ -205,7 +217,7 @@ test('parseReceiptYaml rejects bypass with bad requester_source even after tampe
   }));
   const { yaml } = serializeReceipt(r);
   const tampered = yaml.replace(REQUESTER_SOURCE_OK, 'pr-branch-file');
-  assert.throws(() => parseReceiptYaml(tampered), /requester_source MUST equal/);
+  assert.throws(() => parseReceiptYaml(tampered), /requester_source MUST/);
 });
 
 // ─── writeReceiptFiles writes both files atomically ─────────────────────

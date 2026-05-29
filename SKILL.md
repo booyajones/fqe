@@ -24,7 +24,7 @@ Do NOT fire for: pure planning/brainstorming, read-only code exploration, docume
 
 Every operation Chris asks for must hold these. If a request would violate one, push back and explain.
 
-1. **No identity claim is ever read from a file the constrained actor wrote.** The bypass requester comes from the GitHub Events API (server-recorded). Receipt content is informational, never trusted for identity.
+1. **No identity claim is ever read from a file the constrained actor wrote.** The bypass requester comes from the GitHub comments API (server-recorded comment author). Receipt content is informational, never trusted for identity.
 2. **No LLM is in the verdict path.** `verdict.js` is a deterministic Node script. Same inputs produce the same output. You may surface the verdict but never author one.
 3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts + Check Run outputs (server-side, immutable).
 
@@ -42,7 +42,7 @@ cat QA-RESULT.md          # human-readable
 fqe receipt parse QA-RESULT.yml | jq .verdict
 ```
 
-Surface the verdict + reasons. **Never propose `git push --no-verify` or `--force`.** If something needs to bypass, that's a deliberate human act (PR label `fqe-bypass`, allowlist-checked).
+Surface the verdict + reasons. **Never propose `git push --no-verify` or `--force`.** If something needs to bypass, that's a deliberate human act (an allowlisted maintainer posts a SHA-bound `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment).
 
 ### Use case 2: Chris says "QA this" or "verify this"
 
@@ -103,7 +103,7 @@ If `rate > 0.10`, the `fqe/second-reviewer-required` check goes red on every PR 
 - **Do not propose `--no-verify`, `--force-push`, or `--admin` overrides.** These bypass the gate without audit trail.
 - **Do not hand-edit `QA-RESULT.yml`.** It's commit-SHA-bound: edits invalidate it.
 - **Do not add yourself to `.github/fqe-bypass-allowlist.yml` in the same PR you want to bypass.** The allowlist is read at base commit, not HEAD, so this can't work anyway.
-- **Do not propose adding `fqe-bypass` PR label on Chris's behalf without explicit "yes, do it".**
+- **Do not propose posting a `/fqe-bypass <sha> <ttl>` PR comment on Chris's behalf without explicit "yes, do it".**
 - **Do not use this skill to score finished prose**: that's `/gauntlet`.
 
 ## What's verified (real CI evidence)

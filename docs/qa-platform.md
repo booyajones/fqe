@@ -47,7 +47,7 @@ Visual-regression, end-to-end browser, and performance testing. For a backend-he
 
 ## The one liability to fix in parallel
 
-The fqe bypass mechanism must be token-gated, auto-expiring, and logged before a payments company puts it on the critical path. An auditor (SOC 2 / PCI) and an attacker both look there first. This is still open as of 0.3.0 and is the top item for the next hardening pass: TTL-bound bypass labels (`fqe-bypass-24h`, `-48h`, `-72h`) with head-SHA binding, so a bypass cannot persist across new pushes.
+The fqe bypass mechanism must be auto-expiring, head-bound, and logged before a payments company puts it on the critical path. An auditor (SOC 2 / PCI) and an attacker both look there first. **Closed in 0.4.0** (designed via a 3-LLM council): bypass is a SHA-bound, TTL'd PR comment, `/fqe-bypass <head-sha> <24h/48h/72h>`. Identity and time come from the comments API, SHA equality is the binding so any new push invalidates it, edited comments are rejected, and it fails closed. See `cli/lib/bypass_guard.js`.
 
 ## The Phase-2 workflow template (Qodo + mutation gate)
 
@@ -72,7 +72,7 @@ jobs:
       # 2. Mutation gate on the changed files: reject weak/AI tests
       - run: npx stryker run --reporters json --mutate "$(git diff --name-only origin/main... | tr '\n' ',')"
       - run: |
-          npx --yes github:booyajones/fqe#fqe-v0.3.0 cli/bin/fqe.js mutation-gate \
+          npx --yes github:booyajones/fqe#fqe-v0.4.0 cli/bin/fqe.js mutation-gate \
             --report reports/mutation/mutation.json --threshold 70 \
             --changed "$(git diff --name-only origin/main... | tr '\n' ',')"
 ```

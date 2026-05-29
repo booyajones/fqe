@@ -9,7 +9,7 @@ fqe is an orchestrator. It does not lint, test, or judge. It runs the runners yo
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.3.0 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.4.0 cli/bin/fqe.js init
 git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
@@ -75,7 +75,7 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 - **A required GitHub Check Run** (`fqe/pass`) you can wire to branch protection.
 - **Plain-English failure explanations** in the Check Run output. Every failure includes the repro command.
 - **A tamper-evident receipt** (`QA-RESULT.yml`) bound to the commit SHA, uploaded as an artifact and posted to the Check Run.
-- **A bypass mechanism that audits itself.** Every bypass is logged. If the rolling 14-day rate exceeds 10%, a second `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer signs off.
+- **A SHA-bound, self-auditing bypass.** Bypass is a PR comment, `/fqe-bypass <head-sha> <24h|48h|72h>`, by an allowlisted maintainer. The named SHA must equal the live head, so any new push invalidates it (no bypassing a clean commit then pushing bad code), it expires on a TTL, and every bypass is logged. If the rolling 14-day rate exceeds 10%, a second `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer signs off.
 - **Statistical guard rails on adversarial stats.** When a runner emits Wilson-CI confidence bounds (for LLM eval-style runners), fqe enforces the right threshold for the blast radius class.
 - **An answer-key guard.** `fqe oracle-guard` requires a second reviewer when a PR edits the golden masters, cassettes, coverage baseline, or `.fqe.yml` it is judged by, so a PR cannot pass by moving the goalposts.
 - **Fail-closed config validation.** `fqe validate` (and `fqe run`) reject a malformed `.fqe.yml` instead of silently skipping the misconfigured check.
@@ -179,7 +179,7 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 The architectural invariants are real. The implementation does not yet enforce all of them on the hard threats. If you are putting fqe on the critical path of a production repo, you need to know these:
 
-1. **Default install uses a tag, not a SHA.** Git tags are force-pushable, so a maintainer-account compromise can silently change what `fqe-v0.3.0` resolves to. The README install command is tag-pinned for ergonomic onboarding. **For production: pin to a commit SHA.** See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned). The `ghcr.io/finexio/fqe:0.1` Docker image planned for 0.2 will be pinned by digest.
+1. **Default install uses a tag, not a SHA.** Git tags are force-pushable, so a maintainer-account compromise can silently change what `fqe-v0.4.0` resolves to. The README install command is tag-pinned for ergonomic onboarding. **For production: pin to a commit SHA.** See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned). The `ghcr.io/finexio/fqe:0.1` Docker image planned for 0.2 will be pinned by digest.
 
 2. **Bypass labels are not bound to the head SHA.** Once an allowlisted user adds `fqe-bypass`, the label persists across subsequent pushes to that PR. If the allowlisted account is compromised mid-PR, the attacker can push malicious commits without re-triggering the gate. **Mitigation today: branch protection rule "Dismiss stale pull request approvals when new commits are pushed" combined with a no-push-after-bypass team norm.** TTL-bound labels with head-SHA binding are the 0.2 fix.
 

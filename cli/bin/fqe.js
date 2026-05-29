@@ -34,7 +34,7 @@ const { computeVerdict, PASS, FLAG, FAIL, BLAST_RADIUS_THRESHOLDS } = require('.
 const { wilson95, minNForUpperBound } = require('../lib/wilson');
 const {
   buildReceipt, serializeReceipt, parseReceiptYaml, writeReceiptFiles,
-  hashFiles, hashString, REQUESTER_SOURCE_OK,
+  hashFiles, hashString, REQUESTER_SOURCE_OK, REQUESTER_SOURCES_OK,
 } = require('../lib/receipt');
 const tally = require('../lib/bypass_tally');
 const orchestrator = require('../lib/orchestrator');
@@ -44,8 +44,9 @@ const coverageRatchet = require('../lib/coverage_ratchet');
 const mutationGate = require('../lib/mutation_gate');
 const configSchema = require('../lib/config_schema');
 const oracleGuard = require('../lib/oracle_guard');
+const bypassGuard = require('../lib/bypass_guard');
 
-const FQE_VERSION = '0.3.0';
+const FQE_VERSION = '0.4.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -246,6 +247,41 @@ const SUBCOMMANDS = {
     }
   },
 
+  'bypass-check'(args) {
+    // fqe bypass-check --comments <file|-> --head <40hex>
+    //                  (--allowed "a,b" | --allowlist-file <path>) [--now ISO]
+    // Evaluates a SHA-bound /fqe-bypass <sha> <ttl> PR comment. The binding is
+    // SHA equality, so a new push invalidates the bypass automatically. Identity
+    // and time come from the server-recorded comment objects only.
+    // exit 0 = a valid bypass applies (skip the gate); 3 = no valid bypass (run
+    // the gate); 1 = malformed inputs. Fail closed: any non-zero means run the gate.
+    const opts = parseFlags(args);
+    requireFlags(opts, ['head']);
+    if (!/^[a-f0-9]{40}$/.test(opts.head)) {
+      die(`bypass-check: --head must be 40-char hex, got '${opts.head}'`);
+    }
+    const comments = readJsonInput(opts.comments);
+    if (!Array.isArray(comments)) {
+      die('bypass-check: --comments must be a JSON array of comment objects');
+    }
+    let allowlist = [];
+    if (typeof opts.allowed === 'string') {
+      allowlist = opts.allowed.split(',').map((s) => s.trim()).filter(Boolean);
+    } else if (opts['allowlist-file']) {
+      if (!fs.existsSync(opts['allowlist-file'])) die(`bypass-check: allowlist file not found: ${opts['allowlist-file']}`);
+      allowlist = fs.readFileSync(opts['allowlist-file'], 'utf8')
+        .split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !s.startsWith('#'));
+    }
+    const result = bypassGuard.evaluateBypass({
+      comments, headSha: opts.head, allowlist, now: opts.now,
+    });
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    if (!result.bypass) {
+      process.stderr.write(`  ${result.reason}\n`);
+      process.exit(EXIT.FLAG); // 3 = no valid bypass; the gate should run normally
+    }
+  },
+
   'receipt'(args) {
     const sub = args[0];
     const rest = args.slice(1);
@@ -271,8 +307,8 @@ const SUBCOMMANDS = {
       // expects args: --commit X --pr N --actor X --requester-source X --reason-link X --output dir
       const opts = parseFlags(rest);
       requireFlags(opts, ['commit', 'pr', 'actor', 'requester-source', 'output']);
-      if (opts['requester-source'] !== REQUESTER_SOURCE_OK) {
-        die(`generate-bypass: requester-source MUST be '${REQUESTER_SOURCE_OK}' (closes v5 identity flaw)`);
+      if (!REQUESTER_SOURCES_OK.has(opts['requester-source'])) {
+        die(`generate-bypass: requester-source MUST be one of ${[...REQUESTER_SOURCES_OK].join(', ')} (closes v5 identity flaw)`);
       }
       const now = new Date().toISOString();
       const ctx = {
@@ -573,6 +609,8 @@ const SUBCOMMANDS = {
       '  validate [--config .fqe.yml]        check .fqe.yml fail-closed: unknown keys, bad types, never-fires runners',
       '  oracle-guard [--changed "a,b"]      flag a PR that edits its own ground truth / grading rules',
       '               [--base SHA --head SHA] [--include-tests] [--block]   (requires a second reviewer)',
+      '  bypass-check --comments F --head SHA  validate a SHA-bound /fqe-bypass comment (TTL + allowlist,',
+      '               (--allowed "a,b" | --allowlist-file F) [--now ISO]    head-bound; exit 0=bypass, 3=none)',
       '',
       'verdict + receipt primitives:',
       '  verdict <results-json|->            compute verdict deterministically (no LLM in path)',

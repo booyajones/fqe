@@ -87,12 +87,15 @@ test('init: .fqe.yml has empty runners (gate is no-op until configured)', () => 
   assert.match(cfg, /^runners:\s*\{\}$/m);
 });
 
-test('init: workflow files contain Events-API identity lookup (invariant #1)', () => {
+test('init: workflow reads bypass identity from a server-recorded source, not a PR file (invariant #1)', () => {
   const dir = freshGitRepo();
   initLib.init({ dir, actor: 'chris-wyatt' });
   const quality = fs.readFileSync(path.join(dir, '.github/workflows/fqe-quality.yml'), 'utf8');
-  assert.match(quality, /events/);
-  assert.match(quality, /actor\.login/);
+  // v0.4.0 SHA-bound comment flow: identity is the comment author (user.login)
+  // from the comments API, the SHA is bound, and the gate fails closed.
+  assert.match(quality, /\.user\.login/);          // server-recorded identity
+  assert.match(quality, /issues\/\$PR_NUMBER\/comments/); // comments API, not a PR file
+  assert.match(quality, /fqe bypass-check/);        // SHA-bound guard
   assert.match(quality, /fqe-bypass/);
 });
 

@@ -18,7 +18,7 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Root cause:** an old version of the `parseFlags` helper treated `--output-text "$BODY"` as a boolean true when `$BODY` started with `--` (e.g., a YAML frontmatter delimiter `---`).
 
-**Fix:** upgrade to `fqe-v0.1.0` or later. Re-pin the workflow's `git clone --branch fqe-v0.3.0` (the current tag) to pick up the fix. If you've pinned an older SHA, bump it.
+**Fix:** upgrade to `fqe-v0.1.0` or later. Re-pin the workflow's `git clone --branch fqe-v0.4.0` (the current tag) to pick up the fix. If you've pinned an older SHA, bump it.
 
 ### `fqe: error: 'gh' CLI not found on PATH`
 
@@ -105,7 +105,7 @@ If you've added `fqe-quality.yml` to your repo and it's running, but PRs can sti
 Two paths:
 
 1. **Fix the underlying failure.** Run `fqe run` locally, read the explainer output, apply the fix. Usually 2-5 minutes.
-2. **Bypass with the `fqe-bypass` label** if you have repo-write permission and you're on the `.github/fqe-bypass-allowlist.yml`. Bypass is logged in the rolling tally. If your team's bypass rate goes above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer adds the `fqe-second-approved` label.
+2. **Bypass with a `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment** if you have repo-write and you're on `.github/fqe-bypass-allowlist.yml`. The comment must name the exact current head SHA (run `git rev-parse HEAD`), so any new push invalidates it and you re-post. It is valid only within its TTL, and an edited comment is rejected. Re-run the fqe check after posting so it re-evaluates. Bypass is logged in the rolling tally. If your team's bypass rate goes above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer second-approves.
 
 `fqe` does not punish bypass. It audits it.
 

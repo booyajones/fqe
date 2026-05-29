@@ -27,6 +27,10 @@ const crypto = require('node:crypto');
 
 const SCHEMA_VERSION = 1;
 const REQUESTER_SOURCE_OK = 'github_events_api_v3';
+// Allowed server-recorded identity sources for a bypass. Both are GitHub REST
+// objects the PR author cannot forge: the labeled-event actor (legacy label
+// path) and the comment author (the v0.4.0 SHA-bound /fqe-bypass comment path).
+const REQUESTER_SOURCES_OK = new Set([REQUESTER_SOURCE_OK, 'github_comments_api_v3']);
 
 /**
  * Compute SHA256 over a list of files. Deterministic: files are sorted by
@@ -197,10 +201,11 @@ function validateCtx(ctx) {
     throw new Error(`buildReceipt: verdict must be PASS|FLAG|FAIL, got '${ctx.verdict}'`);
   }
   if (ctx.bypass) {
-    // Hard invariant: bypass identity may ONLY come from server-recorded events.
-    if (ctx.bypass.requester_source !== REQUESTER_SOURCE_OK) {
+    // Hard invariant: bypass identity may ONLY come from a server-recorded
+    // GitHub source (labeled-event actor OR comment author), never a PR file.
+    if (!REQUESTER_SOURCES_OK.has(ctx.bypass.requester_source)) {
       throw new Error(
-        `buildReceipt: bypass.requester_source MUST equal '${REQUESTER_SOURCE_OK}' ` +
+        `buildReceipt: bypass.requester_source MUST be one of ${[...REQUESTER_SOURCES_OK].join(', ')} ` +
         `(closes v5 attacker-controlled-identity flaw); got '${ctx.bypass.requester_source}'`
       );
     }
@@ -315,9 +320,9 @@ function parseReceiptYaml(yamlText) {
     );
   }
   // Re-validate the identity invariant on parse too
-  if (value.bypass && value.bypass.requester_source !== REQUESTER_SOURCE_OK) {
+  if (value.bypass && !REQUESTER_SOURCES_OK.has(value.bypass.requester_source)) {
     throw new Error(
-      `parseReceiptYaml: bypass.requester_source MUST equal '${REQUESTER_SOURCE_OK}'`
+      `parseReceiptYaml: bypass.requester_source MUST be one of ${[...REQUESTER_SOURCES_OK].join(', ')}`
     );
   }
   return value;
@@ -432,6 +437,7 @@ function writeReceiptFiles(receipt, outDir) {
 module.exports = {
   SCHEMA_VERSION,
   REQUESTER_SOURCE_OK,
+  REQUESTER_SOURCES_OK,
   hashFiles,
   hashString,
   buildReceipt,
