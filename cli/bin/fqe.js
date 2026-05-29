@@ -22,9 +22,10 @@
  *
  * Exit codes:
  *   0  success / verdict=PASS
- *   1  generic error
+ *   1  generic error (includes a malformed .fqe.yml: fail closed, never neutral)
  *   2  verdict = FAIL (build should not proceed)
  *   3  verdict = FLAG (build can proceed but is flagged)
+ *   4  INFRA (fqe itself errored, e.g. gh API timeout; neutral Check Run, never blocks)
  */
 
 const fs = require('node:fs');
@@ -41,8 +42,10 @@ const initLib = require('../lib/init');
 const explainLib = require('../lib/explain');
 const coverageRatchet = require('../lib/coverage_ratchet');
 const mutationGate = require('../lib/mutation_gate');
+const configSchema = require('../lib/config_schema');
+const oracleGuard = require('../lib/oracle_guard');
 
-const FQE_VERSION = '0.1.0';
+const FQE_VERSION = '0.3.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -151,6 +154,96 @@ const SUBCOMMANDS = {
     if (result.verdict === FAIL) process.exit(2);
     if (result.verdict === FLAG) process.exit(3);
     process.exit(0);
+  },
+
+  validate(args) {
+    // fqe validate [--config .fqe.yml] [--dir D]
+    // Check .fqe.yml against the schema BEFORE it can silently disable a gate.
+    // No config = no runners = always PASS, so a missing file is valid.
+    // exit 0 = valid, exit 1 = invalid (same fail-closed code `run` uses).
+    const opts = parseFlags(args);
+    const dir = opts.dir || process.cwd();
+    const configPath = opts.config || path.join(dir, '.fqe.yml');
+    if (!fs.existsSync(configPath)) {
+      process.stdout.write(JSON.stringify({
+        valid: true, config: configPath, errors: [],
+        note: 'no .fqe.yml present (no runners configured, gate passes)',
+      }, null, 2) + '\n');
+      return;
+    }
+    let parsed;
+    try {
+      parsed = orchestrator.parseConfigYaml(fs.readFileSync(configPath, 'utf8'));
+    } catch (e) {
+      die(`validate: ${configPath} could not be parsed: ${e.message}`);
+    }
+    const result = configSchema.validateConfig(parsed);
+    process.stdout.write(JSON.stringify({
+      valid: result.valid, config: configPath, errors: result.errors,
+    }, null, 2) + '\n');
+    if (!result.valid) {
+      for (const e of result.errors) process.stderr.write(`  ${e}\n`);
+      die(`validate: ${result.errors.length} problem(s) in ${configPath}`);
+    }
+  },
+
+  'oracle-guard'(args) {
+    // fqe oracle-guard [--changed "a,b"] [--base SHA --head SHA] [--repo-dir D]
+    //                  [--include-tests] [--block]
+    // Detects when a PR edits the recorded ground truth / grading rules it is
+    // judged by (golden masters, snapshots, cassettes, fixtures, seeds,
+    // .fqe.yml, coverage-baseline.json, mutation config, reviewer allowlists),
+    // or, with --include-tests, edits a test file alongside the source it
+    // grades. Emits a signal the fqe-second-approve workflow uses to require a
+    // second human. The guard detects; the workflow enforces.
+    // exit 0 = clean / 3 = FLAG (signal, default) / 2 = FAIL (--block).
+    const opts = parseFlags(args);
+    const resolved = oracleGuard.resolveChangedFiles({
+      changed: typeof opts.changed === 'string' ? opts.changed : undefined,
+      baseSha: opts.base,
+      headSha: opts.head,
+      repoDir: opts['repo-dir'],
+    });
+    let result;
+    if (!resolved.ok) {
+      // Fail CLOSED. If the guard cannot see the diff, it must NOT report clean.
+      // Treat an unreadable diff as "needs a second reviewer" so an unreadable
+      // diff cannot silently turn the tamper guard off.
+      result = {
+        requires_second_review: true,
+        tampered: true,
+        oracle_files: [],
+        test_files: [],
+        source_files: [],
+        reasons: [
+          `ORACLE_DIFF_INDETERMINATE: could not read the PR diff (${resolved.reason}). ` +
+          `Failing closed: a guard that cannot see the diff must not pass. ` +
+          `Pass --base/--head or --changed so the guard can see the PR.`,
+        ],
+      };
+    } else {
+      result = oracleGuard.evaluateOracleGuard({
+        files: resolved.files,
+        includeTests: opts['include-tests'] === true,
+      });
+    }
+    const exitCode = result.requires_second_review
+      ? (opts.block === true ? EXIT.FAIL : EXIT.FLAG)
+      : EXIT.PASS;
+    // Runner-shaped JSON line so this can also be wired as an fqe runner.
+    process.stdout.write(JSON.stringify({
+      runner: 'oracle-guard',
+      exit_code: exitCode,
+      requires_second_review: result.requires_second_review,
+      oracle_files: result.oracle_files,
+      test_files: result.test_files,
+      source_files: result.source_files,
+      reasons: result.reasons,
+    }, null, 2) + '\n');
+    if (result.requires_second_review) {
+      for (const r of result.reasons) process.stderr.write(`  ${r}\n`);
+      process.exit(exitCode);
+    }
   },
 
   'receipt'(args) {
@@ -477,6 +570,9 @@ const SUBCOMMANDS = {
       '  run --commit SHA --output DIR       orchestrate: classify diff -> spawn runners -> verdict + receipt',
       '                                        [--base SHA] [--config .fqe.yml] [--pr N] [--repo-dir D]',
       '  explain [--dir D] [--json]          5-minute architectural audit: invariants, thresholds, current config',
+      '  validate [--config .fqe.yml]        check .fqe.yml fail-closed: unknown keys, bad types, never-fires runners',
+      '  oracle-guard [--changed "a,b"]      flag a PR that edits its own ground truth / grading rules',
+      '               [--base SHA --head SHA] [--include-tests] [--block]   (requires a second reviewer)',
       '',
       'verdict + receipt primitives:',
       '  verdict <results-json|->            compute verdict deterministically (no LLM in path)',
@@ -578,6 +674,13 @@ function main() {
   try {
     fn(rest);
   } catch (e) {
+    // A malformed .fqe.yml MUST block (ERROR), never map to a neutral/INFRA
+    // outcome. Bind that explicitly so a future refactor cannot regress it to
+    // exit 4 and let a broken config pass green.
+    if (e && e.fqeConfigInvalid) {
+      process.stderr.write(`fqe: ${e.message}\n`);
+      process.exit(EXIT.ERROR);
+    }
     die(e.message || String(e));
   }
 }

@@ -20,13 +20,13 @@ fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when 
 
 **Goal:** inject arbitrary code into the gate's runtime via Node, yq, gh CLI, LibreOffice, etc.
 
-**Mitigation:** every binary download verifies a SHA256 pin. The `fqe-v0.2.0` tag in `booyajones/fqe` is the only thing workflows clone, and the workflow uses `git clone --branch fqe-v0.2.0` (not HEAD).
+**Mitigation:** every binary download verifies a SHA256 pin. The `fqe-v0.3.0` tag in `booyajones/fqe` is the only thing workflows clone, and the workflow uses `git clone --branch fqe-v0.3.0` (not HEAD).
 
 ### Actor 3: Compromised maintainer or stolen GitHub token
 
-**Goal:** push a malicious patch under the `fqe-v0.2.0` tag and have it executed automatically by every gated repo.
+**Goal:** push a malicious patch under the `fqe-v0.3.0` tag and have it executed automatically by every gated repo.
 
-**Mitigation:** tags can be force-moved, which is the supply-chain risk here. Defences: (1) signed commits on the public repo, (2) branch protection on `main` requiring review, (3) the workflow can be re-pinned to a SHA instead of a tag for higher assurance (`--branch fqe-v0.2.0` becomes `--branch <40-char SHA>`).
+**Mitigation:** tags can be force-moved, which is the supply-chain risk here. Defences: (1) signed commits on the public repo, (2) branch protection on `main` requiring review, (3) the workflow can be re-pinned to a SHA instead of a tag for higher assurance (`--branch fqe-v0.3.0` becomes `--branch <40-char SHA>`).
 
 ## Architectural invariants
 
@@ -38,7 +38,7 @@ Three commitments the codebase enforces. If you find code that violates one, tha
 
 ## Supply chain
 
-- **fqe-v0.2.0 tag** is the only pinned reference workflows use. To pin tighter, replace the tag with a 40-char SHA in `.github/workflows/fqe-quality.yml`.
+- **fqe-v0.3.0 tag** is the only pinned reference workflows use. To pin tighter, replace the tag with a 40-char SHA in `.github/workflows/fqe-quality.yml`.
 - **Node, yq, gh CLI**: SHA256-pinned in the workflow's install step. Failed verification means the workflow fails closed.
 - **LibreOffice**: installed from the Ubuntu apt repository inside the GitHub-hosted runner (no third-party mirror).
 - **No `curl | bash`**. All downloads are checksum-verified.
@@ -71,7 +71,7 @@ For Finexio production repos:
 
 1. **Required status checks** on the protected branch: `fqe/pass` and `fqe/second-reviewer-required`.
 2. **Enforce admins** ON in branch protection. No admin-merge override.
-3. **Pin `fqe-v0.2.0` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.2.0`).
+3. **Pin `fqe-v0.3.0` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.3.0`).
 4. **Restrict `fqe/bypass-*` label addition** to specific users via `.github/fqe-bypass-allowlist.yml`. The workflow checks this list at the BASE commit so a PR cannot add itself.
 5. **Enable Dependabot** on your gated repo for the GitHub Actions used in `fqe-quality.yml`.
 6. **Audit `.github/fqe-state/bypass-tally.jsonl`** weekly. Rolling rate above 10% triggers the second-reviewer requirement automatically.

@@ -37,7 +37,7 @@ Add to your test workflow, after producing a coverage report:
 
       - name: coverage ratchet
         run: |
-          npx --yes github:booyajones/fqe#fqe-v0.2.0 cli/bin/fqe.js coverage-ratchet \
+          npx --yes github:booyajones/fqe#fqe-v0.3.0 cli/bin/fqe.js coverage-ratchet \
             --report coverage/coverage-summary.json \
             --baseline coverage-baseline.json \
             --patch-threshold 80

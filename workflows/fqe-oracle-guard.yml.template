@@ -1,0 +1,89 @@
+# FQE Oracle Guard - require a second human when a PR edits its own answer key.
+#
+# The mutation gate proves a test is strong. It does NOT catch a PR that makes
+# itself green by changing the recorded ground truth (a golden master, a
+# partner cassette, the coverage baseline) or the grading rules (.fqe.yml). An
+# agent or a person can swap the answer key instead of fixing the code.
+#
+# This workflow runs `fqe oracle-guard` on the PR diff. If the diff touches the
+# ground truth or the grading rules, the job passes ONLY when a second reviewer
+# (not the PR author) has approved. Make this job a REQUIRED status check in
+# branch protection so it actually blocks. Without that, it only reports.
+#
+# Drop this at .github/workflows/fqe-oracle-guard.yml and edit FQE_TAG / the
+# INCLUDE_TESTS flag to taste. See docs/recipes/oracle-tamper.md.
+
+name: FQE Oracle Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  oracle-guard:
+    runs-on: ubuntu-latest
+    env:
+      FQE_TAG: "fqe-v0.3.0"
+      # Set to "--include-tests" to also require a second reviewer when a test
+      # file changes alongside the source it grades. Leave empty to guard only
+      # ground truth and grading rules (lower friction).
+      INCLUDE_TESTS: ""
+      # Minimum distinct approvers, excluding the PR author.
+      MIN_APPROVALS: "1"
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      AUTHOR: ${{ github.event.pull_request.user.login }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run oracle-guard on the PR diff
+        id: guard
+        run: |
+          set -uo pipefail
+          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" || true
+          set +e
+          npx --yes github:booyajones/fqe#${FQE_TAG} cli/bin/fqe.js \
+            oracle-guard --base "$BASE_SHA" --head "$HEAD_SHA" $INCLUDE_TESTS
+          GUARD_EXIT=$?
+          set -e
+          echo "oracle-guard exit code: $GUARD_EXIT"
+          # The authoritative signal is the EXIT CODE, not parsed text (a parse
+          # fallback could default to "no review needed" and fail open):
+          #   0   = clean
+          #   2,3 = needs a second reviewer
+          #   any other code (npx failed, indeterminate diff) = FAIL CLOSED
+          case "$GUARD_EXIT" in
+            0)   NEEDS=false ;;
+            2|3) NEEDS=true ;;
+            *)   echo "::error::oracle-guard could not run (exit $GUARD_EXIT). Failing closed: a second reviewer is required."; NEEDS=true ;;
+          esac
+          echo "needs_review=$NEEDS" >> "$GITHUB_OUTPUT"
+
+      - name: Require a second reviewer when the answer key changed
+        if: steps.guard.outputs.needs_review == 'true'
+        run: |
+          set -euo pipefail
+          # Count distinct APPROVED reviews from someone other than the author.
+          APPROVERS=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            --jq "[.[] | select(.state==\"APPROVED\") | .user.login] | unique | map(select(. != \"$AUTHOR\")) | length")
+          echo "distinct non-author approvers: $APPROVERS (need >= $MIN_APPROVALS)"
+          if [ "$APPROVERS" -lt "$MIN_APPROVALS" ]; then
+            echo "::error::This PR edits its own ground truth or grading rules (golden master, cassette, coverage baseline, or .fqe.yml). A second reviewer must approve before it can merge. See docs/recipes/oracle-tamper.md."
+            exit 1
+          fi
+          echo "Second-reviewer requirement satisfied."

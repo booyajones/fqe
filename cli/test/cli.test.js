@@ -57,7 +57,61 @@ const validResultsFail = {
 test('fqe version prints version string', () => {
   const r = run(['version']);
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /^fqe 0\.1\.0/);
+  assert.match(r.stdout, /^fqe \d+\.\d+\.\d+/);
+});
+
+test('fqe validate: clean config exits 0', () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, '.fqe.yml'),
+    'runners:\n  web:\n    command: "node"\n    when: ["**/*.ts"]\n    required: true\n');
+  const r = run(['validate', '--config', path.join(dir, '.fqe.yml')]);
+  assert.equal(r.status, 0);
+});
+
+test('fqe validate: a typo in a runner key exits 1 (fail closed)', () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, '.fqe.yml'),
+    'runners:\n  web:\n    command: "node"\n    whne: ["**/*.ts"]\n');
+  const r = run(['validate', '--config', path.join(dir, '.fqe.yml')]);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout + r.stderr, /whne/);
+});
+
+test('fqe run: a malformed .fqe.yml exits 1 (ERROR), never 0 (PASS) or 4 (INFRA)', () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, '.fqe.yml'),
+    'runners:\n  web:\n    command: "node"\n    whne: ["**/*.ts"]\n');
+  const r = run(['run', '--commit', fortyHex('a'), '--output', dir, '--repo-dir', dir]);
+  assert.equal(r.status, 1);
+});
+
+test('fqe oracle-guard: a clean source PR exits 0', () => {
+  const r = run(['oracle-guard', '--changed', 'src/app.ts,src/money.ts']);
+  assert.equal(r.status, 0);
+});
+
+test('fqe oracle-guard: editing a golden FLAGs (exit 3)', () => {
+  const r = run(['oracle-guard', '--changed', 'src/nacha.ts,testdata/run.golden']);
+  assert.equal(r.status, 3);
+});
+
+test('fqe oracle-guard --block: editing a golden FAILs (exit 2)', () => {
+  const r = run(['oracle-guard', '--changed', 'testdata/run.golden', '--block']);
+  assert.equal(r.status, 2);
+});
+
+test('fqe oracle-guard fails CLOSED when it cannot read the diff (exit 3, never 0)', () => {
+  const dir = tmpDir(); // a fresh temp dir, not a git repo
+  const env = { ...process.env };
+  delete env.FQE_CHANGED_FILES; // make sure nothing hands it a diff
+  const r = spawnSync(
+    process.execPath,
+    [CLI, 'oracle-guard', '--repo-dir', dir, '--base', fortyHex('a'), '--head', fortyHex('b')],
+    { encoding: 'utf8', env }
+  );
+  assert.notEqual(r.status, 0); // an unreadable diff must NOT report clean
+  assert.equal(r.status, 3);    // FLAG: a second reviewer is required
+  assert.match(r.stdout + r.stderr, /INDETERMINATE/);
 });
 
 test('fqe verdict — PASS exits 0', () => {
