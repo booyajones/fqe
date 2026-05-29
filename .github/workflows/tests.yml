@@ -1,0 +1,25 @@
+# fqe runs its own test suite on every push and PR. A QA tool with no CI on
+# itself is not credible. The job is named `test` so it can be required in
+# branch protection. node --test needs no install (the suite is pure node:test).
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: unit + integration tests
+        working-directory: cli
+        run: node --test test/*.test.js
