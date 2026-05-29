@@ -1,0 +1,75 @@
+# fqe write-tests: the $0 automated test author.
+#
+# Label a PR `fqe-write-tests` and Claude writes tests for the changed files on
+# YOUR OWN ANTHROPIC_API_KEY (no per-seat vendor), then commits them to the PR
+# branch. The new commit re-runs your fqe gate, and the mutation-gate runner
+# judges the generated tests: weak or assertionless tests get rejected. The
+# author is optional and never blocks; the bouncer is the safety.
+#
+# This is the same anthropics/claude-code-action that posts your PR reviews,
+# in write mode. Drop this at .github/workflows/fqe-write-tests.yml and set the
+# ANTHROPIC_API_KEY secret. See docs/recipes/ai-test-generation.md.
+#
+# SECURITY: this runs with contents:write and pushes to the PR branch. It is
+# label-triggered, so only someone with write access (who can add the label)
+# can start it. Use it only on repos where everyone with write access is trusted.
+
+name: fqe write-tests
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  write-tests:
+    if: github.event.label.name == 'fqe-write-tests'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Git identity for the commit
+        run: |
+          git config user.name "claude[bot]"
+          git config user.email "claude[bot]@users.noreply.github.com"
+
+      - name: Claude writes tests for the changed files
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            The source files changed in this PR (diff against
+            origin/${{ github.event.pull_request.base.ref }}) need tests that
+            would CATCH a regression: real assertions on behavior, values, edge
+            cases, and error paths. This repo gates on mutation testing, so a
+            test that runs the code without asserting anything will be rejected.
+
+            Rules:
+            - Match this repo's existing test framework and file layout.
+            - Do NOT write snapshot-only or assertionless tests.
+            - Do NOT modify non-test source files.
+            - For money or state code, cover idempotency, rounding, and error paths.
+
+            When done, commit the new and changed test files to this branch with
+            a clear message and push.
+          claude_args: |
+            --allowedTools "Edit,Write,Read,Glob,Grep,Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git diff:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(pytest:*)"
+
+# After Claude pushes, the new commit re-triggers your fqe gate. The
+# stryker-mutation runner (from `fqe init --with-mutation`) judges the generated
+# tests against the kill-rate bar, so a weak AI test cannot merge. That gate,
+# not this author, is what protects the suite.

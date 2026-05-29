@@ -2,7 +2,13 @@
 
 The durable half of this recipe works today with no external account: [Stryker](https://stryker-mutator.io) mutation-tests your suite and `fqe mutation-gate` blocks the merge if the kill rate is below the bar. The test *author* is pluggable: an AI generator writes candidate tests, the gate decides whether they actually catch bugs. The gate is the bouncer, and it does not care who wrote the test.
 
-**On the generator (read this first).** The original open-source [Qodo Cover](https://github.com/qodo-ai/qodo-cover) is now archived and not installable from PyPI, so do not `pip install qodo-cover`. Your current options for the author are: [qodo-ai/qodo-ci](https://github.com/qodo-ai/qodo-ci) (the maintained Action), Qodo's hosted product, or any LLM that writes tests (Claude Code, a script, a human). Wire the gate first (it is the value), add an automated author later. The rest of this recipe is generator-agnostic.
+**On the generator (read this first).** The original open-source [Qodo Cover](https://github.com/qodo-ai/qodo-cover) is now archived and not installable from PyPI, so do not `pip install qodo-cover`. Your current options for the author are: the Claude action below (cheapest, on your own key), [qodo-ai/qodo-ci](https://github.com/qodo-ai/qodo-ci) (the maintained Action), or Qodo's hosted product. Wire the gate first (it is the value), add an automated author when you want it. The rest of this recipe is generator-agnostic.
+
+## The $0 author: Claude on your own key
+
+You do not need a vendor for the author. The same `anthropics/claude-code-action` that posts your PR reviews can WRITE the tests, on your existing `ANTHROPIC_API_KEY`. Drop `workflows/fqe-write-tests.yml.template` into `.github/workflows/fqe-write-tests.yml`, set the secret, then label any PR `fqe-write-tests`. Claude writes tests for the changed files, commits them to the branch, and the new commit re-runs the gate so the `stryker-mutation` runner judges them. A weak, assertionless test is rejected by the bouncer, not merged.
+
+It is label-triggered on purpose: you decide when to spend the tokens, and a flaky author never blocks a merge (the gate does). This is the lowest-cost path to "tests write themselves," and it upgrades cleanly to qodo-ci or hosted Qodo later (same bouncer, different author).
 
 ## Why this recipe exists
 
@@ -32,7 +38,7 @@ verdict: PASS if kill rate >= threshold for blast class; FAIL otherwise
 ## One-command install (JS/TS repos)
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.4.1 cli/bin/fqe.js init --with-mutation
+npx --yes github:booyajones/fqe#fqe-v0.5.0 cli/bin/fqe.js init --with-mutation
 npm install --save-dev @stryker-mutator/core
 git add .fqe.yml .github/ scripts/ stryker.conf.json package.json
 git commit -m "Wire fqe + Stryker mutation gate"
@@ -172,7 +178,7 @@ jobs:
         run: npx stryker run --reporters json
       - name: fqe verdict
         run: |
-          npx --yes github:booyajones/fqe#fqe-v0.4.1 cli/bin/fqe.js run \
+          npx --yes github:booyajones/fqe#fqe-v0.5.0 cli/bin/fqe.js run \
             --full --base origin/main --output ./out/
       - name: upload receipt
         if: always()

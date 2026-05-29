@@ -2,14 +2,14 @@
 
 **A CI gate that runs the checks you already have, refuses to let humans skip them, and emits a tamper-evident receipt of what was checked.**
 
-[![tests](https://img.shields.io/badge/tests-162%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.1.0%20stable-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-259%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.5.0-blue)](CHANGELOG.md)
 
 fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in 160 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.4.1 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.5.0 cli/bin/fqe.js init
 git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
@@ -93,6 +93,7 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 
 | Doc | For |
 |---|---|
+| [Adopting fqe (runbook)](docs/adopt.md) | The small-team playbook: the 3 layers, 10-minute turn-on, when to enforce. Start here. |
 | [Getting Started](docs/getting-started.md) | First-time setup. 5 minutes to a gated PR. |
 | [Writing a Runner](docs/writing-a-runner.md) | The contract every runner must satisfy. |
 | [Architecture](docs/architecture.md) | The three invariants, the verdict logic, why it's deterministic. |
@@ -100,7 +101,7 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 | [FAQ](docs/faq.md) | Pre-empts the 10 questions every engineer asks. |
 | [Security](SECURITY.md) | Threat model. What fqe protects against and what it does not. |
 | [Contributing](CONTRIBUTING.md) | PR process and ground rules. |
-| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.3.0). |
+| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.5.0). |
 
 ## Recipes
 
@@ -125,6 +126,7 @@ Payments QA techniques (the bet-the-company tests):
 | Coverage ratchet | [docs/recipes/coverage-ratchet.md](docs/recipes/coverage-ratchet.md) |
 | AI test generation (mutation-gated) | [docs/recipes/ai-test-generation.md](docs/recipes/ai-test-generation.md) |
 | Flaky-test quarantine | [docs/recipes/flaky-quarantine.md](docs/recipes/flaky-quarantine.md) |
+| Gate an existing Playwright suite | [docs/recipes/playwright.md](docs/recipes/playwright.md) |
 | Run the gate on CircleCI | [docs/recipes/circleci.md](docs/recipes/circleci.md) |
 
 ## Local development loop
@@ -179,7 +181,7 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 The architectural invariants are real. The implementation does not yet enforce all of them on the hard threats. If you are putting fqe on the critical path of a production repo, you need to know these:
 
-1. **Default install uses a tag, not a SHA.** Git tags are force-pushable, so a maintainer-account compromise can silently change what `fqe-v0.4.1` resolves to. The README install command is tag-pinned for ergonomic onboarding. **For production: pin to a commit SHA.** See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned). The `ghcr.io/finexio/fqe:0.1` Docker image planned for 0.2 will be pinned by digest.
+1. **Default install uses a tag, not a SHA.** Git tags are force-pushable, so a maintainer-account compromise can silently change what `fqe-v0.5.0` resolves to. The README install command is tag-pinned for ergonomic onboarding. **For production: pin to a commit SHA.** See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned). The `ghcr.io/finexio/fqe:0.1` Docker image planned for 0.2 will be pinned by digest.
 
 2. **Bypass labels are not bound to the head SHA.** Once an allowlisted user adds `fqe-bypass`, the label persists across subsequent pushes to that PR. If the allowlisted account is compromised mid-PR, the attacker can push malicious commits without re-triggering the gate. **Mitigation today: branch protection rule "Dismiss stale pull request approvals when new commits are pushed" combined with a no-push-after-bypass team norm.** TTL-bound labels with head-SHA binding are the 0.2 fix.
 
