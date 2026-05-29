@@ -39,6 +39,7 @@ const tally = require('../lib/bypass_tally');
 const orchestrator = require('../lib/orchestrator');
 const initLib = require('../lib/init');
 const explainLib = require('../lib/explain');
+const coverageRatchet = require('../lib/coverage_ratchet');
 
 const FQE_VERSION = '0.1.0';
 
@@ -351,6 +352,60 @@ const SUBCOMMANDS = {
     }
   },
 
+  'coverage-ratchet'(args) {
+    // fqe coverage-ratchet --report FILE [--baseline FILE] [--patch PCT]
+    //                      [--patch-threshold 80] [--bump]
+    // Enforces: changed lines >= patch-threshold, AND total never drops below
+    // the committed baseline. Exit 2 (FAIL) blocks merge. Exit 0 passes.
+    // With --bump, on a PASS that improved coverage, writes the new baseline.
+    const opts = parseFlags(args);
+    if (!opts.report) {
+      die('coverage-ratchet: --report <coverage file> is required');
+    }
+    let reportText;
+    try {
+      reportText = fs.readFileSync(opts.report, 'utf8');
+    } catch (e) {
+      // A missing/unreadable coverage report is an infra problem, not a policy
+      // violation: neutral, do not block the merge on fqe's own inability to read.
+      return failInfra(`coverage-ratchet: cannot read report ${opts.report}: ${e.message}`);
+    }
+    const currentTotal = coverageRatchet.parseCoverage(reportText);
+
+    let baselineTotal = null;
+    const baselinePath = opts.baseline || 'coverage-baseline.json';
+    if (fs.existsSync(baselinePath)) {
+      try {
+        baselineTotal = JSON.parse(fs.readFileSync(baselinePath, 'utf8')).total;
+      } catch { /* treat unreadable baseline as no baseline (first run) */ }
+    }
+
+    const patchCoverage =
+      opts.patch !== undefined ? parseFloat(opts.patch) : null;
+    const patchThreshold =
+      opts['patch-threshold'] !== undefined ? parseFloat(opts['patch-threshold']) : 80;
+
+    const result = coverageRatchet.evaluateRatchet({
+      currentTotal,
+      baselineTotal,
+      patchCoverage,
+      patchThreshold,
+    });
+
+    process.stdout.write(JSON.stringify({ ...result, currentTotal, baselineTotal }, null, 2) + '\n');
+
+    // Optionally write the bumped baseline (post-merge step uses --bump).
+    if (opts.bump === true && result.shouldBumpBaseline && result.newBaseline != null) {
+      fs.writeFileSync(baselinePath, JSON.stringify({ total: result.newBaseline }, null, 2) + '\n');
+      process.stderr.write(`coverage-ratchet: baseline bumped to ${result.newBaseline}%\n`);
+    }
+
+    if (!result.pass) {
+      for (const r of result.reasons) process.stderr.write(`  ${r}\n`);
+      process.exit(EXIT.FAIL);
+    }
+  },
+
   wilson(args) {
     // utility: fqe wilson <successes> <n>
     const s = parseInt(args[0], 10);
@@ -406,6 +461,9 @@ const SUBCOMMANDS = {
       '  wilson <successes> <n>              Wilson 95% CI for a binomial proportion',
       '  min-n <target>                      min N to defend an upper bound (0 successes)',
       '  thresholds                          canonical blast-radius thresholds (Object.freeze\'d in verdict.js)',
+      '  coverage-ratchet --report FILE      enforce coverage never drops + new code is tested',
+      '                   [--baseline coverage-baseline.json] [--patch PCT]',
+      '                   [--patch-threshold 80] [--bump]   exit 2 blocks merge',
       '  smoke-tools                         Phase 1 Day 1.0 verification (local)',
       '',
       'exit codes:',
