@@ -46,7 +46,7 @@ const configSchema = require('../lib/config_schema');
 const oracleGuard = require('../lib/oracle_guard');
 const bypassGuard = require('../lib/bypass_guard');
 
-const FQE_VERSION = '0.4.0';
+const FQE_VERSION = '0.4.1';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)

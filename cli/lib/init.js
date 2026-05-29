@@ -121,7 +121,7 @@ jobs:
           # To update fqe, push a new tag in finexio-skills and re-run fqe init.
           # When ghcr.io/booyajones/fqe:0.1 is published with cosign verify,
           # this entire step can be replaced with: container: ghcr.io/booyajones/fqe:0.1
-          FQE_TAG="fqe-v0.4.0"
+          FQE_TAG="fqe-v0.4.1"
           git clone --depth=1 --branch "$FQE_TAG" \\
             https://github.com/booyajones/fqe.git /tmp/fqe-src
           cd /tmp/fqe-src/cli

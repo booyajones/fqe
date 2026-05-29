@@ -1,6 +1,8 @@
 # Recipe: AI test generation + mutation testing
 
-Complete `.fqe.yml` for the modern AI-quality stack: AI generates tests with [Qodo Cover](https://github.com/qodo-ai/qodo-cover) (Meta TestGen-LLM filter pipeline), [Stryker](https://stryker-mutator.io) mutation-tests the survivors, fqe gates on the mutation kill rate.
+The durable half of this recipe works today with no external account: [Stryker](https://stryker-mutator.io) mutation-tests your suite and `fqe mutation-gate` blocks the merge if the kill rate is below the bar. The test *author* is pluggable: an AI generator writes candidate tests, the gate decides whether they actually catch bugs. The gate is the bouncer, and it does not care who wrote the test.
+
+**On the generator (read this first).** The original open-source [Qodo Cover](https://github.com/qodo-ai/qodo-cover) is now archived and not installable from PyPI, so do not `pip install qodo-cover`. Your current options for the author are: [qodo-ai/qodo-ci](https://github.com/qodo-ai/qodo-ci) (the maintained Action), Qodo's hosted product, or any LLM that writes tests (Claude Code, a script, a human). Wire the gate first (it is the value), add an automated author later. The rest of this recipe is generator-agnostic.
 
 ## Why this recipe exists
 
@@ -16,11 +18,9 @@ This recipe wires the harness so the orchestration layer is fqe.
 ```
 PR opened
    ↓
-Qodo Cover generates candidate tests for new/changed code
-   ↓
-(internal filter pipeline: mutate, compile, run, dedupe)
-   ↓
-PR contains the surviving tests
+AI author (qodo-ci / hosted Qodo / your LLM) generates candidate tests
+   ↓   (optional: the gate also works on hand-written tests)
+PR contains the candidate tests
    ↓
 Stryker mutation-tests the whole suite (including the new tests)
    ↓
@@ -32,7 +32,7 @@ verdict: PASS if kill rate >= threshold for blast class; FAIL otherwise
 ## One-command install (JS/TS repos)
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.4.0 cli/bin/fqe.js init --with-mutation
+npx --yes github:booyajones/fqe#fqe-v0.4.1 cli/bin/fqe.js init --with-mutation
 npm install --save-dev @stryker-mutator/core
 git add .fqe.yml .github/ scripts/ stryker.conf.json package.json
 git commit -m "Wire fqe + Stryker mutation gate"
@@ -45,35 +45,28 @@ For Python (mutmut), Java (PIT), or Go (go-mutesting), see "Common adjustments" 
 ## Prerequisites
 
 - Node, Python, Java, Go, or Ruby project with an existing test runner.
-- Qodo Cover (`pip install qodo-cover` or the [Qodo Cover GitHub Action](https://github.com/qodo-ai/qodo-cover-action)). Optional in week 1 (Stryker alone provides the gate; Qodo Cover provides the test author).
+- An automated test author. **Optional and pluggable.** The mutation gate works without one (it judges whatever tests exist, AI- or human-written). When you want auto-generation, use [qodo-ai/qodo-ci](https://github.com/qodo-ai/qodo-ci) or Qodo's hosted product. Do not use the archived `qodo-cover` package. The runner command below is a placeholder for whichever author you pick.
 - A mutation runner for your stack: [Stryker](https://stryker-mutator.io) (JS/TS, wired by `--with-mutation`), [mutmut](https://github.com/boxed/mutmut) (Python), [PIT](https://pitest.org) (Java), [go-mutesting](https://github.com/avito-tech/go-mutesting) (Go).
 
 ## `.fqe.yml`
 
 ```yaml
-# AI-quality gate. Two defenses on every PR with code changes:
-# 1. Qodo Cover generates and filters tests via TestGen-LLM pipeline
-# 2. Stryker mutation-tests the resulting suite; fqe gates on kill rate
+# AI-quality gate. The load-bearing runner is stryker-mutation: it is the gate.
+# The test-author runner is OPTIONAL and pluggable. Start with just the gate.
+#
+# The author runner below is a PLACEHOLDER. Swap `command`/`args` for your chosen
+# author: qodo-ci, a hosted-Qodo call, or your own LLM script. Keep it
+# required: false so a flaky author never blocks a merge. The gate, not the
+# author, is what blocks.
 
 runners:
-  qodo-cover:
-    command: "qodo-cover"
-    args:
-      - "--source-file-path"
-      - "${FQE_CHANGED_FILES}"
-      - "--test-file-path"
-      - "test/"
-      - "--code-coverage-report-path"
-      - "coverage.xml"
-      - "--coverage-type"
-      - "cobertura"
-      - "--desired-coverage"
-      - "85"
-      - "--max-iterations"
-      - "3"
-      - "--use-report-coverage-feature-flag"
+  # OPTIONAL test author. Delete this block to run gate-only. Replace the
+  # command with your generator of choice (the archived `qodo-cover` is gone).
+  test-author:
+    command: "bash"
+    args: ["scripts/fqe_qodo_runner.sh"]
     when: ["**/*.js", "**/*.ts", "**/*.py", "**/*.java", "**/*.go", "**/*.rb"]
-    required: false   # informational in week 1; flip to required after tuning
+    required: false   # an author never blocks; the gate does
     timeout_ms: 600000   # 10 min
 
   stryker-mutation:
@@ -169,16 +162,17 @@ jobs:
         with: { node-version: "22" }
       - name: install
         run: npm ci
-      - name: qodo-cover
-        env: { OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}" }
-        run: |
-          pip install qodo-cover
-          qodo-cover --source-file-path src/ --test-file-path test/ --max-iterations 3
+      # OPTIONAL test author. The archived qodo-cover pip package is gone; swap
+      # this for qodo-ci or a hosted-Qodo call when you adopt one. The gate below
+      # runs with or without it, so this step is allowed to no-op.
+      - name: ai test author (optional)
+        env: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }
+        run: bash scripts/fqe_qodo_runner.sh || echo "no author wired yet; gate-only"
       - name: stryker
         run: npx stryker run --reporters json
       - name: fqe verdict
         run: |
-          npx --yes github:booyajones/fqe#fqe-v0.4.0 cli/bin/fqe.js run \
+          npx --yes github:booyajones/fqe#fqe-v0.4.1 cli/bin/fqe.js run \
             --full --base origin/main --output ./out/
       - name: upload receipt
         if: always()
@@ -187,6 +181,19 @@ jobs:
           name: qa-receipt-${{ github.sha }}
           path: out/QA-RESULT.*
 ```
+
+## Live result: the full loop on real Finexio code
+
+Run on `lib/brand.ts` in a real Finexio repo, 7 seconds per pass:
+
+| Tests | mutation kill rate | survivors | `fqe mutation-gate` (threshold 70) |
+|---|---|---|---|
+| as written | 57.14% | 6 | **FAIL** |
+| after strengthening (pin the literal values) | 100% | 0 | **PASS** |
+
+The original tests had coverage on `brand.ts` and all passed, but they compared `functionColor(x)` to `functionColors[x]`, so mutating a brand color changed both sides of the assertion and the test stayed green. Stryker mutated the brand color `"#4a5568"` to `""` and the suite did not notice. The gate caught it (57% FAIL), the fix was to assert the exact hex values and the font stack, and the kill rate went to 100%.
+
+That is the whole loop: the gate rejects coverage-without-assertion, the author (AI or human) strengthens the tests, the gate clears. No external account, no Qodo, no API key. It ran locally in seconds. Swap in an automated author later and the same gate judges its output.
 
 ## Live result on fqe itself (dogfooded)
 
@@ -212,14 +219,14 @@ These are the bugs that would have shipped behind a "all tests pass" check. With
 
 ## Notes
 
-- **Qodo Cover requires an LLM key.** It calls Claude or GPT to generate test candidates. Cost: ~$0.05 to $0.50 per file iteration for typical sizes. Budget ~$50/month per engineer.
+- **The gate needs no key; only the author does.** Stryker + `fqe mutation-gate` run with zero credentials (the live result above used none). An automated author (qodo-ci, hosted Qodo, your LLM) calls a model and needs a key, at roughly $0.05 to $0.50 per file iteration. Budget ~$50/month per engineer for the author, $0 for the gate.
 - **Stryker is slow on large suites.** For a 1000-test suite expect 10-20 minutes per run. Scope tightly with `mutate: ["src/changed-module/**"]` if you can.
 - **Mutation thresholds should rise over time.** Start the kill-rate threshold at 60%. Ratchet up by 5% each quarter. Engineers see the bar move and write better tests proactively.
 - **Property-based tests amplify mutation testing.** Wire [fast-check](https://github.com/dubzzz/fast-check) for JS, [Hypothesis](https://hypothesis.readthedocs.io) for Python, [jqwik](https://jqwik.net) for Java. Mutation testing on property-based tests has the highest kill rate of any combination we've tested.
 
 ## Common adjustments
 
-- **Python:** swap `stryker` for `mutmut`. The runner script changes; the fqe contract does not.
+- **Python:** swap `stryker` for `cosmic-ray` (it runs on Windows and Linux). Avoid `mutmut` if any engineer is on Windows, it does not run there. The runner script changes; the fqe contract (a kill/surviving tally for `fqe mutation-gate`) does not.
 - **Java:** swap for PIT. Same contract.
 - **Monorepo:** run one mutation runner per package, each scoped via `when` and `mutate` patterns.
 - **CI cost concerns:** scope mutation testing to changed files only (`mutate: ["${FQE_CHANGED_FILES}"]`). Full-suite mutation runs go on a nightly schedule, not per-PR.

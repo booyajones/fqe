@@ -134,7 +134,7 @@ function explain(opts = {}) {
     },
     sources: {
       public_repo: 'https://github.com/booyajones/fqe',
-      tag: 'fqe-v0.4.0',
+      tag: 'fqe-v0.4.1',
       verdict_source: 'cli/lib/verdict.js',
       audit_source: 'cli/lib/explain.js',                // this file (what you just ran)
       failure_explainer_source: 'cli/lib/explainer.js',  // renders fail/flag explanations
