@@ -14,8 +14,12 @@ The principle: **the test suite should write and guard itself, so it survives wi
 | Oracle-tamper guard | `fqe oracle-guard` | A PR that edits its own ground truth or grading rules needs a second reviewer |
 | Config validation | `fqe validate` | A malformed `.fqe.yml` fails closed, never silently disables a check |
 | Wilson-CI stat gate | built into `fqe run` | Bounds adversarial/eval failure rates by blast class |
+| Test-class taxonomy + policy | `policy` block, enforced in `fqe run` | A required class (unit, regression, contract, money, ...) with no passing runner is a FAIL. `require_for` makes money paths strict automatically. See `recipes/test-taxonomy.md` |
+| UAT gate | `fqe uat` | Acceptance criteria become pass/fail: automated test = covered, manual needs a signoff, unverified = gap. See `recipes/uat.md` |
+| Regression engine | `fqe golden` | Snapshot deterministic output, FAIL on drift. See `recipes/regression-golden.md` |
+| QA scorecard | `fqe qa-report` | One per-class status view with policy gaps, over a QA-RESULT receipt |
 
-The ratchet guards quantity. The mutation gate guards quality. The oracle-tamper guard keeps the answer key honest. Config validation keeps a typo from disabling any of them. Together they are the floor under which coverage cannot fall and quality cannot be faked.
+The ratchet guards quantity. The mutation gate guards quality. The oracle-tamper guard keeps the answer key honest. Config validation keeps a typo from disabling any of them. The taxonomy and policy make every test type a first-class, enforceable gate (unit through UAT), and the scorecard shows the whole picture in one view. Together they are the floor under which coverage cannot fall and quality cannot be faked.
 
 ## The rollout sequence
 

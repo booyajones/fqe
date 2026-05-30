@@ -12,6 +12,12 @@ fqe is a CI gate. On every PR, it runs a configurable set of runners (your own s
 
 That's it. It is not a linter, not a test runner, not an LLM judge, not an SCA tool. It is an orchestrator that runs the tools you already trust and refuses to let humans skip them.
 
+## What kinds of tests does it handle? Regressions? UAT?
+
+All of them, as a single taxonomy. A runner declares a `class`: unit, integration, e2e, regression, contract, property, uat, lint, type, mutation, coverage, security, money. A `policy` then says which classes must pass before merge (`require_classes`), and which become required when specific paths change (`require_for`, so a payments change demands a `money` test automatically). A required class with no passing runner is a FAIL.
+
+Two of these classes ship with their own command so you do not have to build them: `fqe golden` is a regression engine (snapshot deterministic output, fail on drift), and `fqe uat` turns acceptance criteria into a pass/fail gate (automated test = covered, manual needs a signoff, unverified = gap). `fqe qa-report` shows every class's status in one scorecard. fqe still does not author or run your unit/integration suites for you, it runs the commands you point it at and enforces that the right classes are green. See `recipes/test-taxonomy.md`, `recipes/uat.md`, and `recipes/regression-golden.md`.
+
 ## How is this different from `husky` / `lefthook` / pre-commit hooks?
 
 Those run locally before push. fqe runs server-side on every PR. The two are complementary. Use pre-commit hooks for the fast local checks (formatting, simple lint) and use fqe for the things that absolutely cannot reach `main` regardless of what the engineer's local setup looks like.

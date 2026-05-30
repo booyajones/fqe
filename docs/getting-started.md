@@ -141,6 +141,7 @@ The 0.2 Docker image (`ghcr.io/finexio/fqe:0.1`) will be pinned by image digest,
 
 - **[docs/writing-a-runner.md](writing-a-runner.md)**: how to add a runner.
 - **[docs/recipes/](recipes/)**: per-stack starter configs (node-web, python-api, financial-model, mcp-server, outbound-comms).
+- **Full-suite QA (v0.7.0)**: tag runners with a `class` and set a `policy` so the right test types are required before merge ([recipes/test-taxonomy.md](recipes/test-taxonomy.md)), gate acceptance criteria with `fqe uat` ([recipes/uat.md](recipes/uat.md)), catch regressions with `fqe golden` ([recipes/regression-golden.md](recipes/regression-golden.md)), and read it all in one `fqe qa-report` scorecard.
 - **[docs/troubleshooting.md](troubleshooting.md)**: exact-error to exact-fix lookup when something goes wrong.
 - **[docs/architecture.md](architecture.md)**: for the staff engineer who wants to understand the design before trusting it.
 - **[SECURITY.md](../SECURITY.md)**: threat model and reporting.

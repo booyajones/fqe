@@ -5,7 +5,7 @@ description: Finexio Quality Engine (fqe). A unified deterministic CI gate for F
 
 # fqe: Finexio Quality Engine
 
-**Status:** v0.1.0. Gauntlet score 88/100 SHIP-band, 122/122 tests pass on Windows + real GitHub Actions ubuntu-latest. Source: `~/.claude/skills/fqe/` and `github.com/booyajones/finexio-skills/fqe`.
+**Status:** v0.7.0. Full-suite QA: a test-class taxonomy + a policy that blocks, plus `fqe uat` (acceptance gate), `fqe golden` (regression engine), and `fqe qa-report` (scorecard). 410 tests (409 pass, 1 Windows-symlink skip) on Windows + real GitHub Actions ubuntu-latest. Independent code review + 3 gauntlet rounds (81/100, no confirmed fatal flaw). Source: `github.com/booyajones/fqe` (public) and `github.com/booyajones/finexio-skills/fqe` (mirror).
 
 ## When to fire (auto-invoke triggers)
 
@@ -97,6 +97,28 @@ fqe bypass-tally rate --state-dir .github/fqe-state --window-days 14
 
 If `rate > 0.10`, the `fqe/second-reviewer-required` check goes red on every PR until a non-bypass-requester from `.github/fqe-second-reviewers.yml` adds the `fqe-second-approved` label.
 
+### Use case 6: full-suite QA (classes, policy, UAT, regression, scorecard)
+
+Tag each runner with a `class` and set a `policy` so the right test types are required before merge, automatically stricter on money paths. A required class with no passing runner is a FAIL.
+
+```yaml
+# .fqe.yml
+policy:
+  require_classes: ["unit", "lint"]
+  require_for:
+    - when: ["src/payments/**", "src/ledger/**"]
+      classes: ["money", "regression", "contract"]
+```
+
+```bash
+fqe uat --spec uat.yml --results uat-results.json --strict   # acceptance gate
+fqe golden capture --manifest golden.yml --dir goldens/      # snapshot regression baselines
+fqe golden verify  --manifest golden.yml --dir goldens/      # FAIL on drift
+fqe qa-report --receipt out/QA-RESULT.yml                    # one scorecard, per-class status + gaps
+```
+
+Classes: unit, integration, e2e, regression, contract, property, uat, lint, type, mutation, coverage, security, money. See `docs/recipes/test-taxonomy.md`, `docs/recipes/uat.md`, `docs/recipes/regression-golden.md`.
+
 ## Anti-patterns (HARD RULES)
 
 - **Do not write the verdict as text.** Compute it via `fqe verdict` or `fqe run`.
@@ -141,18 +163,24 @@ fqe/
 ## Quick reference card
 
 ```
-fqe init                                            bootstrap a repo
-fqe run --commit SHA --output DIR                   orchestrate gate
+fqe init                                            bootstrap a repo (scaffolds taxonomy + policy)
+fqe run --commit SHA --output DIR                   orchestrate gate (enforces policy classes)
 fqe verdict -                                       compute verdict from JSON stdin
+fqe uat --spec uat.yml [--results R.json] [--strict] acceptance-criteria gate
+fqe golden capture|verify --manifest M --dir D       golden-master regression engine
+fqe qa-report --receipt FILE [--json] [--gate]       per-class QA scorecard + policy gaps
+fqe validate                                        fail-closed .fqe.yml check (rejects bad class)
+fqe oracle-guard                                    flag a PR editing its own answer key
+fqe coverage-ratchet --report FILE                  coverage never drops
+fqe mutation-gate --report stryker.json             tests must catch injected bugs
 fqe receipt parse FILE                              parse + print verdict
 fqe status publish --check N --commit S --state X   emit GitHub check-run
-fqe bypass-tally rate --state-dir D                 rolling rate (JSON)
-fqe bypass-tally rate --state-dir D --format scalar rolling rate (number)
+fqe bypass-tally rate --state-dir D [--format scalar] rolling bypass rate
 fqe thresholds                                      show canonical thresholds
 fqe wilson SUCCESSES N                              Wilson 95% CI
-fqe smoke-tools                                     Day 1.0 smoke test
 
-Exit: 0=PASS  2=FAIL  3=FLAG  1=error
+Test classes: unit integration e2e regression contract property uat lint type mutation coverage security money
+Exit: 0=PASS  2=FAIL  3=FLAG  4=INFRA  1=error
 ```
 
 ## See also
