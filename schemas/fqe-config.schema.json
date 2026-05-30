@@ -14,9 +14,49 @@
       "description": "Map of runner name to runner config. An empty map means no runners, which always passes.",
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/runner" }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Full-suite QA policy. Declares which test classes must be covered before a merge. A required class with no passing runner is a FAIL at verdict time.",
+      "properties": {
+        "require_classes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/testClass" },
+          "description": "Test classes that must have a ran-and-passed runner on every run."
+        },
+        "require_for": {
+          "type": "array",
+          "description": "Diff-conditional class requirements. If any changed file matches an entry's 'when' globs, that entry's 'classes' become required for the run.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["when", "classes"],
+            "properties": {
+              "when": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string" },
+                "description": "Glob patterns. Matching any changed file activates this entry."
+              },
+              "classes": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/$defs/testClass" },
+                "description": "Classes that become required when this entry activates."
+              }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
+    "testClass": {
+      "type": "string",
+      "enum": ["unit", "integration", "e2e", "regression", "contract", "property", "uat", "lint", "type", "mutation", "coverage", "security", "money"],
+      "description": "fqe test-class taxonomy. Locked set; a typo'd class is rejected."
+    },
     "runner": {
       "type": "object",
       "additionalProperties": false,
@@ -49,6 +89,10 @@
           "type": "integer",
           "minimum": 1,
           "description": "Per-runner timeout in milliseconds. Defaults to 300000 (5 minutes)."
+        },
+        "class": {
+          "$ref": "#/$defs/testClass",
+          "description": "Test-class taxonomy tag. Lets policy.require_classes/require_for demand this runner's class, and groups it in the QA scorecard."
         }
       },
       "anyOf": [

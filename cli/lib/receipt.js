@@ -167,6 +167,7 @@ function buildReceipt(ctx) {
     runners_fired: ctx.runners_fired,
     runners: ctx.runners,
     adversarial_stats: ctx.adversarial_stats || [],
+    required_classes: ctx.required_classes || [],
     quarantined_tests: ctx.quarantined_tests || [],
     verdict: ctx.verdict,
     verdict_reasons: ctx.verdict_reasons || [],
@@ -247,10 +248,14 @@ function renderMarkdownBody(r) {
   lines.push('');
   lines.push('## Runners');
   lines.push('');
-  lines.push('| Runner | Required | Ran | Exit |');
-  lines.push('|---|---|---|---|');
+  lines.push('| Runner | Class | Required | Ran | Exit |');
+  lines.push('|---|---|---|---|---|');
   for (const rn of r.runners) {
-    lines.push(`| ${rn.name} | ${rn.required ? 'yes' : 'no'} | ${rn.ran ? 'yes' : 'no'} | ${rn.ran ? rn.exit_code : '-'} |`);
+    lines.push(`| ${rn.name} | ${rn.class || '-'} | ${rn.required ? 'yes' : 'no'} | ${rn.ran ? 'yes' : 'no'} | ${rn.ran ? rn.exit_code : '-'} |`);
+  }
+  if (r.required_classes && r.required_classes.length > 0) {
+    lines.push('');
+    lines.push(`**Policy required classes:** ${r.required_classes.join(', ')}`);
   }
   if (r.adversarial_stats && r.adversarial_stats.length > 0) {
     lines.push('');

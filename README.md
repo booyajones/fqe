@@ -2,14 +2,14 @@
 
 **A CI gate that runs the checks you already have, refuses to let humans skip them, and emits a tamper-evident receipt of what was checked.**
 
-[![tests](https://img.shields.io/badge/tests-259%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.5.0-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-407%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.7.0-blue)](CHANGELOG.md)
 
 fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in 160 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.6.0 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.7.0 cli/bin/fqe.js init
 git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
@@ -79,6 +79,7 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 - **Statistical guard rails on adversarial stats.** When a runner emits Wilson-CI confidence bounds (for LLM eval-style runners), fqe enforces the right threshold for the blast radius class.
 - **An answer-key guard.** `fqe oracle-guard` requires a second reviewer when a PR edits the golden masters, cassettes, coverage baseline, or `.fqe.yml` it is judged by, so a PR cannot pass by moving the goalposts.
 - **Fail-closed config validation.** `fqe validate` (and `fqe run`) reject a malformed `.fqe.yml` instead of silently skipping the misconfigured check.
+- **Full-suite QA, not just a test gate.** Tag each runner with a `class` (unit, integration, e2e, regression, contract, property, uat, money, ...) and set a `policy`. A required class with no passing runner is a FAIL, and `require_for` makes money paths demand their strict classes automatically. `fqe uat` gates on acceptance criteria, `fqe golden` is a drift-catching regression engine, and `fqe qa-report` rolls a run up into one per-class scorecard. See [docs/recipes/test-taxonomy.md](docs/recipes/test-taxonomy.md).
 - **Recipes** for the repo types we built this for (Node web, Python API, financial model, MCP server, outbound comms) plus the payments QA set: property-based, partner-contract, golden-master, oracle-tamper, and flaky quarantine.
 
 ## Where the LLM is, and is not
@@ -102,7 +103,7 @@ fqe uses Claude in two places, both **around** the gate: it reviews every PR (ad
 | [FAQ](docs/faq.md) | Pre-empts the 10 questions every engineer asks. |
 | [Security](SECURITY.md) | Threat model. What fqe protects against and what it does not. |
 | [Contributing](CONTRIBUTING.md) | PR process and ground rules. |
-| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.5.0). |
+| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.7.0). |
 
 ## Recipes
 
@@ -129,6 +130,9 @@ Payments QA techniques (the bet-the-company tests):
 | Flaky-test quarantine | [docs/recipes/flaky-quarantine.md](docs/recipes/flaky-quarantine.md) |
 | Gate an existing Playwright suite | [docs/recipes/playwright.md](docs/recipes/playwright.md) |
 | Run the gate on CircleCI | [docs/recipes/circleci.md](docs/recipes/circleci.md) |
+| Test classes and the full-suite policy | [docs/recipes/test-taxonomy.md](docs/recipes/test-taxonomy.md) |
+| User-acceptance testing as a gate | [docs/recipes/uat.md](docs/recipes/uat.md) |
+| Regression testing with golden masters | [docs/recipes/regression-golden.md](docs/recipes/regression-golden.md) |
 
 ## Local development loop
 
@@ -182,7 +186,7 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 The architectural invariants are real. The implementation does not yet enforce all of them on the hard threats. If you are putting fqe on the critical path of a production repo, you need to know these:
 
-1. **Default install uses a tag, not a SHA.** Git tags are force-pushable, so a maintainer-account compromise can silently change what `fqe-v0.6.0` resolves to. The README install command is tag-pinned for ergonomic onboarding. **For production: pin to a commit SHA.** See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned). The `ghcr.io/finexio/fqe:0.1` Docker image planned for 0.2 will be pinned by digest.
+1. **Default install uses a tag, not a SHA.** Git tags are force-pushable, so a maintainer-account compromise can silently change what `fqe-v0.7.0` resolves to. The README install command is tag-pinned for ergonomic onboarding. **For production: pin to a commit SHA.** See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned). The `ghcr.io/finexio/fqe:0.1` Docker image planned for 0.2 will be pinned by digest.
 
 2. **Bypass labels are not bound to the head SHA.** Once an allowlisted user adds `fqe-bypass`, the label persists across subsequent pushes to that PR. If the allowlisted account is compromised mid-PR, the attacker can push malicious commits without re-triggering the gate. **Mitigation today: branch protection rule "Dismiss stale pull request approvals when new commits are pushed" combined with a no-push-after-bypass team norm.** TTL-bound labels with head-SHA binding are the 0.2 fix.
 

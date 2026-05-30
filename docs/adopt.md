@@ -18,7 +18,7 @@ The rule of thumb: the gate and the bouncer block, Claude advises, the bypass is
 
 ```bash
 # 1. Bootstrap the gate (writes .fqe.yml, the workflow, the allowlists)
-npx --yes github:booyajones/fqe#fqe-v0.6.0 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.7.0 cli/bin/fqe.js init
 
 # 2. Tell it your real runners. Edit .fqe.yml: point each runner at the
 #    command you already use (npm test, pytest, your linter, Stryker).
@@ -29,7 +29,7 @@ npx --yes github:booyajones/fqe#fqe-v0.6.0 cli/bin/fqe.js init
 gh secret set ANTHROPIC_API_KEY -R <owner>/<repo>   # paste your Anthropic key
 
 # 4. Validate the config before it can silently disable a check:
-npx --yes github:booyajones/fqe#fqe-v0.6.0 cli/bin/fqe.js validate
+npx --yes github:booyajones/fqe#fqe-v0.7.0 cli/bin/fqe.js validate
 
 # 5. Commit and open a PR. The gate runs, Claude reviews. Both are advisory
 #    until you do the next step.
@@ -54,6 +54,9 @@ To make it actually block, add `fqe/pass` (and your `test` check) to the branch'
 ## When you grow
 
 The platform is built to add capability without rework:
+- **Test classes and a policy.** Tag each runner with a `class` and set a `policy` so the right test types are required before merge, automatically stricter on money paths: `docs/recipes/test-taxonomy.md`. The `fqe qa-report` scorecard then shows per-class status and gaps in one view.
+- **UAT as a gate.** Turn acceptance criteria into a pass/fail check with `fqe uat`: `docs/recipes/uat.md`.
+- **Regression with golden masters.** Snapshot deterministic output and fail on drift with `fqe golden`: `docs/recipes/regression-golden.md`.
 - An **automated test author** (Claude writes tests on demand, gated by the bouncer): `docs/recipes/ai-test-generation.md`.
 - **Partner-API contract tests**, **golden-master tests**, and **property-based money invariants**: the three `docs/recipes/` files named for them.
 - A **flaky-test service** (Trunk or BuildPulse) once you have enough tests and contributors that flakes start to bite.

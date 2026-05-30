@@ -2,6 +2,30 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.7.0] - 2026-05-30
+
+Tag: `fqe-v0.7.0`. Source: github.com/booyajones/fqe. Turns fqe from a gate over whatever tests you have into a full-suite QA capability: it now understands and enforces every test class an engineering team needs (unit, regression, integration, contract, property, e2e, UAT, money), reports them as one scorecard, and blocks merges by policy. Built with a backbone-then-parallel-agents approach, code-reviewed, and all review findings fixed before ship.
+
+### Added
+
+- **Test-class taxonomy.** A runner can declare a `class` (unit, integration, e2e, regression, contract, property, uat, lint, type, mutation, coverage, security, money). The set is locked in `verdict.js` (`KNOWN_CLASSES`); a typo'd class is rejected by `fqe validate`.
+- **Full-suite policy.** A new `policy` block in `.fqe.yml`: `require_classes` (classes that must always have a passing runner) and `require_for` (diff-conditional: when these globs change, these classes become required). A required class with no ran-and-passed runner is a FAIL in `verdict.js`. This is how "money paths get the strict bar" works, and it closes the v0.6.0 tracked deferral (financial runners required by policy). Fails closed: if the diff cannot be read, every `require_for` entry activates.
+- **`fqe uat`** — user-acceptance testing as a gate. `uat --spec uat.yml [--results R.json] [--strict]`. A criterion verified by an automated test that passed is covered; a manual criterion needs a signoff; an unverified criterion is a gap (a missing automated result is never a pass). Strict mode makes a gap a FAIL.
+- **`fqe golden`** — golden-master regression engine. `golden capture` snapshots deterministic command output; `golden verify` re-runs and FAILs on drift, missing baseline, or a failed command. Pairs with `oracle-guard` so a PR cannot edit its own golden.
+- **`fqe qa-report`** — the single-pane QA scorecard. Rolls a QA-RESULT receipt up into per-class status, policy gaps, coverage, and the adversarial summary. Report-only by default; `--gate` maps the verdict to the exit code.
+- The receipt now carries each runner's `class` and the run's `required_classes`. `fqe init` scaffolds the taxonomy and a commented policy block.
+
+### Review findings fixed (pre-ship code review)
+
+- Policy parser fails closed: a `require_for` entry with an empty `when:`/`classes:`, or any policy key with no value, throws instead of parsing to a droppable null.
+- Diff-indeterminate runs require the strictest class set rather than silently dropping diff-conditional requirements.
+- An unknown required class is reported as a likely typo (still fail closed).
+- An empty golden manifest is an error, not a green pass. UAT results file must be a JSON object. Golden capture is all-or-nothing on a bad name. UAT spec parsing strips a BOM and refuses to silently yield zero criteria from a non-empty file.
+
+### Tested
+
+- 408 tests, 407 pass, 1 skipped (Windows symlink). No LLM in the verdict path.
+
 ## [0.6.0] - 2026-05-29
 
 Tag: `fqe-v0.6.0`. Source: github.com/booyajones/fqe. Acts on an independent gauntlet (52/REWORK) and a 3-LLM council review. The two findings that capped the score are operational decisions, not code: rotate the exposed Anthropic key, and enforce the gate on a real money-path repo. The code, workflow, and doc findings are fixed here.

@@ -282,3 +282,74 @@ test('require_stats_for passes when the stat is present and within threshold', (
   });
   assert.equal(out.verdict, PASS);
 });
+
+// ---------------------------------------------------------------------------
+// require_classes — the full-suite policy (v0.7.0). A required test class with
+// no ran-and-passed runner is a FAIL (fail closed: covers the "you changed
+// money code but shipped no money test" gap).
+// ---------------------------------------------------------------------------
+
+test('require_classes FAILs when a required class has no runner at all', () => {
+  const out = computeVerdict({
+    runners: [{ name: 'unit', class: 'unit', exit_code: 0, required: true, ran: true }],
+    require_classes: ['money'],
+  });
+  assert.equal(out.verdict, FAIL);
+  assert.ok(out.reasons.some((r) => /required test class "money" has no runner/.test(r)));
+});
+
+test('require_classes FAILs when the required-class runner ran but did not pass', () => {
+  const out = computeVerdict({
+    runners: [{ name: 'pay', class: 'money', exit_code: 1, required: true, ran: true }],
+    require_classes: ['money'],
+  });
+  assert.equal(out.verdict, FAIL);
+  // both the exit-code FAIL and the class-coverage FAIL should be present
+  assert.ok(out.reasons.some((r) => /exited 1/.test(r)));
+  assert.ok(out.reasons.some((r) => /required test class "money"/.test(r)));
+});
+
+test('require_classes PASSes when each required class has a ran-and-passed runner', () => {
+  const out = computeVerdict({
+    runners: [
+      { name: 'unit', class: 'unit', exit_code: 0, required: true, ran: true },
+      { name: 'pay', class: 'money', exit_code: 0, required: true, ran: true },
+    ],
+    require_classes: ['unit', 'money'],
+  });
+  assert.equal(out.verdict, PASS);
+});
+
+test('require_classes FAILs when the only runner of that class did not run', () => {
+  const out = computeVerdict({
+    runners: [{ name: 'pay', class: 'money', exit_code: undefined, required: false, ran: false }],
+    require_classes: ['money'],
+  });
+  assert.equal(out.verdict, FAIL);
+  assert.ok(out.reasons.some((r) => /required test class "money"/.test(r)));
+});
+
+test('no require_classes -> backward compatible (class field is ignored)', () => {
+  const out = computeVerdict({
+    runners: [{ name: 'unit', class: 'unit', exit_code: 0, required: true, ran: true }],
+  });
+  assert.equal(out.verdict, PASS);
+});
+
+test('require_classes: an unknown required class is flagged as a likely typo', () => {
+  const out = computeVerdict({
+    runners: [{ name: 'u', class: 'unit', exit_code: 0, required: true, ran: true }],
+    require_classes: ['mony'], // typo for "money"
+  });
+  assert.equal(out.verdict, FAIL);
+  assert.ok(out.reasons.some((r) => /not a known test class/.test(r)));
+});
+
+test('require_classes: a class runner with ran:false but exit_code:0 still does NOT satisfy', () => {
+  const out = computeVerdict({
+    runners: [{ name: 'pay', class: 'money', exit_code: 0, required: false, ran: false }],
+    require_classes: ['money'],
+  });
+  assert.equal(out.verdict, FAIL);
+  assert.ok(out.reasons.some((r) => /required test class "money"/.test(r)));
+});

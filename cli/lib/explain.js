@@ -19,7 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 
-const FQE_VERSION = '0.1.0';
+const FQE_VERSION = '0.7.0';
 
 const INVARIANTS = [
   {
@@ -134,7 +134,7 @@ function explain(opts = {}) {
     },
     sources: {
       public_repo: 'https://github.com/booyajones/fqe',
-      tag: 'fqe-v0.6.0',
+      tag: 'fqe-v0.7.0',
       verdict_source: 'cli/lib/verdict.js',
       audit_source: 'cli/lib/explain.js',                // this file (what you just ran)
       failure_explainer_source: 'cli/lib/explainer.js',  // renders fail/flag explanations

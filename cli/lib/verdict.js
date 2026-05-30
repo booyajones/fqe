@@ -45,11 +45,37 @@ const BLAST_RADIUS_THRESHOLDS = Object.freeze({
 const BLAST_RADIUS_BLOCKS = Object.freeze(new Set(['mcp-write-or-financial']));
 
 /**
+ * Canonical test-class taxonomy. A runner may declare a `class` so the gate can
+ * (a) require a class to have a passing runner before merge (full-suite policy),
+ * and (b) report results grouped by class (the QA scorecard). This is POLICY:
+ * the set is locked here so a typo'd class silently slips past nobody.
+ *
+ *   unit         a single function/module in isolation
+ *   integration  multiple units together (db, http, fs)
+ *   e2e          a full user flow through the running system
+ *   regression   characterization / golden-master: output must not drift
+ *   contract     a partner/provider API contract holds
+ *   property     property-based / invariant checks
+ *   uat          user-acceptance: an acceptance criterion is satisfied
+ *   lint         static style / formatting
+ *   type         static type check
+ *   mutation     mutation-testing bouncer (tests actually catch bugs)
+ *   coverage     coverage ratchet
+ *   security     security/SAST/secret scan
+ *   money        money-path correctness (balances, idempotency, reconciliation)
+ */
+const KNOWN_CLASSES = Object.freeze([
+  'unit', 'integration', 'e2e', 'regression', 'contract', 'property',
+  'uat', 'lint', 'type', 'mutation', 'coverage', 'security', 'money',
+]);
+
+/**
  * @typedef {Object} RunnerResult
  * @property {string}  name
  * @property {boolean} required
  * @property {boolean} ran
  * @property {number}  exit_code      // required when ran === true
+ * @property {string=} class          // one of KNOWN_CLASSES (optional)
  *
  * @typedef {Object} AdversarialStat
  * @property {string} runner
@@ -63,6 +89,9 @@ const BLAST_RADIUS_BLOCKS = Object.freeze(new Set(['mcp-write-or-financial']));
  * @property {AdversarialStat[]=} adversarial_stats
  * @property {string[]=} require_stats_for  // runner names that MUST emit a stat,
  *                                           // else FAIL (fail closed on dropped stats)
+ * @property {string[]=} require_classes    // test classes that MUST each have a
+ *                                           // ran-and-passed runner, else FAIL
+ *                                           // (the full-suite policy; fail closed)
  *
  * @typedef {Object} VerdictOutput
  * @property {'PASS'|'FLAG'|'FAIL'} verdict
@@ -169,6 +198,40 @@ function computeVerdict(input) {
     }
   }
 
+  // Pass 5: required test classes must each have a ran-and-passed runner. This
+  // is the full-suite policy. If the team declares (statically via
+  // policy.require_classes, or dynamically because a payments path changed) that
+  // a class must be covered, and no runner of that class ran AND passed, that is
+  // a FAIL. It catches the gap a QA function exists to catch: "you changed money
+  // code but shipped no passing money test." Fail closed — a class with no
+  // runner at all cannot satisfy the requirement.
+  const requireClasses = Array.isArray(input.require_classes) ? input.require_classes : [];
+  if (requireClasses.length > 0) {
+    for (const cls of requireClasses) {
+      const hasPassing = input.runners.some((r) =>
+        r && r.class === cls && r.ran === true &&
+        typeof r.exit_code === 'number' && !Number.isNaN(r.exit_code) && r.exit_code === 0
+      );
+      if (!hasPassing) {
+        hasFail = true;
+        if (!KNOWN_CLASSES.includes(cls)) {
+          // Fail closed AND tell the operator it is almost certainly a typo —
+          // no runner can ever carry a class outside the taxonomy, so this would
+          // otherwise be a permanent, unexplained FAIL.
+          reasons.push(
+            `required test class "${cls}" is not a known test class (likely a typo; ` +
+            `known classes: ${KNOWN_CLASSES.join(', ')})`
+          );
+        } else {
+          reasons.push(
+            `required test class "${cls}" has no runner that ran and passed ` +
+            `(policy demands this class be covered; add or fix a "${cls}"-class runner)`
+          );
+        }
+      }
+    }
+  }
+
   let verdict;
   if (hasFail) verdict = FAIL;
   else if (hasFlag) verdict = FLAG;
@@ -184,4 +247,5 @@ module.exports = {
   FAIL,
   BLAST_RADIUS_THRESHOLDS,
   BLAST_RADIUS_BLOCKS,
+  KNOWN_CLASSES,
 };

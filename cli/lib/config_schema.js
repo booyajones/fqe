@@ -18,8 +18,12 @@
  * Pure, dependency-free, no LLM. Same input -> same errors.
  */
 
-const TOP_LEVEL_KEYS = ['runners', 'version'];
-const RUNNER_KEYS = ['command', 'args', 'when', 'required', 'always_run', 'timeout_ms'];
+const { KNOWN_CLASSES } = require('./verdict');
+
+const TOP_LEVEL_KEYS = ['runners', 'version', 'policy'];
+const RUNNER_KEYS = ['command', 'args', 'when', 'required', 'always_run', 'timeout_ms', 'class'];
+const POLICY_KEYS = ['require_classes', 'require_for'];
+const REQUIRE_FOR_KEYS = ['when', 'classes'];
 
 function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -80,6 +84,10 @@ function validateConfig(config) {
     }
   }
 
+  if ('policy' in config) {
+    validatePolicy(config.policy, errors);
+  }
+
   const norm = normalizeRunners(config.runners);
   if (!norm.ok) {
     errors.push(
@@ -93,6 +101,73 @@ function validateConfig(config) {
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+function validateClassName(value, where, errors) {
+  if (typeof value !== 'string' || !KNOWN_CLASSES.includes(value)) {
+    errors.push(
+      `${where}: '${value}' is not a known test class (known: ${KNOWN_CLASSES.join(', ')})`
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Validate the optional top-level `policy` block:
+ *   policy:
+ *     require_classes: ["unit", "lint"]        # always-required classes
+ *     require_for:                             # diff-conditional requirements
+ *       - when: ["src/payments/**"]
+ *         classes: ["money", "regression"]
+ * A required class with no passing runner is a FAIL at verdict time, so a typo'd
+ * class here must be rejected up front rather than silently never-satisfiable.
+ */
+function validatePolicy(policy, errors) {
+  if (!isPlainObject(policy)) {
+    errors.push(`'policy' must be a mapping, got ${typeOf(policy)}`);
+    return;
+  }
+  for (const key of Object.keys(policy)) {
+    if (!POLICY_KEYS.includes(key)) {
+      errors.push(`policy: unknown key '${key}' (known keys: ${POLICY_KEYS.join(', ')})`);
+    }
+  }
+  if ('require_classes' in policy) {
+    const rc = policy.require_classes;
+    if (!Array.isArray(rc)) {
+      errors.push(`policy.require_classes: must be a list of class names, got ${typeOf(rc)}`);
+    } else {
+      rc.forEach((c) => validateClassName(c, 'policy.require_classes', errors));
+    }
+  }
+  if ('require_for' in policy) {
+    const rf = policy.require_for;
+    if (!Array.isArray(rf)) {
+      errors.push(`policy.require_for: must be a list of {when, classes} entries, got ${typeOf(rf)}`);
+    } else {
+      rf.forEach((entry, idx) => {
+        const where = `policy.require_for[${idx}]`;
+        if (!isPlainObject(entry)) {
+          errors.push(`${where}: must be a mapping with 'when' and 'classes'`);
+          return;
+        }
+        for (const key of Object.keys(entry)) {
+          if (!REQUIRE_FOR_KEYS.includes(key)) {
+            errors.push(`${where}: unknown key '${key}' (known keys: ${REQUIRE_FOR_KEYS.join(', ')})`);
+          }
+        }
+        if (!isArrayOfStrings(entry.when) || entry.when.length === 0) {
+          errors.push(`${where}.when: must be a non-empty list of glob strings`);
+        }
+        if (!Array.isArray(entry.classes) || entry.classes.length === 0) {
+          errors.push(`${where}.classes: must be a non-empty list of class names`);
+        } else {
+          entry.classes.forEach((c) => validateClassName(c, `${where}.classes`, errors));
+        }
+      });
+    }
+  }
 }
 
 function validateRunner(name, cfg, errors) {
@@ -138,6 +213,10 @@ function validateRunner(name, cfg, errors) {
     if (typeof t !== 'number' || !Number.isInteger(t) || t <= 0) {
       errors.push(`${where}: 'timeout_ms' must be a positive integer (milliseconds)`);
     }
+  }
+
+  if ('class' in cfg) {
+    validateClassName(cfg.class, `${where}: 'class'`, errors);
   }
 
   // Firing rule: a runner with neither a non-empty 'when' nor 'always_run: true'

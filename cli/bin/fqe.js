@@ -45,8 +45,11 @@ const mutationGate = require('../lib/mutation_gate');
 const configSchema = require('../lib/config_schema');
 const oracleGuard = require('../lib/oracle_guard');
 const bypassGuard = require('../lib/bypass_guard');
+const uatLib = require('../lib/uat');
+const goldenLib = require('../lib/golden');
+const qaReportLib = require('../lib/qa_report');
 
-const FQE_VERSION = '0.6.0';
+const FQE_VERSION = '0.7.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -279,6 +282,97 @@ const SUBCOMMANDS = {
     if (!result.bypass) {
       process.stderr.write(`  ${result.reason}\n`);
       process.exit(EXIT.FLAG); // 3 = no valid bypass; the gate should run normally
+    }
+  },
+
+  uat(args) {
+    // fqe uat --spec uat.yml [--results results.json] [--strict] [--json]
+    // Gate a release against acceptance criteria. A criterion verified by an
+    // automated test that passed is COVERED; a manual criterion needs a signoff;
+    // an unverified criterion is a gap (FLAG, or FAIL with --strict). No LLM.
+    // exit 0 PASS / 2 FAIL / 3 FLAG.
+    const opts = parseFlags(args);
+    requireFlags(opts, ['spec']);
+    if (!fs.existsSync(opts.spec)) die(`uat: spec not found: ${opts.spec}`);
+    const spec = uatLib.loadUatSpec(fs.readFileSync(opts.spec, 'utf8'), opts.spec);
+    let results = {};
+    if (opts.results) {
+      if (!fs.existsSync(opts.results)) die(`uat: results not found: ${opts.results}`);
+      results = JSON.parse(fs.readFileSync(opts.results, 'utf8'));
+      if (results === null || typeof results !== 'object' || Array.isArray(results)) {
+        die(`uat: ${opts.results} must be a JSON object mapping testId -> "pass"|"fail" (got ${Array.isArray(results) ? 'array' : typeof results})`);
+      }
+    }
+    const out = uatLib.evaluateUat({
+      criteria: spec.criteria, results, strict: opts.strict === true,
+    });
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    } else {
+      process.stdout.write(uatLib.renderUatReport(out) + '\n');
+    }
+    if (out.verdict === FAIL) process.exit(EXIT.FAIL);
+    if (out.verdict === FLAG) process.exit(EXIT.FLAG);
+  },
+
+  golden(args) {
+    // fqe golden capture --manifest golden.yml --dir goldens/ [--repo-dir D]
+    // fqe golden verify  --manifest golden.yml --dir goldens/ [--repo-dir D] [--json]
+    // Regression engine: snapshot deterministic command output (capture), then
+    // FAIL on drift (verify). Pair with `oracle-guard` so a PR cannot quietly
+    // edit its own goldens. verify exit 0 PASS / 2 FAIL (drift/missing/run-failed).
+    const sub = args[0];
+    const opts = parseFlags(args.slice(1));
+    requireFlags(opts, ['manifest', 'dir']);
+    if (!fs.existsSync(opts.manifest)) die(`golden: manifest not found: ${opts.manifest}`);
+    const manifest = goldenLib.parseGoldenManifest(fs.readFileSync(opts.manifest, 'utf8'), opts.manifest);
+    if (!Array.isArray(manifest.goldens) || manifest.goldens.length === 0) {
+      // An empty manifest almost certainly means a misconfiguration; passing it
+      // green would let the regression gate be satisfied with nothing checked.
+      die(`golden: manifest ${opts.manifest} has no goldens; add at least one entry (an empty manifest is not a pass)`);
+    }
+    const cwd = opts['repo-dir'] || process.cwd();
+    if (sub === 'capture') {
+      const res = goldenLib.captureGoldens({ goldens: manifest.goldens, dir: opts.dir, cwd });
+      process.stdout.write(JSON.stringify(res, null, 2) + '\n');
+      if (res.failed.length > 0) {
+        for (const f of res.failed) process.stderr.write(`  capture failed: ${f.name}: ${f.reason}\n`);
+        die(`golden capture: ${res.failed.length} command(s) failed; nothing snapshotted for those`);
+      }
+    } else if (sub === 'verify') {
+      const res = goldenLib.verifyGoldens({ goldens: manifest.goldens, dir: opts.dir, cwd });
+      if (opts.json) {
+        process.stdout.write(JSON.stringify(res, null, 2) + '\n');
+      } else {
+        process.stdout.write(goldenLib.renderGoldenReport(res) + '\n');
+      }
+      if (res.verdict === FAIL) {
+        for (const r of res.reasons) process.stderr.write(`  ${r}\n`);
+        process.exit(EXIT.FAIL);
+      }
+    } else {
+      die(`golden: unknown subcommand '${sub}' (known: capture, verify)`);
+    }
+  },
+
+  'qa-report'(args) {
+    // fqe qa-report --receipt QA-RESULT.yml [--json] [--gate]
+    // The single-pane QA scorecard: per-class status, policy gaps, coverage, and
+    // adversarial summary, rolled up from a QA-RESULT receipt. Report-only by
+    // default; --gate maps the receipt verdict to the exit code.
+    const opts = parseFlags(args);
+    requireFlags(opts, ['receipt']);
+    if (!fs.existsSync(opts.receipt)) die(`qa-report: receipt not found: ${opts.receipt}`);
+    const receipt = parseReceiptYaml(fs.readFileSync(opts.receipt, 'utf8'));
+    const report = qaReportLib.buildQaReport(receipt);
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    } else {
+      process.stdout.write(qaReportLib.renderQaReport(report) + '\n');
+    }
+    if (opts.gate === true) {
+      if (report.verdict === FAIL) process.exit(EXIT.FAIL);
+      if (report.verdict === FLAG) process.exit(EXIT.FLAG);
     }
   },
 
@@ -611,6 +705,14 @@ const SUBCOMMANDS = {
       '               [--base SHA --head SHA] [--include-tests] [--block]   (requires a second reviewer)',
       '  bypass-check --comments F --head SHA  validate a SHA-bound /fqe-bypass comment (TTL + allowlist,',
       '               (--allowed "a,b" | --allowlist-file F) [--now ISO]    head-bound; exit 0=bypass, 3=none)',
+      '',
+      'full-suite QA (v0.7.0):',
+      '  uat --spec uat.yml [--results R.json]   gate on acceptance criteria: automated test = covered,',
+      '      [--strict] [--json]                   manual needs signoff, unverified = gap (FAIL w/ --strict)',
+      '  golden capture --manifest golden.yml --dir goldens/    snapshot deterministic command output',
+      '  golden verify  --manifest golden.yml --dir goldens/    FAIL on drift (regression engine) [--json]',
+      '  qa-report --receipt QA-RESULT.yml       single-pane scorecard: per-class status, policy gaps,',
+      '            [--json] [--gate]               coverage, adversarial summary (--gate maps verdict to exit)',
       '',
       'verdict + receipt primitives:',
       '  verdict <results-json|->            compute verdict deterministically (no LLM in path)',

@@ -54,29 +54,49 @@ const QODO_RUNNER_BLOCK = `
 
 const FILES = {
   '.fqe.yml': `# Finexio Quality Engine - repo config
-# Each runner declares: command, args, when (glob patterns), required, always_run
-# Edit to match this repo's actual runners. Empty config = no runners = always PASS.
+# Each runner declares: command, args, when (glob patterns), required, always_run,
+# and an optional class (the test type). Empty config = no runners = always PASS.
+#
+# Test classes (the full-suite taxonomy): unit, integration, e2e, regression,
+# contract, property, uat, lint, type, mutation, coverage, security, money.
 #
 # Examples:
 #
 # runners:
+#   unit:
+#     command: "npm"
+#     args: ["test"]
+#     when: ["**/*.ts", "test/**"]
+#     class: unit
+#     required: true
+#
 #   web:
 #     command: "npx"
 #     args: ["playwright", "test"]
 #     when: ["**/*.tsx", "**/*.jsx", "**/*.html"]
-#     required: true
+#     class: e2e
 #
-#   excel:
-#     command: "python3"
-#     args: ["scripts/fqe_excel_diff.py"]
-#     when: ["**/*.xlsx"]
-#     required: true
+#   regression:
+#     command: "node"
+#     args: ["../cli/bin/fqe.js", "golden", "verify", "--manifest", "golden.yml", "--dir", "goldens"]
+#     when: ["src/**"]
+#     class: regression
 #
-#   outbound:
-#     command: "vale"
-#     args: ["--config", ".vale.ini", "templates/"]
-#     when: ["**/templates/**", "**/emails/**"]
-#     required: true
+#   acceptance:
+#     command: "node"
+#     args: ["../cli/bin/fqe.js", "uat", "--spec", "uat.yml", "--results", "uat-results.json", "--strict"]
+#     always_run: true
+#     class: uat
+#
+# Full-suite policy (optional). require_classes are always demanded; require_for
+# adds classes only when matching files change. A required class with no passing
+# runner is a FAIL — this is how "money paths get the strict bar" works.
+#
+# policy:
+#   require_classes: ["unit", "lint"]
+#   require_for:
+#     - when: ["src/payments/**", "src/ledger/**"]
+#       classes: ["money", "regression", "contract"]
 
 runners: {}
 `,
@@ -121,7 +141,7 @@ jobs:
           # To update fqe, push a new tag in finexio-skills and re-run fqe init.
           # When ghcr.io/booyajones/fqe:0.1 is published with cosign verify,
           # this entire step can be replaced with: container: ghcr.io/booyajones/fqe:0.1
-          FQE_TAG="fqe-v0.6.0"
+          FQE_TAG="fqe-v0.7.0"
           git clone --depth=1 --branch "$FQE_TAG" \\
             https://github.com/booyajones/fqe.git /tmp/fqe-src
           cd /tmp/fqe-src/cli
