@@ -134,11 +134,32 @@ function computeVerdict(input) {
   for (const r of input.runners) {
     if (r.ran === true) {
       if (typeof r.exit_code !== 'number' || Number.isNaN(r.exit_code)) {
-        hasFail = true;
-        reasons.push(`runner "${r.name}" ran but exit_code is not a number (got ${JSON.stringify(r.exit_code)})`);
+        // A quarantined runner with an indeterminate exit is still neutral, not a
+        // hard FAIL, but a non-quarantined one fails closed.
+        if (r.quarantined === true) {
+          hasFlag = true;
+          reasons.push(`runner "${r.name}" is QUARANTINED and produced no numeric exit_code (neutral, not blocking)`);
+        } else {
+          hasFail = true;
+          reasons.push(`runner "${r.name}" ran but exit_code is not a number (got ${JSON.stringify(r.exit_code)})`);
+        }
       } else if (r.exit_code !== 0) {
-        hasFail = true;
-        reasons.push(`runner "${r.name}" exited ${r.exit_code}`);
+        // Quarantine (v0.10 trust hygiene): a runner explicitly marked quarantined is
+        // a known-flaky suite being fixed. Its failure is a loud NEUTRAL signal (FLAG),
+        // not a blocking FAIL, so one unstable suite cannot hold the whole team hostage.
+        // It stays visible in the receipt so the quarantine cannot be silently permanent.
+        if (r.quarantined === true) {
+          hasFlag = true;
+          reasons.push(`runner "${r.name}" exited ${r.exit_code} but is QUARANTINED (neutral, not blocking; fix and un-quarantine it)`);
+        } else {
+          hasFail = true;
+          reasons.push(`runner "${r.name}" exited ${r.exit_code}`);
+        }
+      } else if (r.flaky === true) {
+        // Passed, but only after a retry. Surface it loudly as a FLAG so a flake is
+        // visible and tracked, without blocking the merge on a transient red.
+        hasFlag = true;
+        reasons.push(`runner "${r.name}" is FLAKY (failed then passed on retry); investigate, do not ignore`);
       }
     }
   }
@@ -311,6 +332,40 @@ function computeVerdict(input) {
           reasons.push(`${msg} [coverage flag]`);
         }
       }
+    }
+  }
+
+  // Pass 7: inter-suite discovery ("make absence loud" across suites). A repo can
+  // hold a whole test suite that NO declared runner targets (a pytest tree with no
+  // pytest runner, an unwired Playwright project). `fqe discover` detects frameworks
+  // present and reports the ones with no matching runner. Default is FLAG (heuristic,
+  // avoid alert fatigue on a 10-person team); require_all_suites_wired upgrades it to
+  // FAIL. Runners with all suites wired are unaffected. Pure: consumes the list the
+  // orchestrator already computed.
+  // A discovery CRASH must not silently suppress the strict requirement. If the caller
+  // opted into require_all_suites_wired and discovery errored, we cannot prove suites are
+  // wired, so fail closed (FAIL). Without strict mode it is a loud FLAG, not a silent pass.
+  if (input.discovery_error) {
+    if (input.require_all_suites_wired === true) {
+      hasFail = true;
+      reasons.push(`suite discovery failed (${input.discovery_error}) and require_all_suites_wired is on; cannot prove all suites are wired (fail closed)`);
+    } else {
+      hasFlag = true;
+      reasons.push(`suite discovery failed (${input.discovery_error}); could not check for unwired suites this run`);
+    }
+  }
+  const unwired = Array.isArray(input.unwired_suites) ? input.unwired_suites : [];
+  if (unwired.length > 0) {
+    const names = unwired.map((u) => (u && u.id ? u.id : String(u))).join(', ');
+    const msg =
+      `detected test suites with no declared runner: ${names}. ` +
+      `fqe is computing a verdict over a partial repo (add runners or .fqeignore them)`;
+    if (input.require_all_suites_wired === true) {
+      hasFail = true;
+      reasons.push(`${msg} [require_all_suites_wired: blocks]`);
+    } else {
+      hasFlag = true;
+      reasons.push(`${msg} [discovery flag]`);
     }
   }
 

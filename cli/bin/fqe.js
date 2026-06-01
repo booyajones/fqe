@@ -51,8 +51,9 @@ const qaReportLib = require('../lib/qa_report');
 const specMutate = require('../lib/spec_mutate');
 const trace = require('../lib/trace');
 const reconcileLib = require('../lib/reconcile');
+const discoverLib = require('../lib/discover');
 
-const FQE_VERSION = '0.9.0';
+const FQE_VERSION = '0.10.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -191,6 +192,30 @@ const SUBCOMMANDS = {
     if (!result.valid) {
       for (const e of result.errors) process.stderr.write(`  ${e}\n`);
       die(`validate: ${result.errors.length} problem(s) in ${configPath}`);
+    }
+  },
+
+  discover(args) {
+    // fqe discover [--dir D] [--config .fqe.yml] [--strict]
+    // Detect test frameworks present in the repo and report which are NOT wired to a
+    // runner (the inter-suite "make absence loud" gap). exit 0 = all wired,
+    // 3 = unwired suites (FLAG), 2 = unwired AND strict (or require_all_suites_wired).
+    const opts = parseFlags(args);
+    const dir = opts.dir || process.cwd();
+    const configPath = opts.config || path.join(dir, '.fqe.yml');
+    let config = { runners: {} };
+    if (fs.existsSync(configPath)) {
+      try { config = orchestrator.parseConfigYaml(fs.readFileSync(configPath, 'utf8')); }
+      catch (e) { die(`discover: ${configPath} could not be parsed: ${e.message}`); }
+    }
+    const report = discoverLib.discover(dir, config);
+    process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    if (report.unwired.length > 0) {
+      const strict = opts.strict === true || config.require_all_suites_wired === true;
+      for (const u of report.unwired) {
+        process.stderr.write(`  UNWIRED: ${u.id} (${u.lang}) detected by ${u.evidence}, no runner targets it\n`);
+      }
+      process.exit(strict ? 2 : 3);
     }
   },
 
