@@ -2,6 +2,16 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.12.0] - 2026-06-01
+
+Tag: `fqe-v0.12.0`. `fqe baseline`: contract coverage from the spec a team already wrote (the highest-trust oracle), no LLM guessing.
+
+### Added
+- **`fqe baseline --spec openapi.json`** (lib/baseline.js): count operations in an OpenAPI/Swagger JSON spec and scaffold a `contract`-class Schemathesis runner with coverage-liveness wired, so a contract suite that exercised fewer operations than the spec declares FAILs. Fail-closed: an empty, non-JSON, or non-OpenAPI spec throws rather than yielding a misleading 0 (OpenAPI YAML must be passed as JSON, which every toolchain can emit).
+
+### Notes
+- Backward compatible. The $0.01 sandbox canary (needs a payment-sandbox credential) and Stage B (mutation-on-diff advisory-first + AI authoring through the gate) are still ahead.
+
 ## [0.11.0] - 2026-06-01
 
 Tag: `fqe-v0.11.0`. Stage A part 2: the mandatory money-idempotency invariant, the single highest-severity payments control. fqe now refuses a green for a money-movement repo that never proved a repeated request pays once.

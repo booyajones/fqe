@@ -52,8 +52,9 @@ const specMutate = require('../lib/spec_mutate');
 const trace = require('../lib/trace');
 const reconcileLib = require('../lib/reconcile');
 const discoverLib = require('../lib/discover');
+const baselineLib = require('../lib/baseline');
 
-const FQE_VERSION = '0.11.0';
+const FQE_VERSION = '0.12.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -217,6 +218,23 @@ const SUBCOMMANDS = {
       }
       process.exit(strict ? 2 : 3);
     }
+  },
+
+  baseline(args) {
+    // fqe baseline --spec openapi.json
+    // Count operations in an OpenAPI (JSON) spec and print a contract-class runner block
+    // wired to Schemathesis with coverage-liveness, so backend oracles come from the spec
+    // the team already wrote. exit 0 = printed, 1 = spec missing/unparseable (fail closed).
+    const opts = parseFlags(args);
+    const spec = opts.spec;
+    if (!spec) die('baseline: --spec <openapi.json> is required');
+    if (!fs.existsSync(spec)) die(`baseline: spec not found: ${spec}`);
+    let count;
+    try { count = baselineLib.countOperations(fs.readFileSync(spec, 'utf8')); }
+    catch (e) { die(`baseline: ${e.message}`); }
+    const block = baselineLib.scaffoldContractRunner({ specPath: spec });
+    process.stdout.write(JSON.stringify({ spec, operations: count }, null, 2) + '\n');
+    process.stderr.write(`\nAdd this contract runner to .fqe.yml (it reconciles against ${count} operations):\n\n${block}\n`);
   },
 
   'oracle-guard'(args) {
