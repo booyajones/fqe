@@ -45,6 +45,16 @@ function parseOpenApiOperations(jsonText) {
   const ops = [];
   for (const [p, item] of Object.entries(paths)) {
     if (!item || typeof item !== 'object') continue;
+    // FAIL CLOSED on a $ref path item: its operations live in another document we do
+    // not resolve, so counting it as 0 would UNDERCOUNT and let coverage-liveness pass
+    // over a partial contract suite. Refuse rather than undercount.
+    if (typeof item.$ref === 'string') {
+      throw new Error(
+        `baseline: path "${p}" is a $ref to a shared path item, which fqe baseline does not resolve. ` +
+        'Dereference the spec first (e.g. redocly bundle --dereference, or swagger-cli bundle -r) so the ' +
+        'operation count is correct (fail closed).'
+      );
+    }
     for (const [method, op] of Object.entries(item)) {
       if (!HTTP_METHODS.includes(method.toLowerCase())) continue;
       ops.push({
@@ -71,6 +81,14 @@ function countOperations(jsonText) {
  */
 function scaffoldContractRunner({ specPath, baseUrlEnv = 'BASE_URL' }) {
   const sp = String(specPath);
+  // Reject anything but a safe relative path so the value cannot inject shell or break
+  // the quoting when interpolated into the runner command lines below.
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(sp)) {
+    throw new Error(`baseline: spec path "${sp}" must be a safe relative path (letters, digits, _ . / -) to scaffold a runner`);
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(baseUrlEnv)) {
+    throw new Error(`baseline: baseUrlEnv "${baseUrlEnv}" must be a valid env var name`);
+  }
   return [
     'runners:',
     '  contract:',
@@ -80,7 +98,9 @@ function scaffoldContractRunner({ specPath, baseUrlEnv = 'BASE_URL' }) {
     '    always_run: true',
     '    required: true',
     '    report: junit:contract.xml',
-    `    inventory_cmd: "node -e \\"const{countOperations}=require('fqe/cli/lib/baseline');const fs=require('fs');process.stdout.write(String(countOperations(fs.readFileSync('${sp}','utf8'))))\\""`,
+    // Count via the fqe CLI already on PATH (the workflow links it), NOT a node module
+    // path: fqe installs as a CLI, not an npm package named "fqe".
+    `    inventory_cmd: "fqe baseline --spec ${sp} --count"`,
     '    inventory_format: count',
     '    min_tests: 1',
     '    reconcile: true',

@@ -232,6 +232,12 @@ const SUBCOMMANDS = {
     let count;
     try { count = baselineLib.countOperations(fs.readFileSync(spec, 'utf8')); }
     catch (e) { die(`baseline: ${e.message}`); }
+    // --count: print ONLY the integer (this is what the scaffolded inventory_cmd calls,
+    // so coverage-liveness reconciles against the live spec's operation count).
+    if (opts.count === true) {
+      process.stdout.write(String(count) + '\n');
+      return;
+    }
     const block = baselineLib.scaffoldContractRunner({ specPath: spec });
     process.stdout.write(JSON.stringify({ spec, operations: count }, null, 2) + '\n');
     process.stderr.write(`\nAdd this contract runner to .fqe.yml (it reconciles against ${count} operations):\n\n${block}\n`);

@@ -58,10 +58,27 @@ test('a spec with paths but zero operations counts 0 (valid, not an error)', () 
   assert.equal(countOperations('{"openapi":"3.0.3","paths":{"/x":{"description":"x"}}}'), 0);
 });
 
+test('FAIL CLOSED: a $ref path item throws (would otherwise undercount = fail-open)', () => {
+  const spec = JSON.stringify({ openapi: '3.0.3', paths: { '/shared': { $ref: 'common.json#/paths/shared' }, '/x': { get: {} } } });
+  assert.throws(() => countOperations(spec), /\$ref/);
+});
+
 test('scaffoldContractRunner emits a contract runner with coverage-liveness wired', () => {
   const block = scaffoldContractRunner({ specPath: 'openapi.json' });
   assert.match(block, /class: contract/);
   assert.match(block, /report: junit:contract\.xml/);
   assert.match(block, /reconcile: true/);
   assert.match(block, /inventory_format: count/);
+});
+
+test('scaffold inventory_cmd uses the fqe CLI on PATH, not a node module path', () => {
+  const block = scaffoldContractRunner({ specPath: 'openapi.json' });
+  assert.match(block, /fqe baseline --spec openapi\.json --count/);
+  assert.doesNotMatch(block, /require\('fqe/);
+  assert.doesNotMatch(block, /node -e/);
+});
+
+test('scaffold REJECTS an unsafe spec path (injection surface closed)', () => {
+  assert.throws(() => scaffoldContractRunner({ specPath: 'a";rm -rf /;"b.json' }), /safe relative path/);
+  assert.throws(() => scaffoldContractRunner({ specPath: '$(whoami).json' }), /safe relative path/);
 });
