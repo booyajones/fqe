@@ -60,13 +60,14 @@ const BLAST_RADIUS_BLOCKS = Object.freeze(new Set(['mcp-write-or-financial']));
  *   lint         static style / formatting
  *   type         static type check
  *   mutation     mutation-testing bouncer (tests actually catch bugs)
+ *   spec-mutation spec-mutation bouncer (tests anchored to the requirement, not tautologies)
  *   coverage     coverage ratchet
  *   security     security/SAST/secret scan
  *   money        money-path correctness (balances, idempotency, reconciliation)
  */
 const KNOWN_CLASSES = Object.freeze([
   'unit', 'integration', 'e2e', 'regression', 'contract', 'property',
-  'uat', 'lint', 'type', 'mutation', 'coverage', 'security', 'money',
+  'uat', 'lint', 'type', 'mutation', 'spec-mutation', 'coverage', 'security', 'money',
 ]);
 
 /**

@@ -173,13 +173,16 @@ fqe validate                                        fail-closed .fqe.yml check (
 fqe oracle-guard                                    flag a PR editing its own answer key
 fqe coverage-ratchet --report FILE                  coverage never drops
 fqe mutation-gate --report stryker.json             tests must catch injected bugs
+fqe spec-mutate --report R.json [--threshold N]      kill tautological tests (corrupt the requirement)
+fqe trace --matrix M.json                            requirement<->test traceability gate
+fqe reconcile --ledger L.json                        double-entry money HALT (debits==credits)
 fqe receipt parse FILE                              parse + print verdict
 fqe status publish --check N --commit S --state X   emit GitHub check-run
 fqe bypass-tally rate --state-dir D [--format scalar] rolling bypass rate
 fqe thresholds                                      show canonical thresholds
 fqe wilson SUCCESSES N                              Wilson 95% CI
 
-Test classes: unit integration e2e regression contract property uat lint type mutation coverage security money
+Test classes: unit integration e2e regression contract property uat lint type mutation spec-mutation coverage security money
 Exit: 0=PASS  2=FAIL  3=FLAG  4=INFRA  1=error
 ```
 

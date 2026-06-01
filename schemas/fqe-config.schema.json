@@ -54,7 +54,7 @@
   "$defs": {
     "testClass": {
       "type": "string",
-      "enum": ["unit", "integration", "e2e", "regression", "contract", "property", "uat", "lint", "type", "mutation", "coverage", "security", "money"],
+      "enum": ["unit", "integration", "e2e", "regression", "contract", "property", "uat", "lint", "type", "mutation", "spec-mutation", "coverage", "security", "money"],
       "description": "fqe test-class taxonomy. Locked set; a typo'd class is rejected."
     },
     "runner": {

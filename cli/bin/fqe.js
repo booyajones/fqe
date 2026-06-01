@@ -48,8 +48,11 @@ const bypassGuard = require('../lib/bypass_guard');
 const uatLib = require('../lib/uat');
 const goldenLib = require('../lib/golden');
 const qaReportLib = require('../lib/qa_report');
+const specMutate = require('../lib/spec_mutate');
+const trace = require('../lib/trace');
+const reconcileLib = require('../lib/reconcile');
 
-const FQE_VERSION = '0.7.0';
+const FQE_VERSION = '0.8.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -671,6 +674,96 @@ const SUBCOMMANDS = {
     }
   },
 
+  'spec-mutate'(args) {
+    // fqe spec-mutate --report report.json [--threshold N]
+    // The report JSON declares { mutantsTotal, mutantsKilled }. A surviving
+    // spec-mutant is a tautological test (the suite still passes when the
+    // REQUIREMENT is corrupted). Default threshold 1.0 — every spec-mutant must
+    // be killed. exit 0 PASS / 2 FAIL.
+    const opts = parseFlags(args);
+    requireFlags(opts, ['report']);
+    if (!fs.existsSync(opts.report)) die(`spec-mutate: report not found: ${opts.report}`);
+    let report;
+    try {
+      report = JSON.parse(fs.readFileSync(opts.report, 'utf8'));
+    } catch (e) {
+      die(`spec-mutate: could not parse report ${opts.report}: ${e.message}`);
+    }
+    const evalInput = {
+      mutantsTotal: report.mutantsTotal,
+      mutantsKilled: report.mutantsKilled,
+    };
+    if (opts.threshold !== undefined) evalInput.threshold = parseFloat(opts.threshold);
+    const out = specMutate.evaluateSpecMutation(evalInput);
+    process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    if (out.verdict === specMutate.FAIL) {
+      for (const r of out.reasons) process.stderr.write(`  ${r}\n`);
+      process.exit(EXIT.FAIL);
+    }
+  },
+
+  trace(args) {
+    // fqe trace --matrix matrix.json
+    // The matrix JSON declares { requirements, tests }. Builds the
+    // requirement<->test traceability matrix, then FAILs when a money/security
+    // requirement ships with no covering test, or a money/security test traces
+    // to no requirement. Non-strict gaps are advisory FLAGs.
+    // exit 0 PASS / 2 FAIL / 3 FLAG.
+    const opts = parseFlags(args);
+    requireFlags(opts, ['matrix']);
+    if (!fs.existsSync(opts.matrix)) die(`trace: matrix not found: ${opts.matrix}`);
+    let input;
+    try {
+      input = JSON.parse(fs.readFileSync(opts.matrix, 'utf8'));
+    } catch (e) {
+      die(`trace: could not parse matrix ${opts.matrix}: ${e.message}`);
+    }
+    const matrix = trace.buildTraceMatrix({
+      requirements: input.requirements,
+      tests: input.tests,
+    });
+    const out = trace.evaluateTrace(matrix, { requirements: input.requirements });
+    process.stdout.write(JSON.stringify({ ...matrix, ...out }, null, 2) + '\n');
+    if (out.verdict === 'FAIL') {
+      for (const r of out.reasons) process.stderr.write(`  ${r}\n`);
+      process.exit(EXIT.FAIL);
+    }
+    // No hard FAIL but advisory TRACE_GAP reasons present -> FLAG (3).
+    if (out.reasons.length > 0) {
+      for (const r of out.reasons) process.stderr.write(`  ${r}\n`);
+      process.exit(EXIT.FLAG);
+    }
+  },
+
+  reconcile(args) {
+    // fqe reconcile --ledger ledger.json
+    // The ledger JSON declares { entries, authorizations, driftThresholdCents,
+    // now }. Re-derives the double-entry invariant from the raw entries and
+    // HALTs (FAIL) if the books do not balance or any authorization is orphaned.
+    // exit 0 PASS / 2 FAIL (halt).
+    const opts = parseFlags(args);
+    requireFlags(opts, ['ledger']);
+    if (!fs.existsSync(opts.ledger)) die(`reconcile: ledger not found: ${opts.ledger}`);
+    let ledger;
+    try {
+      ledger = JSON.parse(fs.readFileSync(opts.ledger, 'utf8'));
+    } catch (e) {
+      die(`reconcile: could not parse ledger ${opts.ledger}: ${e.message}`);
+    }
+    const result = reconcileLib.reconcile({
+      entries: ledger.entries,
+      authorizations: ledger.authorizations,
+      driftThresholdCents: ledger.driftThresholdCents,
+      now: ledger.now,
+    });
+    const out = reconcileLib.evaluateReconciliation(result);
+    process.stdout.write(JSON.stringify({ ...result, ...out }, null, 2) + '\n');
+    if (out.verdict === reconcileLib.FAIL) {
+      for (const r of out.reasons) process.stderr.write(`  ${r}\n`);
+      process.exit(EXIT.FAIL);
+    }
+  },
+
   wilson(args) {
     // utility: fqe wilson <successes> <n>
     const s = parseInt(args[0], 10);
@@ -713,6 +806,18 @@ const SUBCOMMANDS = {
       '  golden verify  --manifest golden.yml --dir goldens/    FAIL on drift (regression engine) [--json]',
       '  qa-report --receipt QA-RESULT.yml       single-pane scorecard: per-class status, policy gaps,',
       '            [--json] [--gate]               coverage, adversarial summary (--gate maps verdict to exit)',
+      '',
+      'anti-tautology + money backstops (v0.8.0):',
+      '  spec-mutate --report R.json [--threshold N]  kill tautological tests: corrupt the REQUIREMENT,',
+      '                                                 a surviving spec-mutant is a test pinned to code',
+      '                                                 not spec. R.json = {mutantsTotal, mutantsKilled}.',
+      '                                                 exit 0 PASS / 2 FAIL (default threshold 1.0)',
+      '  trace --matrix M.json                    requirement<->test traceability: FAIL on an uncovered',
+      '                                             money/security requirement or an orphan strict test.',
+      '                                             M.json = {requirements, tests}. exit 0/2 FAIL/3 FLAG',
+      '  reconcile --ledger L.json                double-entry money HALT: re-derive debits==credits per-txn',
+      '                                             + aggregate, flag orphaned auths. L.json = {entries,',
+      '                                             authorizations, driftThresholdCents, now}. exit 0/2 (halt)',
       '',
       'verdict + receipt primitives:',
       '  verdict <results-json|->            compute verdict deterministically (no LLM in path)',
