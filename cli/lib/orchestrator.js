@@ -30,6 +30,7 @@ const { validateConfig } = require('./config_schema');
 const { parseJUnit } = require('./junit');
 const { parseInventory } = require('./inventory');
 const { discover } = require('./discover');
+const { parseStryker, evaluateMutationAdvisory } = require('./mutation_gate');
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -560,6 +561,43 @@ function run(opts) {
     }
   }
 
+  // Mutation-on-diff judge (v0.13): a class:'mutation' runner emits either a Stryker JSON
+  // report (parsed.mutation_report) or a direct tally with survivors (parsed.mutation).
+  // Evaluate it with the configured governance (mode, threshold, allowlist) scoped to the
+  // diff. Advisory by default. Never throws: a malformed report yields no mutation signal
+  // rather than crashing the gate.
+  let mutationResult = null;
+  if (config.mutation && typeof config.mutation === 'object') {
+    const mutRunner = runnerResults.find((r) => r.class === 'mutation' && r.parsed &&
+      (r.parsed.mutation_report || r.parsed.mutation));
+    if (mutRunner) {
+      try {
+        let tally = null;
+        if (mutRunner.parsed.mutation_report) {
+          tally = parseStryker(mutRunner.parsed.mutation_report);
+        } else if (mutRunner.parsed.mutation && typeof mutRunner.parsed.mutation === 'object') {
+          const m = mutRunner.parsed.mutation;
+          tally = {
+            killed: Number(m.killed) || 0,
+            surviving: Number(m.surviving) || (Array.isArray(m.survivors) ? m.survivors.length : 0),
+            perFile: m.perFile || {},
+            survivors: Array.isArray(m.survivors) ? m.survivors : [],
+          };
+        }
+        if (tally) {
+          mutationResult = evaluateMutationAdvisory({
+            tally,
+            mode: config.mutation.mode || 'advisory',
+            threshold: typeof config.mutation.threshold === 'number' ? config.mutation.threshold : 70,
+            minMutants: typeof config.mutation.min_mutants === 'number' ? config.mutation.min_mutants : 1,
+            allowlist: Array.isArray(config.mutation.allowlist) ? config.mutation.allowlist : [],
+            changedFiles: diff.ok ? files : null,
+          });
+        }
+      } catch (_) { mutationResult = null; /* advisory; never crash the gate */ }
+    }
+  }
+
   const requiredClasses = computeRequiredClasses(config.policy, files, !diff.ok);
 
   // Inter-suite discovery: detect frameworks present that no declared runner covers.
@@ -590,6 +628,7 @@ function run(opts) {
     require_all_suites_wired: config.require_all_suites_wired === true,
     discovery_error: discoveryError,
     require_money_idempotency: config.require_money_idempotency === true,
+    mutation: mutationResult,
   };
   let verdictOut;
   try {

@@ -2,6 +2,18 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.13.0] - 2026-06-01
+
+Tag: `fqe-v0.13.0`. Stage B linchpin: the mutation-on-diff judge with advisory-first governance. Coverage-liveness proves a test RAN, mutation proves it would CATCH the code breaking. This is what lets fqe trust AI-authored tests without a human reading each one.
+
+### Added
+- **Top-level `mutation` block** (mode advisory|blocking, threshold, min_mutants, allowlist) + verdict Pass 9. A `class: mutation` runner emits a Stryker report or a direct `{killed,surviving,survivors}` tally; fqe scopes it to the PR diff, applies the equivalent-mutant allowlist, and maps survivors below threshold to a FLAG (advisory, the default) or FAIL (blocking, once ratcheted). Too few mutants is NEUTRAL (cannot judge, never a silent pass, never a block). The mutation judge can only ADD a FLAG/FAIL, never clear one, so it sits below contracts and money-invariants in the trust hierarchy.
+- `evaluateMutationAdvisory` + survivor keys (file:line:Mutator) so an allowlist survives across runs. Built on the existing `parseStryker`/`evaluateMutationGate`.
+- docs/recipes/mutation-advisory.md (advisory-first, diff-scope cost control, the AI-authoring-through-the-gate pipeline, and why advisory-first beats a hard gate for adoption).
+
+### Notes
+- Backward compatible (no mutation block = no mutation signal). Advisory by default so it never sprays false reds. Ratchet to blocking once the false-red rate on real PRs is near zero.
+
 ## [0.12.0] - 2026-06-01
 
 Tag: `fqe-v0.12.0`. `fqe baseline`: contract coverage from the spec a team already wrote (the highest-trust oracle), no LLM guessing.

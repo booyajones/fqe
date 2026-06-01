@@ -21,7 +21,8 @@
 const { KNOWN_CLASSES } = require('./verdict');
 const { KNOWN_FORMATS } = require('./inventory');
 
-const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired', 'require_money_idempotency'];
+const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired', 'require_money_idempotency', 'mutation'];
+const MUTATION_KEYS = ['mode', 'threshold', 'min_mutants', 'allowlist'];
 // Invariant ids a runner may declare it proves (payments safety, v0.11).
 const KNOWN_INVARIANTS = Object.freeze(['idempotency', 'double-spend', 'conservation', 'no-negative-balance']);
 const RUNNER_KEYS = [
@@ -107,6 +108,10 @@ function validateConfig(config) {
     errors.push(`'require_money_idempotency' must be true or false, got ${typeOf(config.require_money_idempotency)}`);
   }
 
+  if ('mutation' in config) {
+    validateMutation(config.mutation, errors);
+  }
+
   if ('policy' in config) {
     validatePolicy(config.policy, errors);
   }
@@ -190,6 +195,46 @@ function validatePolicy(policy, errors) {
         }
       });
     }
+  }
+}
+
+/**
+ * Validate the optional top-level `mutation` block (v0.13):
+ *   mutation:
+ *     mode: advisory        # advisory (FLAG survivors) | blocking (FAIL survivors)
+ *     threshold: 70         # minimum kill rate %
+ *     min_mutants: 1        # below this, neutral (cannot judge)
+ *     allowlist: ["file:line:Mutator"]   # equivalent mutants to suppress
+ * Mutation proves a test catches a planted fault. It sits BELOW contracts and money
+ * invariants in the trust hierarchy, and starts ADVISORY so it never sprays false reds.
+ */
+function validateMutation(mut, errors) {
+  if (!isPlainObject(mut)) {
+    errors.push(`'mutation' must be a mapping, got ${typeOf(mut)}`);
+    return;
+  }
+  for (const key of Object.keys(mut)) {
+    if (!MUTATION_KEYS.includes(key)) {
+      errors.push(`mutation: unknown key '${key}' (known: ${MUTATION_KEYS.join(', ')})`);
+    }
+  }
+  if ('mode' in mut && mut.mode !== 'advisory' && mut.mode !== 'blocking') {
+    errors.push(`mutation.mode must be 'advisory' or 'blocking', got '${mut.mode}'`);
+  }
+  if ('threshold' in mut) {
+    const t = mut.threshold;
+    if (typeof t !== 'number' || t < 0 || t > 100) {
+      errors.push('mutation.threshold must be a number 0..100 (kill-rate percent)');
+    }
+  }
+  if ('min_mutants' in mut) {
+    const n = mut.min_mutants;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) {
+      errors.push('mutation.min_mutants must be a positive integer');
+    }
+  }
+  if ('allowlist' in mut && !isArrayOfStrings(mut.allowlist)) {
+    errors.push('mutation.allowlist must be a list of survivor keys (file:line:Mutator)');
   }
 }
 

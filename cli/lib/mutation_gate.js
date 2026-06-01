@@ -31,10 +31,11 @@ function parseStryker(report) {
   try {
     j = typeof report === 'string' ? JSON.parse(report) : report;
   } catch {
-    return { total: 0, killed: 0, surviving: 0, killRate: null, perFile: {} };
+    return { total: 0, killed: 0, surviving: 0, killRate: null, perFile: {}, survivors: [] };
   }
   const files = j && j.files ? j.files : {};
   const perFile = {};
+  const survivors = [];
   let killed = 0;
   let surviving = 0;
   for (const [path, data] of Object.entries(files)) {
@@ -43,7 +44,10 @@ function parseStryker(report) {
     let s = 0;
     for (const m of mutants) {
       if (m.status === KILLED) k++;
-      else if (SURVIVING.has(m.status)) s++;
+      else if (SURVIVING.has(m.status)) {
+        s++;
+        survivors.push({ key: survivorKey(path, m), file: normalizePath(path), mutator: m.mutatorName || '?', status: m.status });
+      }
     }
     perFile[path] = { killed: k, surviving: s };
     killed += k;
@@ -56,7 +60,96 @@ function parseStryker(report) {
     surviving,
     killRate: total > 0 ? round2((killed / total) * 100) : null,
     perFile,
+    survivors,
   };
+}
+
+/**
+ * Stable key for a surviving mutant so an equivalent-mutant allowlist survives across
+ * runs (Stryker's per-run numeric ids do not). Key = file:line:mutator.
+ */
+function survivorKey(path, m) {
+  const line = m && m.location && m.location.start && m.location.start.line != null ? m.location.start.line : '?';
+  return `${normalizePath(path)}:${line}:${m && m.mutatorName ? m.mutatorName : '?'}`;
+}
+
+/**
+ * Advisory-first mutation evaluation with governance (the council/gauntlet-required layer
+ * over evaluateMutationGate). Applies an equivalent-mutant ALLOWLIST (suppress known
+ * survivors so the gate never sprays chronic false reds), then maps the result to a verdict
+ * by MODE: 'advisory' surfaces survivors as a FLAG (visible, non-blocking, the default while
+ * the false-red rate is being measured), 'blocking' returns FAIL once ratcheted. Too few
+ * mutants to judge is NEUTRAL (never a silent pass, never a block).
+ *
+ * @param {object} o
+ * @param {object} [o.tally]  a parsed tally from parseStryker (with survivors)
+ * @param {string} [o.mode='advisory']  'advisory' | 'blocking'
+ * @param {number} [o.threshold=70]
+ * @param {string[]|null} [o.changedFiles=null]  diff-scope
+ * @param {number} [o.minMutants=1]
+ * @param {string[]} [o.allowlist=[]]  survivor keys (file:line:mutator) known equivalent
+ * @returns {{ verdict:'PASS'|'FLAG'|'FAIL'|'NEUTRAL', killRate:number|null, total:number,
+ *             killed:number, surviving:number, suppressed:number, survivors:object[], reasons:string[] }}
+ */
+function evaluateMutationAdvisory(o) {
+  const opts = o || {};
+  const mode = opts.mode === 'blocking' ? 'blocking' : 'advisory';
+  const allowlist = new Set(Array.isArray(opts.allowlist) ? opts.allowlist : []);
+
+  // Filter survivors through the equivalent-mutant allowlist BEFORE counting.
+  const tally = opts.tally && typeof opts.tally === 'object' ? opts.tally : null;
+  let suppressed = 0;
+  let liveSurvivors = [];
+  let adjustedTally = tally;
+  if (tally && Array.isArray(tally.survivors)) {
+    // Respect diff-scope: only survivors in changed files (when provided) are in scope.
+    const scope = Array.isArray(opts.changedFiles) && opts.changedFiles.length > 0
+      ? new Set(opts.changedFiles.map(normalizePath)) : null;
+    const inScope = tally.survivors.filter((s) => !scope || scope.has(normalizePath(s.file)));
+    liveSurvivors = inScope.filter((s) => !allowlist.has(s.key));
+    suppressed = inScope.length - liveSurvivors.length;
+    // Recompute killed within scope so killRate reflects the diff + allowlist.
+    let scopedKilled = tally.killed;
+    if (scope) {
+      scopedKilled = 0;
+      for (const [path, c] of Object.entries(tally.perFile || {})) {
+        if (scope.has(normalizePath(path))) scopedKilled += c.killed;
+      }
+    }
+    adjustedTally = { killed: scopedKilled, surviving: liveSurvivors.length, perFile: tally.perFile };
+  }
+
+  const base = evaluateMutationGate({
+    tally: adjustedTally || undefined,
+    killed: adjustedTally ? undefined : opts.killed,
+    surviving: adjustedTally ? undefined : opts.surviving,
+    threshold: opts.threshold,
+    minMutants: opts.minMutants,
+    // changedFiles already applied above when a tally with survivors was given; pass it
+    // through only for the direct-counts/no-survivors path.
+    changedFiles: adjustedTally ? null : opts.changedFiles,
+  });
+
+  if (base.insufficient) {
+    return {
+      verdict: 'NEUTRAL', killRate: base.killRate, total: base.total, killed: base.killed,
+      surviving: base.surviving, suppressed, survivors: liveSurvivors,
+      reasons: [`mutation: cannot judge (${base.reasons[0] || 'insufficient mutants'}); neutral, not a pass`],
+    };
+  }
+  if (base.pass) {
+    return {
+      verdict: 'PASS', killRate: base.killRate, total: base.total, killed: base.killed,
+      surviving: base.surviving, suppressed, survivors: liveSurvivors, reasons: [],
+    };
+  }
+  // Below threshold: advisory -> FLAG, blocking -> FAIL.
+  const detail = `mutation kill rate ${base.killRate != null ? base.killRate.toFixed(2) : '?'}% below ${opts.threshold || 70}% ` +
+    `(${base.surviving} live survivor(s)${suppressed ? `, ${suppressed} suppressed as equivalent` : ''})`;
+  if (mode === 'blocking') {
+    return { verdict: 'FAIL', killRate: base.killRate, total: base.total, killed: base.killed, surviving: base.surviving, suppressed, survivors: liveSurvivors, reasons: [`${detail} [blocking]`] };
+  }
+  return { verdict: 'FLAG', killRate: base.killRate, total: base.total, killed: base.killed, surviving: base.surviving, suppressed, survivors: liveSurvivors, reasons: [`${detail} [advisory]`] };
 }
 
 /**
@@ -142,4 +235,4 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-module.exports = { parseStryker, evaluateMutationGate, KILLED, SURVIVING };
+module.exports = { parseStryker, evaluateMutationGate, evaluateMutationAdvisory, survivorKey, KILLED, SURVIVING };
