@@ -233,6 +233,87 @@ function computeVerdict(input) {
     }
   }
 
+  // Pass 6: coverage-liveness ("make absence loud"). A runner can exit 0 while
+  // having executed NOTHING real (an empty selection, an all-skipped suite, or a
+  // mis-scoped subset). Exit code alone cannot see that. When a runner carries a
+  // `coverage` object (assembled by the orchestrator from a fresh JUnit report and
+  // an optional collected-count inventory), this pass turns those numbers into a
+  // verdict. It is the deterministic core of "a pass cannot be minted by a suite
+  // that ran nothing." Runners with no coverage object are untouched (backward
+  // compatible). No LLM, pure arithmetic on the supplied counts.
+  const requireEvidence = input.require_coverage_evidence === true;
+  for (const r of input.runners) {
+    if (!r || typeof r.name !== 'string') continue;
+    const cov = r.coverage;
+
+    // Opt-in strict mode: a required runner that declares NO coverage evidence is
+    // a FAIL. This closes the "optional report" fail-open seam for repos that turn
+    // it on, without breaking repos that have not adopted coverage fields.
+    if (requireEvidence && r.required === true && (!cov || cov.declared !== true)) {
+      hasFail = true;
+      reasons.push(
+        `required runner "${r.name}" declares no test-evidence report, but ` +
+        `require_coverage_evidence is on (add report: junit:<path> so fqe can prove tests ran)`
+      );
+      continue;
+    }
+
+    if (!cov || cov.declared !== true) continue;
+
+    // Fresh, parseable evidence is mandatory once declared. Missing report, stale
+    // report, or an unparseable one is fail-closed: it BLOCKS, never passes.
+    if (cov.evidence_ok !== true) {
+      hasFail = true;
+      reasons.push(
+        `runner "${r.name}" produced no fresh, parseable test report` +
+        (cov.evidence_error ? `: ${cov.evidence_error}` : '') +
+        ' (a declared report must exist and parse, or the gate fails closed)'
+      );
+      continue;
+    }
+
+    // Empty / all-skipped: non-skipped executed count below the floor is a FAIL.
+    const minTests = typeof cov.min_tests === 'number' ? cov.min_tests : 1;
+    if (typeof cov.executed === 'number' && cov.executed < minTests) {
+      hasFail = true;
+      reasons.push(
+        `runner "${r.name}" executed ${cov.executed} non-skipped test(s), below the ` +
+        `required minimum of ${minTests}. A green cannot be minted by a suite that ran nothing real.`
+      );
+    }
+
+    // Reconciliation against the framework's own collected count.
+    if (
+      cov.reconcile === true &&
+      typeof cov.collected === 'number' &&
+      typeof cov.reported === 'number'
+    ) {
+      if (cov.reported > cov.collected) {
+        // Impossible in a sound setup: you cannot execute MORE tests than were collected.
+        // This means the inventory undercounted (a broken inventory_cmd, e.g. a pipe that
+        // returned 0). Trusting it would silently disable under-coverage detection, so
+        // fail closed instead of letting a deflated inventory wave the run through.
+        hasFail = true;
+        reasons.push(
+          `runner "${r.name}" reported ${cov.reported} executed tests but inventory collected ` +
+          `only ${cov.collected}; the inventory is unreliable (fail closed, reconciliation cannot be trusted)`
+        );
+      } else if (cov.reported < cov.collected) {
+        // Mis-scoped / partial: fewer testcases ran than the framework collected.
+        const msg =
+          `runner "${r.name}" ran ${cov.reported} of ${cov.collected} collected tests ` +
+          `(${cov.collected - cov.reported} never executed; runner is mis-scoped or partial)`;
+        if (cov.strict_coverage === true) {
+          hasFail = true;
+          reasons.push(`${msg} [strict_coverage: blocks]`);
+        } else {
+          hasFlag = true;
+          reasons.push(`${msg} [coverage flag]`);
+        }
+      }
+    }
+  }
+
   let verdict;
   if (hasFail) verdict = FAIL;
   else if (hasFlag) verdict = FLAG;

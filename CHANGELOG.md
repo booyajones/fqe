@@ -2,6 +2,23 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.9.0] - 2026-06-01
+
+Tag: `fqe-v0.9.0`. Coverage-liveness ("make absence loud"): a green can no longer be minted by a suite that ran nothing. Proven by plugging fqe COLD into real third-party Python (more-itertools) and Rust (semver) repos on real CI, turning the "works on any stack" claim from a design property into a reproducible fact (n=3 stacks: TypeScript, Python, Rust).
+
+### Added
+- **Coverage-liveness in the verdict path** (no LLM, fail-closed). New opt-in runner fields: `report: junit:<path>`, `inventory_cmd`, `inventory_format` (`count` or `pytest-collect`), `min_tests` (>= 1), `reconcile`, `strict_coverage`; plus a top-level `require_coverage_evidence`.
+  - A required runner with no fresh, parseable report FAILs (mandatory evidence).
+  - Non-skipped executed count below `min_tests` FAILs (catches empty and all-skipped suites; pytest renders skip AND xfail as `<skipped>`).
+  - Collected-vs-executed reconciliation: fewer testcases reported than the framework collected FAILs under `strict_coverage` (else FLAG). Count-based, so it needs no brittle id-string normalization and works on pytest and cargo-nextest alike. A deflated inventory (reported > collected) FAILs closed.
+- `cli/lib/junit.js` (zero-dep JUnit parser: counts only non-skipped cases, fails closed on ambiguity, strips XML comments, accepts both quote styles, handles Jest `pending`) and `cli/lib/inventory.js` (collected-count parser).
+- Report freshness is clock-INDEPENDENT: fqe records any prior report's mtime, deletes it before the run, and requires the runner to have rewritten it, so a stale or cached report cannot pass even if the delete fails.
+- Proof repos: booyajones/fqe-proof-python (more-itertools fork) and booyajones/fqe-proof-rust (semver fork), each green through fqe with a planted mis-scoped run proven RED on real CI.
+
+### Notes
+- Fully backward compatible: runners that declare no coverage fields are unaffected.
+- Hardened across three plan-gauntlet rounds and two code reviews; every identified fail-open seam was closed before release.
+
 ## [0.8.1] - 2026-06-01
 
 Tag: `fqe-v0.8.1`. fqe now self-hosts its own v0.8.0 backstop: the QA engine is gated by the same anti-tautology and money checks it ships.

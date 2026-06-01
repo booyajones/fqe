@@ -248,10 +248,22 @@ function renderMarkdownBody(r) {
   lines.push('');
   lines.push('## Runners');
   lines.push('');
-  lines.push('| Runner | Class | Required | Ran | Exit |');
-  lines.push('|---|---|---|---|---|');
+  lines.push('| Runner | Class | Required | Ran | Exit | Tests (exec/collected) |');
+  lines.push('|---|---|---|---|---|---|');
   for (const rn of r.runners) {
-    lines.push(`| ${rn.name} | ${rn.class || '-'} | ${rn.required ? 'yes' : 'no'} | ${rn.ran ? 'yes' : 'no'} | ${rn.ran ? rn.exit_code : '-'} |`);
+    // Surface coverage-liveness so absence is LOUD in the human-readable receipt, not
+    // hidden in the YAML. "NO EVIDENCE" means a declared report was missing/unparseable.
+    let covCell = '-';
+    const cov = rn.coverage;
+    if (cov && cov.declared === true) {
+      if (cov.evidence_ok === true) {
+        const coll = typeof cov.collected === 'number' ? cov.collected : '?';
+        covCell = `${cov.executed}/${coll}`;
+      } else {
+        covCell = 'NO EVIDENCE';
+      }
+    }
+    lines.push(`| ${rn.name} | ${rn.class || '-'} | ${rn.required ? 'yes' : 'no'} | ${rn.ran ? 'yes' : 'no'} | ${rn.ran ? rn.exit_code : '-'} | ${covCell} |`);
   }
   if (r.required_classes && r.required_classes.length > 0) {
     lines.push('');
