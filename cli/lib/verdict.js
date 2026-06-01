@@ -282,22 +282,34 @@ function computeVerdict(input) {
       );
     }
 
-    // Mis-scoped / partial: fewer testcases reported than the framework collected.
+    // Reconciliation against the framework's own collected count.
     if (
       cov.reconcile === true &&
       typeof cov.collected === 'number' &&
-      typeof cov.reported === 'number' &&
-      cov.reported < cov.collected
+      typeof cov.reported === 'number'
     ) {
-      const msg =
-        `runner "${r.name}" ran ${cov.reported} of ${cov.collected} collected tests ` +
-        `(${cov.collected - cov.reported} never executed; runner is mis-scoped or partial)`;
-      if (cov.strict_coverage === true) {
+      if (cov.reported > cov.collected) {
+        // Impossible in a sound setup: you cannot execute MORE tests than were collected.
+        // This means the inventory undercounted (a broken inventory_cmd, e.g. a pipe that
+        // returned 0). Trusting it would silently disable under-coverage detection, so
+        // fail closed instead of letting a deflated inventory wave the run through.
         hasFail = true;
-        reasons.push(`${msg} [strict_coverage: blocks]`);
-      } else {
-        hasFlag = true;
-        reasons.push(`${msg} [coverage flag]`);
+        reasons.push(
+          `runner "${r.name}" reported ${cov.reported} executed tests but inventory collected ` +
+          `only ${cov.collected}; the inventory is unreliable (fail closed, reconciliation cannot be trusted)`
+        );
+      } else if (cov.reported < cov.collected) {
+        // Mis-scoped / partial: fewer testcases ran than the framework collected.
+        const msg =
+          `runner "${r.name}" ran ${cov.reported} of ${cov.collected} collected tests ` +
+          `(${cov.collected - cov.reported} never executed; runner is mis-scoped or partial)`;
+        if (cov.strict_coverage === true) {
+          hasFail = true;
+          reasons.push(`${msg} [strict_coverage: blocks]`);
+        } else {
+          hasFlag = true;
+          reasons.push(`${msg} [coverage flag]`);
+        }
       }
     }
   }

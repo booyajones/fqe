@@ -80,6 +80,15 @@ test('FLAG: mis-scoped subset when strict_coverage is off', () => {
   assert.equal(v.verdict, 'FLAG');
 });
 
+test('FAIL (fail-closed): reported > collected means a deflated/broken inventory', () => {
+  const v = computeVerdict({ runners: [runner({
+    declared: true, evidence_ok: true, executed: 50, reported: 50, collected: 0,
+    min_tests: 1, reconcile: true, strict_coverage: true,
+  })] });
+  assert.equal(v.verdict, 'FAIL', 'cannot execute more than collected; inventory is unreliable');
+  assert.match(v.reasons.join(' '), /inventory is unreliable/);
+});
+
 test('FAIL: require_coverage_evidence on + a required runner with no coverage', () => {
   const v = computeVerdict({
     require_coverage_evidence: true,
