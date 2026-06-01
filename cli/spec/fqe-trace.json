@@ -1,0 +1,16 @@
+{
+  "requirements": [
+    { "id": "REQ-NO-LLM-VERDICT", "class": "security" },
+    { "id": "REQ-BLAST-THRESHOLDS", "class": "money" },
+    { "id": "REQ-MONEY-RECONCILE-HALT", "class": "money" },
+    { "id": "REQ-SPEC-ANCHORED", "class": "security" },
+    { "id": "REQ-TRACE-FLOOR", "class": "security" }
+  ],
+  "tests": [
+    { "name": "test/verdict.test.js", "class": "security", "requirementIds": ["REQ-NO-LLM-VERDICT", "REQ-BLAST-THRESHOLDS"] },
+    { "name": "test/selfhost_spec.test.js", "class": "money", "requirementIds": ["REQ-BLAST-THRESHOLDS", "REQ-SPEC-ANCHORED"] },
+    { "name": "test/reconcile.test.js", "class": "money", "requirementIds": ["REQ-MONEY-RECONCILE-HALT"] },
+    { "name": "test/spec_mutate.test.js", "class": "security", "requirementIds": ["REQ-SPEC-ANCHORED"] },
+    { "name": "test/trace.test.js", "class": "security", "requirementIds": ["REQ-TRACE-FLOOR"] }
+  ]
+}

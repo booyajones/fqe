@@ -1,0 +1,34 @@
+# fqe self-host: fqe runs its OWN v0.8.0 backstop on its OWN invariants.
+# The QA engine is gated by the same anti-tautology + money checks it ships.
+name: FQE Self-Host
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  selfhost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: spec-mutation (the threshold tests are anchored to spec/fqe-invariants.spec)
+        working-directory: cli
+        run: |
+          set -euo pipefail
+          node scripts/fqe_specmutate_run.js > spec-mutation-report.json
+          cat spec-mutation-report.json
+          node bin/fqe.js spec-mutate --report spec-mutation-report.json
+
+      - name: requirement trace (every money/security requirement has a test)
+        working-directory: cli
+        run: node bin/fqe.js trace --matrix spec/fqe-trace.json
+
+      - name: money reconciliation (deterministic double-entry halt)
+        working-directory: cli
+        run: node bin/fqe.js reconcile --ledger spec/fqe-ledger-fixture.json

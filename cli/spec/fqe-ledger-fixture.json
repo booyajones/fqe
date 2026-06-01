@@ -1,0 +1,13 @@
+{
+  "entries": [
+    { "txnId": "t1", "account": "cash", "debitCents": 10000, "creditCents": 0 },
+    { "txnId": "t1", "account": "revenue", "debitCents": 0, "creditCents": 10000 },
+    { "txnId": "t2", "account": "fees", "debitCents": 250, "creditCents": 0 },
+    { "txnId": "t2", "account": "cash", "debitCents": 0, "creditCents": 250 }
+  ],
+  "authorizations": [
+    { "authId": "a1", "amountCents": 10000, "capturedCents": 10000, "voided": false, "expiresAt": "2999-01-01T00:00:00Z", "status": "captured" }
+  ],
+  "driftThresholdCents": 0,
+  "now": "2026-06-01T00:00:00Z"
+}

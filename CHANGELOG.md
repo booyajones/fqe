@@ -2,6 +2,34 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.8.1] - 2026-06-01
+
+Tag: `fqe-v0.8.1`. fqe now self-hosts its own v0.8.0 backstop: the QA engine is gated by the same anti-tautology and money checks it ships.
+
+### Added
+- **Self-host gate** (`.github/workflows/fqe-selfhost.yml`): on every push, fqe runs `spec-mutate`, `trace`, and `reconcile` against its own invariants.
+- `cli/spec/fqe-invariants.spec` (the canonical blast-radius thresholds), `cli/test/selfhost_spec.test.js` (asserts `verdict.js` matches the spec, source-independent), and `cli/scripts/fqe_specmutate_run.js` (generates spec-mutants, runs the anchored test against each, tallies kills, fails closed on a spawn error, signal/timeout, or a broken baseline).
+- `cli/spec/fqe-trace.json` (fqe's money/security requirements mapped to tests) and `cli/spec/fqe-ledger-fixture.json` (a balanced ledger for the reconcile self-check).
+- `docs/recipes/self-host.md`: the turnkey pattern any repo copies to gate its own money paths.
+
+### Proven
+- All three gates PASS on fqe's real invariants and FAIL (exit 2) on planted defects: an untested money requirement, a surviving spec-mutant, and a one-cent ledger drift. 512 tests, 511 pass, 1 skipped (Windows symlink).
+
+## [0.8.0] - 2026-06-01
+
+Tag: `fqe-v0.8.0`. The autonomous-QA linchpin: three new pure, deterministic, fail-closed modules (no LLM in the verdict), built via an agent swarm and hardened through adversarial review plus two gauntlet rounds.
+
+### Added
+- **`spec-mutate`**: mutate the requirement and prove a test fails. A surviving spec-mutant is a tautological test pinned to the code, not the spec.
+- **`trace`**: requirement-to-test traceability. A money or security requirement with no covering test, or a money/security test with no real requirement, FAILs.
+- **`reconcile`**: deterministic integer-cents double-entry money HALT. Per-transaction and aggregate balance, orphan and over-captured authorizations, timezone-anchored expiry, safe-integer enforcement.
+- `spec-mutation` added to the test-class taxonomy.
+
+### Hardening (review + gauntlet findings, all fixed before release)
+- spec-mutate: gate on the exact (not rounded) kill ratio, reject threshold 0, mutate every comparison and literal (both range bounds).
+- trace: flag a test pointing only at a non-existent requirement, money/security floor cannot be narrowed, duplicate requirement ids throw.
+- reconcile: over-capture halts, expiry-at-now is expired, ISO timestamps require a timezone, cents must be safe integers.
+
 ## [0.7.0] - 2026-05-30
 
 Tag: `fqe-v0.7.0`. Source: github.com/booyajones/fqe. Turns fqe from a gate over whatever tests you have into a full-suite QA capability: it now understands and enforces every test class an engineering team needs (unit, regression, integration, contract, property, e2e, UAT, money), reports them as one scorecard, and blocks merges by policy. Built with a backbone-then-parallel-agents approach, code-reviewed, and all review findings fixed before ship.
