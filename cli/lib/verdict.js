@@ -396,6 +396,29 @@ function computeVerdict(input) {
     }
   }
 
+  // Pass 9: mutation-on-diff judge (v0.13, the Stage B linchpin). Coverage-liveness proves
+  // tests RAN; mutation proves they would CATCH a planted fault, which is the only
+  // deterministic way to expose an assert-nothing test. The orchestrator pre-evaluates the
+  // mutation report (applying the equivalent-mutant allowlist and diff-scope) into
+  // input.mutation = { verdict: PASS|FLAG|FAIL|NEUTRAL, reasons }. ADVISORY mode surfaces
+  // survivors as a FLAG (the default while false-red rate is measured); BLOCKING returns
+  // FAIL once ratcheted; NEUTRAL (too few mutants) never blocks and never silently passes.
+  // Mutation sits BELOW contracts/money-invariants in the trust hierarchy by construction:
+  // it can only ADD a FLAG/FAIL here, never clear one.
+  const mut = input.mutation;
+  if (mut && typeof mut === 'object' && typeof mut.verdict === 'string') {
+    const mreasons = Array.isArray(mut.reasons) ? mut.reasons : [];
+    if (mut.verdict === 'FAIL') {
+      hasFail = true;
+      for (const r of mreasons) reasons.push(r);
+    } else if (mut.verdict === 'FLAG') {
+      hasFlag = true;
+      for (const r of mreasons) reasons.push(r);
+    }
+    // NEUTRAL (too few mutants to judge) and PASS do not change the verdict. NEUTRAL is
+    // genuinely "no signal," so it must not turn every small diff yellow.
+  }
+
   let verdict;
   if (hasFail) verdict = FAIL;
   else if (hasFlag) verdict = FLAG;
