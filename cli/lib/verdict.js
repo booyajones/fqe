@@ -374,15 +374,24 @@ function computeVerdict(input) {
   // ran AND passed must declare it proves the 'idempotency' invariant. No such passing runner
   // is a FAIL: fqe refuses to green a money repo that never proved a repeated request pays once.
   if (input.require_money_idempotency === true) {
-    const hasIdempotency = input.runners.some((r) =>
-      r && r.ran === true && typeof r.exit_code === 'number' && r.exit_code === 0 &&
-      Array.isArray(r.invariant) && r.invariant.includes('idempotency')
-    );
+    // The invariant LABEL is not enough: a no-op runner (command: true) could claim
+    // invariant: [idempotency] and pass while asserting nothing. So the qualifying runner
+    // must ALSO carry coverage-liveness evidence that real (non-skipped) tests executed.
+    // This binds the label to actual execution and closes the decorative-label fail-open.
+    const hasIdempotency = input.runners.some((r) => {
+      if (!r || r.ran !== true || typeof r.exit_code !== 'number' || r.exit_code !== 0) return false;
+      if (!Array.isArray(r.invariant) || !r.invariant.includes('idempotency')) return false;
+      const cov = r.coverage;
+      const minTests = cov && typeof cov.min_tests === 'number' ? cov.min_tests : 1;
+      return !!cov && cov.declared === true && cov.evidence_ok === true &&
+        typeof cov.executed === 'number' && cov.executed >= minTests;
+    });
     if (!hasIdempotency) {
       hasFail = true;
       reasons.push(
-        'require_money_idempotency is on but no runner ran and passed proving the "idempotency" invariant. ' +
-        'A money-movement repo must prove a repeated request pays once (add a runner with invariant: [idempotency]).'
+        'require_money_idempotency is on but no runner PROVED the "idempotency" invariant: it needs a ' +
+        'runner that ran, passed, declared invariant: [idempotency], AND carries coverage evidence that real ' +
+        'tests executed (report: junit + reconcile). A no-op runner claiming the label cannot satisfy it.'
       );
     }
   }
