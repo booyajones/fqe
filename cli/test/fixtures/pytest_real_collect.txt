@@ -1,0 +1,8 @@
+Downloads/_pytest_fixture_gen/tests/test_money.py::test_cents_add
+Downloads/_pytest_fixture_gen/tests/test_money.py::test_cents_round_half_even
+Downloads/_pytest_fixture_gen/tests/test_money.py::test_split_remainder
+Downloads/_pytest_fixture_gen/tests/test_money.py::test_future_currency
+Downloads/_pytest_fixture_gen/tests/test_money.py::test_known_bad
+Downloads/_pytest_fixture_gen/tests/test_money.py::test_negative_guard
+
+6 tests collected in 0.06s

@@ -27,6 +27,8 @@ const { computeVerdict, BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 const { wilson95 } = require('./wilson');
 const { buildReceipt, serializeReceipt, writeReceiptFiles, hashString } = require('./receipt');
 const { validateConfig } = require('./config_schema');
+const { parseJUnit } = require('./junit');
+const { parseInventory } = require('./inventory');
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -308,6 +310,84 @@ function fileMatches(file, pattern) {
   return new RegExp('^' + p + '$').test(file);
 }
 
+/**
+ * Resolve a runner's declared report ("junit:<path>") to an absolute path under
+ * repoDir, or null when no report is declared.
+ */
+function reportPathOf(cfg, repoDir) {
+  if (!cfg || typeof cfg.report !== 'string') return null;
+  const m = cfg.report.trim().match(/^junit:(.+)$/);
+  if (!m) return null;
+  return path.resolve(repoDir || process.cwd(), m[1].trim());
+}
+
+/**
+ * Run the inventory_cmd (a shell string, e.g. `pytest --collect-only -q`) and
+ * capture stdout. Returns null when no inventory_cmd is declared.
+ */
+function runInventoryCmd(cfg, ctx) {
+  if (!cfg || typeof cfg.inventory_cmd !== 'string' || cfg.inventory_cmd.trim() === '') {
+    return null;
+  }
+  const r = spawnSync(cfg.inventory_cmd, {
+    shell: true,
+    encoding: 'utf8',
+    cwd: ctx.repoDir || process.cwd(),
+    timeout: cfg.timeout_ms || DEFAULT_TIMEOUT_MS,
+    env: { ...process.env },
+  });
+  if (r.status !== 0) {
+    return { ok: false, stdout: r.stdout || '', error: `inventory_cmd exited ${r.status === null ? 'by signal/timeout' : r.status}` };
+  }
+  return { ok: true, stdout: r.stdout || '' };
+}
+
+/**
+ * Assemble the coverage-liveness object from a fresh JUnit report plus an optional
+ * collected-count inventory. FAIL-CLOSED: any missing, stale, or unparseable
+ * evidence yields evidence_ok:false with a reason, which verdict Pass 6 turns into
+ * a FAIL. Returns undefined when the runner declared no report (backward compat).
+ */
+function assembleCoverage(cfg, reportAbs, startMs, invResult) {
+  if (!reportAbs) return undefined;
+  const min_tests = typeof cfg.min_tests === 'number' ? cfg.min_tests : 1;
+  const reconcile = cfg.reconcile === true;
+  const strict_coverage = cfg.strict_coverage === true;
+  const cov = {
+    declared: true, evidence_ok: false, evidence_error: null,
+    executed: null, reported: null, collected: null,
+    min_tests, reconcile, strict_coverage,
+  };
+
+  let stat;
+  try { stat = fs.statSync(reportAbs); }
+  catch (_) { cov.evidence_error = `declared report not found after run: ${reportAbs}`; return cov; }
+  if (!stat.isFile()) { cov.evidence_error = `declared report path is not a file: ${reportAbs}`; return cov; }
+  // Secondary freshness check; the delete-before-run is the primary guarantee.
+  if (typeof startMs === 'number' && stat.mtimeMs + 2000 < startMs) {
+    cov.evidence_error = 'declared report is stale (mtime predates this run); refusing a cached report';
+    return cov;
+  }
+
+  let parsed;
+  try { parsed = parseJUnit(fs.readFileSync(reportAbs, 'utf8')); }
+  catch (e) { cov.evidence_error = e.message; return cov; }
+  cov.reported = parsed.reported;
+  cov.executed = parsed.executed;
+
+  if (reconcile) {
+    if (!invResult || invResult.ok !== true) {
+      cov.evidence_error = `reconcile is on but inventory_cmd failed (${invResult ? invResult.error : 'no inventory_cmd'})`;
+      return cov;
+    }
+    try { cov.collected = parseInventory(invResult.stdout, cfg.inventory_format); }
+    catch (e) { cov.evidence_error = `inventory parse failed: ${e.message}`; return cov; }
+  }
+
+  cov.evidence_ok = true;
+  return cov;
+}
+
 function runOne(name, cfg, ctx) {
   const cmd = cfg.command;
   const args = (cfg.args || []).map(a => substituteVars(a, ctx));
@@ -317,6 +397,17 @@ function runOne(name, cfg, ctx) {
       class: cfg.class, exit_code: undefined, stdout: '', stderr: 'no command configured',
     };
   }
+
+  // Coverage-liveness setup: delete any pre-existing report so a cached or
+  // committed file cannot be mistaken for this run's evidence, then stamp the
+  // start time. The collection inventory is read-only, so run it up front.
+  const reportAbs = reportPathOf(cfg, ctx.repoDir);
+  if (reportAbs) {
+    try { fs.rmSync(reportAbs, { force: true }); } catch (_) { /* best effort */ }
+  }
+  const startMs = Date.now();
+  const invResult = runInventoryCmd(cfg, ctx);
+
   const r = spawnSync(cmd, args, {
     timeout: cfg.timeout_ms || DEFAULT_TIMEOUT_MS,
     encoding: 'utf8',
@@ -332,6 +423,9 @@ function runOne(name, cfg, ctx) {
       }
     }
   }
+
+  const coverage = assembleCoverage(cfg, reportAbs, startMs, invResult);
+
   return {
     name,
     required: cfg.required === true,
@@ -341,6 +435,7 @@ function runOne(name, cfg, ctx) {
     stdout: r.stdout || '',
     stderr: r.stderr || '',
     parsed,
+    coverage,
   };
 }
 
@@ -443,9 +538,11 @@ function run(opts) {
       ran: r.ran === true,
       exit_code: r.exit_code,
       class: r.class,
+      coverage: r.coverage,
     })),
     adversarial_stats: adversarialStats,
     require_classes: requiredClasses,
+    require_coverage_evidence: config.require_coverage_evidence === true,
   };
   let verdictOut;
   try {
@@ -501,4 +598,6 @@ module.exports = {
   fileMatches,
   computeContentHash,
   computeRequiredClasses,
+  reportPathOf,
+  assembleCoverage,
 };

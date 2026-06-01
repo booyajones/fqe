@@ -19,9 +19,14 @@
  */
 
 const { KNOWN_CLASSES } = require('./verdict');
+const { KNOWN_FORMATS } = require('./inventory');
 
-const TOP_LEVEL_KEYS = ['runners', 'version', 'policy'];
-const RUNNER_KEYS = ['command', 'args', 'when', 'required', 'always_run', 'timeout_ms', 'class'];
+const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence'];
+const RUNNER_KEYS = [
+  'command', 'args', 'when', 'required', 'always_run', 'timeout_ms', 'class',
+  // coverage-liveness (v0.9.0): proof that real tests actually executed.
+  'report', 'inventory_cmd', 'inventory_format', 'min_tests', 'reconcile', 'strict_coverage',
+];
 const POLICY_KEYS = ['require_classes', 'require_for'];
 const REQUIRE_FOR_KEYS = ['when', 'classes'];
 
@@ -82,6 +87,10 @@ function validateConfig(config) {
     if (typeof v !== 'string' && typeof v !== 'number') {
       errors.push(`'version' must be a string or number, got ${typeOf(v)}`);
     }
+  }
+
+  if ('require_coverage_evidence' in config && typeof config.require_coverage_evidence !== 'boolean') {
+    errors.push(`'require_coverage_evidence' must be true or false, got ${typeOf(config.require_coverage_evidence)}`);
   }
 
   if ('policy' in config) {
@@ -217,6 +226,50 @@ function validateRunner(name, cfg, errors) {
 
   if ('class' in cfg) {
     validateClassName(cfg.class, `${where}: 'class'`, errors);
+  }
+
+  // --- coverage-liveness fields (v0.9.0) ---
+  if ('report' in cfg) {
+    if (typeof cfg.report !== 'string' || !/^junit:.+/.test(cfg.report.trim())) {
+      errors.push(`${where}: 'report' must be a string of the form 'junit:<path>'`);
+    }
+  }
+  if ('inventory_cmd' in cfg && (typeof cfg.inventory_cmd !== 'string' || cfg.inventory_cmd.trim() === '')) {
+    errors.push(`${where}: 'inventory_cmd' must be a non-empty shell string`);
+  }
+  if ('inventory_format' in cfg && !KNOWN_FORMATS.includes(cfg.inventory_format)) {
+    errors.push(
+      `${where}: 'inventory_format' must be one of ${KNOWN_FORMATS.join(', ')}, got '${cfg.inventory_format}'`
+    );
+  }
+  if ('min_tests' in cfg) {
+    const n = cfg.min_tests;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+      errors.push(`${where}: 'min_tests' must be a non-negative integer`);
+    }
+  }
+  if ('reconcile' in cfg && typeof cfg.reconcile !== 'boolean') {
+    errors.push(`${where}: 'reconcile' must be true or false`);
+  }
+  if ('strict_coverage' in cfg && typeof cfg.strict_coverage !== 'boolean') {
+    errors.push(`${where}: 'strict_coverage' must be true or false`);
+  }
+
+  // Coherence (fail closed): coverage fields are meaningless without a report,
+  // and reconciliation is meaningless without an inventory to compare against.
+  const hasReport = 'report' in cfg;
+  const coverageOnlyFields = ['min_tests', 'reconcile', 'strict_coverage', 'inventory_cmd', 'inventory_format'];
+  const usedCoverageField = coverageOnlyFields.find((k) => k in cfg);
+  if (usedCoverageField && !hasReport) {
+    errors.push(
+      `${where}: '${usedCoverageField}' requires a 'report: junit:<path>' so fqe can read what executed`
+    );
+  }
+  if (cfg.reconcile === true && !('inventory_cmd' in cfg)) {
+    errors.push(`${where}: 'reconcile: true' requires an 'inventory_cmd' to count collected tests`);
+  }
+  if ('inventory_cmd' in cfg && !('inventory_format' in cfg)) {
+    errors.push(`${where}: 'inventory_cmd' requires 'inventory_format' so fqe knows how to read its output`);
   }
 
   // Firing rule: a runner with neither a non-empty 'when' nor 'always_run: true'
