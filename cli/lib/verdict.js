@@ -369,6 +369,24 @@ function computeVerdict(input) {
     }
   }
 
+  // Pass 8: payments safety (v0.11). For a money-movement repo, the single highest-severity
+  // bug is a double-pay under retry-storm. If require_money_idempotency is on, a runner that
+  // ran AND passed must declare it proves the 'idempotency' invariant. No such passing runner
+  // is a FAIL: fqe refuses to green a money repo that never proved a repeated request pays once.
+  if (input.require_money_idempotency === true) {
+    const hasIdempotency = input.runners.some((r) =>
+      r && r.ran === true && typeof r.exit_code === 'number' && r.exit_code === 0 &&
+      Array.isArray(r.invariant) && r.invariant.includes('idempotency')
+    );
+    if (!hasIdempotency) {
+      hasFail = true;
+      reasons.push(
+        'require_money_idempotency is on but no runner ran and passed proving the "idempotency" invariant. ' +
+        'A money-movement repo must prove a repeated request pays once (add a runner with invariant: [idempotency]).'
+      );
+    }
+  }
+
   let verdict;
   if (hasFail) verdict = FAIL;
   else if (hasFlag) verdict = FLAG;

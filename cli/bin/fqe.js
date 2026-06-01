@@ -53,7 +53,7 @@ const trace = require('../lib/trace');
 const reconcileLib = require('../lib/reconcile');
 const discoverLib = require('../lib/discover');
 
-const FQE_VERSION = '0.10.0';
+const FQE_VERSION = '0.11.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)

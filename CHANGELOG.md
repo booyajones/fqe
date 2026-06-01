@@ -2,6 +2,18 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.11.0] - 2026-06-01
+
+Tag: `fqe-v0.11.0`. Stage A part 2: the mandatory money-idempotency invariant, the single highest-severity payments control. fqe now refuses a green for a money-movement repo that never proved a repeated request pays once.
+
+### Added
+- **`require_money_idempotency`** (top-level) + a runner `invariant: [idempotency, double-spend, conservation, no-negative-balance]` field. verdict Pass 8: with the flag on, a runner must have ran AND passed AND declared the `idempotency` invariant, else FAIL. Closes the worst payments failure class (double-pay under retry/crash) at the gate.
+- docs/recipes/money-invariants.md: real Hypothesis and fast-check idempotency + double-spend property tests, the coverage-liveness pairing, and an optional Toxiproxy crash-window dimension.
+
+### Notes
+- Fully backward compatible (flag defaults off).
+- Remaining v0.11 (separate, deterministic): `fqe baseline` (OpenAPI/DB DDL into Schemathesis). The $0.01 sandbox canary needs a payment sandbox credential and a safe target. Stage B (mutation + AI authoring, advisory-first) follows Checkpoint 1.
+
 ## [0.10.0] - 2026-06-01
 
 Tag: `fqe-v0.10.0`. Stage A of the near-autonomy roadmap (researched + council/gauntlet vetted): trust hygiene and inter-suite discovery, the deterministic foundation the mutation/AI layer (Stage B) sits on. Sequenced cheap-deterministic-wins-first on the council's correction.
