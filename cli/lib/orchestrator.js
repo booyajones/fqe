@@ -563,10 +563,12 @@ function run(opts) {
   const requiredClasses = computeRequiredClasses(config.policy, files, !diff.ok);
 
   // Inter-suite discovery: detect frameworks present that no declared runner covers.
-  // Fail-loud (FLAG, or FAIL under require_all_suites_wired). Never throws: a
-  // discovery error must not crash the gate, so fall back to "nothing unwired".
+  // Fail-loud (FLAG, or FAIL under require_all_suites_wired). A discovery CRASH must
+  // not silently suppress the strict FAIL: if the caller opted into blocking on
+  // unwired suites, an error means we cannot prove suites are wired, so fail closed.
   let discovery = { detected: [], wired: [], unwired: [] };
-  try { discovery = discover(repoDir, config); } catch (_) { /* discovery is advisory; never crash the gate */ }
+  let discoveryError = null;
+  try { discovery = discover(repoDir, config); } catch (e) { discoveryError = e && e.message ? e.message : String(e); }
 
   const verdictInput = {
     runners: runnerResults.map(r => ({
@@ -584,6 +586,7 @@ function run(opts) {
     require_coverage_evidence: config.require_coverage_evidence === true,
     unwired_suites: discovery.unwired,
     require_all_suites_wired: config.require_all_suites_wired === true,
+    discovery_error: discoveryError,
   };
   let verdictOut;
   try {

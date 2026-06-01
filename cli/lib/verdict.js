@@ -342,6 +342,18 @@ function computeVerdict(input) {
   // avoid alert fatigue on a 10-person team); require_all_suites_wired upgrades it to
   // FAIL. Runners with all suites wired are unaffected. Pure: consumes the list the
   // orchestrator already computed.
+  // A discovery CRASH must not silently suppress the strict requirement. If the caller
+  // opted into require_all_suites_wired and discovery errored, we cannot prove suites are
+  // wired, so fail closed (FAIL). Without strict mode it is a loud FLAG, not a silent pass.
+  if (input.discovery_error) {
+    if (input.require_all_suites_wired === true) {
+      hasFail = true;
+      reasons.push(`suite discovery failed (${input.discovery_error}) and require_all_suites_wired is on; cannot prove all suites are wired (fail closed)`);
+    } else {
+      hasFlag = true;
+      reasons.push(`suite discovery failed (${input.discovery_error}); could not check for unwired suites this run`);
+    }
+  }
   const unwired = Array.isArray(input.unwired_suites) ? input.unwired_suites : [];
   if (unwired.length > 0) {
     const names = unwired.map((u) => (u && u.id ? u.id : String(u))).join(', ');

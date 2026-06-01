@@ -103,6 +103,26 @@ test('verdict: an unwired suite FAILs under require_all_suites_wired', () => {
   assert.match(v.reasons.join(' '), /require_all_suites_wired/);
 });
 
+test('verdict: a discovery CRASH fails closed under require_all_suites_wired (no silent green)', () => {
+  const v = computeVerdict({
+    runners: [{ name: 'unit', required: true, ran: true, exit_code: 0, class: 'unit' }],
+    unwired_suites: [],
+    discovery_error: 'boom',
+    require_all_suites_wired: true,
+  });
+  assert.equal(v.verdict, 'FAIL');
+  assert.match(v.reasons.join(' '), /discovery failed.*fail closed/);
+});
+
+test('verdict: a discovery crash is a FLAG (not silent) when not strict', () => {
+  const v = computeVerdict({
+    runners: [{ name: 'unit', required: true, ran: true, exit_code: 0, class: 'unit' }],
+    unwired_suites: [],
+    discovery_error: 'boom',
+  });
+  assert.equal(v.verdict, 'FLAG');
+});
+
 test('verdict: no unwired suites is unaffected (backward compatible)', () => {
   const v = computeVerdict({
     runners: [{ name: 'unit', required: true, ran: true, exit_code: 0, class: 'unit' }],
