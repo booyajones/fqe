@@ -29,6 +29,7 @@ const { buildReceipt, serializeReceipt, writeReceiptFiles, hashString } = requir
 const { validateConfig } = require('./config_schema');
 const { parseJUnit } = require('./junit');
 const { parseInventory } = require('./inventory');
+const { discover } = require('./discover');
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -544,6 +545,12 @@ function run(opts) {
 
   const requiredClasses = computeRequiredClasses(config.policy, files, !diff.ok);
 
+  // Inter-suite discovery: detect frameworks present that no declared runner covers.
+  // Fail-loud (FLAG, or FAIL under require_all_suites_wired). Never throws: a
+  // discovery error must not crash the gate, so fall back to "nothing unwired".
+  let discovery = { detected: [], wired: [], unwired: [] };
+  try { discovery = discover(repoDir, config); } catch (_) { /* discovery is advisory; never crash the gate */ }
+
   const verdictInput = {
     runners: runnerResults.map(r => ({
       name: r.name,
@@ -556,6 +563,8 @@ function run(opts) {
     adversarial_stats: adversarialStats,
     require_classes: requiredClasses,
     require_coverage_evidence: config.require_coverage_evidence === true,
+    unwired_suites: discovery.unwired,
+    require_all_suites_wired: config.require_all_suites_wired === true,
   };
   let verdictOut;
   try {

@@ -21,7 +21,7 @@
 const { KNOWN_CLASSES } = require('./verdict');
 const { KNOWN_FORMATS } = require('./inventory');
 
-const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence'];
+const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired'];
 const RUNNER_KEYS = [
   'command', 'args', 'when', 'required', 'always_run', 'timeout_ms', 'class',
   // coverage-liveness (v0.9.0): proof that real tests actually executed.
@@ -91,6 +91,10 @@ function validateConfig(config) {
 
   if ('require_coverage_evidence' in config && typeof config.require_coverage_evidence !== 'boolean') {
     errors.push(`'require_coverage_evidence' must be true or false, got ${typeOf(config.require_coverage_evidence)}`);
+  }
+
+  if ('require_all_suites_wired' in config && typeof config.require_all_suites_wired !== 'boolean') {
+    errors.push(`'require_all_suites_wired' must be true or false, got ${typeOf(config.require_all_suites_wired)}`);
   }
 
   if ('policy' in config) {

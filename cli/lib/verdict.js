@@ -314,6 +314,28 @@ function computeVerdict(input) {
     }
   }
 
+  // Pass 7: inter-suite discovery ("make absence loud" across suites). A repo can
+  // hold a whole test suite that NO declared runner targets (a pytest tree with no
+  // pytest runner, an unwired Playwright project). `fqe discover` detects frameworks
+  // present and reports the ones with no matching runner. Default is FLAG (heuristic,
+  // avoid alert fatigue on a 10-person team); require_all_suites_wired upgrades it to
+  // FAIL. Runners with all suites wired are unaffected. Pure: consumes the list the
+  // orchestrator already computed.
+  const unwired = Array.isArray(input.unwired_suites) ? input.unwired_suites : [];
+  if (unwired.length > 0) {
+    const names = unwired.map((u) => (u && u.id ? u.id : String(u))).join(', ');
+    const msg =
+      `detected test suites with no declared runner: ${names}. ` +
+      `fqe is computing a verdict over a partial repo (add runners or .fqeignore them)`;
+    if (input.require_all_suites_wired === true) {
+      hasFail = true;
+      reasons.push(`${msg} [require_all_suites_wired: blocks]`);
+    } else {
+      hasFlag = true;
+      reasons.push(`${msg} [discovery flag]`);
+    }
+  }
+
   let verdict;
   if (hasFail) verdict = FAIL;
   else if (hasFlag) verdict = FLAG;
