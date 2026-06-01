@@ -21,13 +21,17 @@
 const { KNOWN_CLASSES } = require('./verdict');
 const { KNOWN_FORMATS } = require('./inventory');
 
-const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired'];
+const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired', 'require_money_idempotency'];
+// Invariant ids a runner may declare it proves (payments safety, v0.11).
+const KNOWN_INVARIANTS = Object.freeze(['idempotency', 'double-spend', 'conservation', 'no-negative-balance']);
 const RUNNER_KEYS = [
   'command', 'args', 'when', 'required', 'always_run', 'timeout_ms', 'class',
   // coverage-liveness (v0.9.0): proof that real tests actually executed.
   'report', 'inventory_cmd', 'inventory_format', 'min_tests', 'reconcile', 'strict_coverage',
   // trust hygiene (v0.10): flaky-retry + quarantine so one random red never blocks.
   'retries', 'quarantined',
+  // payments safety (v0.11): the named money invariants this runner proves.
+  'invariant',
 ];
 const POLICY_KEYS = ['require_classes', 'require_for'];
 const REQUIRE_FOR_KEYS = ['when', 'classes'];
@@ -97,6 +101,10 @@ function validateConfig(config) {
 
   if ('require_all_suites_wired' in config && typeof config.require_all_suites_wired !== 'boolean') {
     errors.push(`'require_all_suites_wired' must be true or false, got ${typeOf(config.require_all_suites_wired)}`);
+  }
+
+  if ('require_money_idempotency' in config && typeof config.require_money_idempotency !== 'boolean') {
+    errors.push(`'require_money_idempotency' must be true or false, got ${typeOf(config.require_money_idempotency)}`);
   }
 
   if ('policy' in config) {
@@ -271,6 +279,18 @@ function validateRunner(name, cfg, errors) {
   }
   if ('quarantined' in cfg && typeof cfg.quarantined !== 'boolean') {
     errors.push(`${where}: 'quarantined' must be true or false`);
+  }
+  if ('invariant' in cfg) {
+    const inv = cfg.invariant;
+    if (!isArrayOfStrings(inv) || inv.length === 0) {
+      errors.push(`${where}: 'invariant' must be a non-empty list of invariant ids (${KNOWN_INVARIANTS.join(', ')})`);
+    } else {
+      for (const id of inv) {
+        if (!KNOWN_INVARIANTS.includes(id)) {
+          errors.push(`${where}: 'invariant' has unknown id '${id}' (known: ${KNOWN_INVARIANTS.join(', ')})`);
+        }
+      }
+    }
   }
 
   // Coherence (fail closed): coverage fields are meaningless without a report,

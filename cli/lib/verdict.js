@@ -369,6 +369,33 @@ function computeVerdict(input) {
     }
   }
 
+  // Pass 8: payments safety (v0.11). For a money-movement repo, the single highest-severity
+  // bug is a double-pay under retry-storm. If require_money_idempotency is on, a runner that
+  // ran AND passed must declare it proves the 'idempotency' invariant. No such passing runner
+  // is a FAIL: fqe refuses to green a money repo that never proved a repeated request pays once.
+  if (input.require_money_idempotency === true) {
+    // The invariant LABEL is not enough: a no-op runner (command: true) could claim
+    // invariant: [idempotency] and pass while asserting nothing. So the qualifying runner
+    // must ALSO carry coverage-liveness evidence that real (non-skipped) tests executed.
+    // This binds the label to actual execution and closes the decorative-label fail-open.
+    const hasIdempotency = input.runners.some((r) => {
+      if (!r || r.ran !== true || typeof r.exit_code !== 'number' || r.exit_code !== 0) return false;
+      if (!Array.isArray(r.invariant) || !r.invariant.includes('idempotency')) return false;
+      const cov = r.coverage;
+      const minTests = cov && typeof cov.min_tests === 'number' ? cov.min_tests : 1;
+      return !!cov && cov.declared === true && cov.evidence_ok === true &&
+        typeof cov.executed === 'number' && cov.executed >= minTests;
+    });
+    if (!hasIdempotency) {
+      hasFail = true;
+      reasons.push(
+        'require_money_idempotency is on but no runner PROVED the "idempotency" invariant: it needs a ' +
+        'runner that ran, passed, declared invariant: [idempotency], AND carries coverage evidence that real ' +
+        'tests executed (report: junit + reconcile). A no-op runner claiming the label cannot satisfy it.'
+      );
+    }
+  }
+
   let verdict;
   if (hasFail) verdict = FAIL;
   else if (hasFlag) verdict = FLAG;

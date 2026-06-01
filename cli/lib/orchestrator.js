@@ -580,6 +580,8 @@ function run(opts) {
       coverage: r.coverage,
       flaky: r.flaky === true,
       quarantined: r.quarantined === true,
+      invariant: Array.isArray(config.runners[r.name] && config.runners[r.name].invariant)
+        ? config.runners[r.name].invariant : undefined,
     })),
     adversarial_stats: adversarialStats,
     require_classes: requiredClasses,
@@ -587,6 +589,7 @@ function run(opts) {
     unwired_suites: discovery.unwired,
     require_all_suites_wired: config.require_all_suites_wired === true,
     discovery_error: discoveryError,
+    require_money_idempotency: config.require_money_idempotency === true,
   };
   let verdictOut;
   try {
