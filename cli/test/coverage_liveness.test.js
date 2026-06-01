@@ -18,6 +18,7 @@ const path = require('node:path');
 const { computeVerdict } = require('../lib/verdict');
 const { assembleCoverage } = require('../lib/orchestrator');
 const { validateConfig } = require('../lib/config_schema');
+const { buildReceipt, serializeReceipt } = require('../lib/receipt');
 
 const FIX = path.join(__dirname, 'fixtures');
 const realReport = fs.readFileSync(path.join(FIX, 'pytest_real_report.xml'), 'utf8'); // 6 reported, 4 executed
@@ -217,6 +218,50 @@ test('config_schema: a coverage field without a report is REJECTED', () => {
   };
   const res = validateConfig(cfg);
   assert.equal(res.valid, false, 'reconcile/min_tests without a report is meaningless => fail closed');
+});
+
+// ---------- receipt: coverage is surfaced (schema cannot drift silently) ----------
+
+function minimalReceiptCtx(runners) {
+  return {
+    fqe_version: '0.9.0',
+    run_id: 'run-test',
+    started_at: '2026-06-01T00:00:00Z',
+    finished_at: '2026-06-01T00:00:01Z',
+    commit_sha: 'a'.repeat(40),
+    content_hash: 'sha256:' + 'a'.repeat(64),
+    inputs_hash: 'sha256:' + 'b'.repeat(64),
+    classifier_version: 1,
+    runner_versions: { fqe: '0.9.0' },
+    runners_fired: runners.map((r) => r.name),
+    runners,
+    adversarial_stats: [],
+    required_classes: [],
+    quarantined_tests: [],
+    verdict: 'PASS',
+    verdict_reasons: [],
+    bypass: null,
+    evidence_paths: [],
+  };
+}
+
+test('receipt: a coverage runner surfaces exec/collected in the human-readable table', () => {
+  const { markdown: md } = serializeReceipt(buildReceipt(minimalReceiptCtx([
+    { name: 'pytest', class: 'unit', required: true, ran: true, exit_code: 0,
+      coverage: { declared: true, evidence_ok: true, executed: 722, reported: 722, collected: 722,
+        min_tests: 1, reconcile: true, strict_coverage: true } },
+  ])));
+  assert.match(md, /Tests \(exec\/collected\)/, 'the receipt must show a coverage column');
+  assert.match(md, /722\/722/, 'executed/collected counts must be visible');
+});
+
+test('receipt: a runner with no fresh report shows NO EVIDENCE (absence is loud)', () => {
+  const { markdown: md } = serializeReceipt(buildReceipt(minimalReceiptCtx([
+    { name: 'pytest', class: 'unit', required: true, ran: true, exit_code: 0,
+      coverage: { declared: true, evidence_ok: false, evidence_error: 'missing', executed: null,
+        reported: null, collected: null, min_tests: 1, reconcile: false, strict_coverage: false } },
+  ])));
+  assert.match(md, /NO EVIDENCE/);
 });
 
 test('config_schema: a healthy coverage runner validates', () => {

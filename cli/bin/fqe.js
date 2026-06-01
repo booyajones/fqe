@@ -52,7 +52,7 @@ const specMutate = require('../lib/spec_mutate');
 const trace = require('../lib/trace');
 const reconcileLib = require('../lib/reconcile');
 
-const FQE_VERSION = '0.8.1';
+const FQE_VERSION = '0.9.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
