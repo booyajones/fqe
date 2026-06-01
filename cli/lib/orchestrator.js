@@ -348,7 +348,7 @@ function runInventoryCmd(cfg, ctx) {
  * evidence yields evidence_ok:false with a reason, which verdict Pass 6 turns into
  * a FAIL. Returns undefined when the runner declared no report (backward compat).
  */
-function assembleCoverage(cfg, reportAbs, startMs, invResult) {
+function assembleCoverage(cfg, reportAbs, startMs, invResult, preMtime) {
   if (!reportAbs) return undefined;
   const min_tests = typeof cfg.min_tests === 'number' ? cfg.min_tests : 1;
   const reconcile = cfg.reconcile === true;
@@ -363,9 +363,18 @@ function assembleCoverage(cfg, reportAbs, startMs, invResult) {
   try { stat = fs.statSync(reportAbs); }
   catch (_) { cov.evidence_error = `declared report not found after run: ${reportAbs}`; return cov; }
   if (!stat.isFile()) { cov.evidence_error = `declared report path is not a file: ${reportAbs}`; return cov; }
-  // Secondary freshness check; the delete-before-run is the primary guarantee.
-  if (typeof startMs === 'number' && stat.mtimeMs + 2000 < startMs) {
-    cov.evidence_error = 'declared report is stale (mtime predates this run); refusing a cached report';
+  // PRIMARY freshness guard, clock-independent: the report must have been WRITTEN by
+  // this run. We deleted any prior report before running; if that delete failed (e.g.
+  // a Windows file lock) a stale report could survive, so when a prior file existed we
+  // require its mtime to have advanced. An unchanged mtime means the runner produced no
+  // new report (crashed, or a subset that wrote nothing) -> fail closed.
+  if (typeof preMtime === 'number' && stat.mtimeMs <= preMtime) {
+    cov.evidence_error = 'declared report was not rewritten this run (stale or cached report); failing closed';
+    return cov;
+  }
+  // Secondary clock-based backstop (tolerant of CI clock skew); the checks above are primary.
+  if (typeof startMs === 'number' && stat.mtimeMs + 5000 < startMs) {
+    cov.evidence_error = 'declared report mtime predates this run (stale or cached report); refusing it';
     return cov;
   }
 
@@ -402,8 +411,12 @@ function runOne(name, cfg, ctx) {
   // committed file cannot be mistaken for this run's evidence, then stamp the
   // start time. The collection inventory is read-only, so run it up front.
   const reportAbs = reportPathOf(cfg, ctx.repoDir);
+  let preMtime = null;
   if (reportAbs) {
-    try { fs.rmSync(reportAbs, { force: true }); } catch (_) { /* best effort */ }
+    // Record any pre-existing report's mtime BEFORE deleting it, so assembleCoverage
+    // can prove the runner wrote a fresh one even if the delete fails (Windows lock).
+    try { preMtime = fs.statSync(reportAbs).mtimeMs; } catch (_) { preMtime = null; }
+    try { fs.rmSync(reportAbs, { force: true }); } catch (_) { /* best effort; preMtime guards staleness */ }
   }
   const startMs = Date.now();
   const invResult = runInventoryCmd(cfg, ctx);
@@ -424,7 +437,7 @@ function runOne(name, cfg, ctx) {
     }
   }
 
-  const coverage = assembleCoverage(cfg, reportAbs, startMs, invResult);
+  const coverage = assembleCoverage(cfg, reportAbs, startMs, invResult, preMtime);
 
   return {
     name,

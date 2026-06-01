@@ -23,13 +23,18 @@
  * Ids are extracted best-effort for the receipt MESSAGE only. They never gate.
  */
 
-const TESTCASE_RE = /<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
-const OPEN_TAG_RE = /<testcase\b/g;
-
 function attr(attrs, name) {
-  const m = attrs.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`));
+  // Escape the attribute name (defensive; call sites use literals today) and accept
+  // BOTH quote styles: XML 1.0 permits status='skipped' as well as status="skipped".
+  const safe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = attrs.match(new RegExp(`\\b${safe}\\s*=\\s*["']([^"']*)["']`));
   return m ? m[1] : '';
 }
+
+// Statuses that mean the test did NOT execute. Covers pytest skip/xfail (rendered as
+// a <skipped> child), Jest pending (test.skip / xit), and disabled/ignored/notrun
+// from other frameworks. A non-executing case must never count toward the floor.
+const SKIPPED_STATUSES = Object.freeze(new Set(['skipped', 'disabled', 'notrun', 'ignored', 'pending']));
 
 /**
  * Parse JUnit XML text. Throws on anything it cannot interpret unambiguously.
@@ -40,33 +45,32 @@ function parseJUnit(xml) {
   if (typeof xml !== 'string') {
     throw new Error('junit: report content must be a string (fail closed)');
   }
-  const text = xml.trim();
-  if (!text) {
+  const raw = xml.trim();
+  if (!raw) {
     throw new Error('junit: report is empty (fail closed)');
   }
   // Must look like a JUnit document. No testsuite root => not a report we can trust.
-  if (!/<testsuites?\b/.test(text)) {
+  if (!/<testsuites?\b/.test(raw)) {
     throw new Error('junit: no <testsuite>/<testsuites> root; not a JUnit report (fail closed)');
   }
+  // Strip XML comments so a commented-out <testcase> cannot inflate the executed
+  // count (both regexes would otherwise match it identically and dodge the cross-check).
+  const text = raw.replace(/<!--[\s\S]*?-->/g, '');
 
-  const openTags = (text.match(OPEN_TAG_RE) || []).length;
+  const openTags = (text.match(/<testcase\b/g) || []).length;
 
+  // Local regex (no shared module-level lastIndex state to corrupt across calls).
+  const testcaseRe = /<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
   let m;
   let reported = 0;
   let skipped = 0;
   const ids = [];
-  TESTCASE_RE.lastIndex = 0;
-  while ((m = TESTCASE_RE.exec(text)) !== null) {
+  while ((m = testcaseRe.exec(text)) !== null) {
     reported++;
     const attrs = m[1] || '';
     const inner = m[3] || ''; // undefined/'' when self-closed
     const statusAttr = attr(attrs, 'status').toLowerCase();
-    const isSkipped =
-      /<skipped\b/.test(inner) ||
-      statusAttr === 'skipped' ||
-      statusAttr === 'disabled' ||
-      statusAttr === 'notrun' ||
-      statusAttr === 'ignored';
+    const isSkipped = /<skipped\b/.test(inner) || SKIPPED_STATUSES.has(statusAttr);
     if (isSkipped) skipped++;
     const cn = attr(attrs, 'classname');
     const nm = attr(attrs, 'name');

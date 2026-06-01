@@ -244,8 +244,10 @@ function validateRunner(name, cfg, errors) {
   }
   if ('min_tests' in cfg) {
     const n = cfg.min_tests;
-    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
-      errors.push(`${where}: 'min_tests' must be a non-negative integer`);
+    // Minimum 1: min_tests: 0 would disable the executed-count floor entirely, which
+    // is exactly the "a green minted by a suite that ran nothing" hole we close.
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) {
+      errors.push(`${where}: 'min_tests' must be a positive integer (>= 1); 0 would disable the empty-suite gate`);
     }
   }
   if ('reconcile' in cfg && typeof cfg.reconcile !== 'boolean') {

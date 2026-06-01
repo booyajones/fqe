@@ -82,6 +82,39 @@ test('status="skipped"/"ignored" attribute form also counts as skipped', () => {
   assert.equal(r.executed, 1);
 });
 
+test("single-quoted status='skipped' also counts as skipped (XML allows both quotes)", () => {
+  const xml =
+    "<testsuites><testsuite>" +
+    "<testcase name='a' status='skipped' />" +
+    "<testcase name='b' />" +
+    "</testsuite></testsuites>";
+  const r = parseJUnit(xml);
+  assert.equal(r.skipped, 1, "status='skipped' (single quotes) must be detected");
+  assert.equal(r.executed, 1);
+});
+
+test('Jest status="pending" counts as skipped (test.skip / xit)', () => {
+  const xml =
+    '<testsuites><testsuite>' +
+    '<testcase name="a" status="pending" />' +
+    '<testcase name="b" status="pending" />' +
+    '</testsuite></testsuites>';
+  const r = parseJUnit(xml);
+  assert.equal(r.skipped, 2);
+  assert.equal(r.executed, 0, 'an all-pending Jest suite executed nothing');
+});
+
+test('a <testcase> inside an XML comment does NOT inflate the executed count', () => {
+  const xml =
+    '<testsuites><testsuite>' +
+    '<!-- <testcase name="ghost" /> a commented-out case must not count -->' +
+    '<testcase name="real" />' +
+    '</testsuite></testsuites>';
+  const r = parseJUnit(xml);
+  assert.equal(r.reported, 1, 'only the real testcase counts');
+  assert.equal(r.executed, 1);
+});
+
 test('failures and errors count as EXECUTED (they ran)', () => {
   const xml =
     '<testsuites><testsuite>' +

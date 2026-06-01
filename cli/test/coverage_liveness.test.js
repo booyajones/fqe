@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { computeVerdict } = require('../lib/verdict');
 const { assembleCoverage } = require('../lib/orchestrator');
+const { validateConfig } = require('../lib/config_schema');
 
 const FIX = path.join(__dirname, 'fixtures');
 const realReport = fs.readFileSync(path.join(FIX, 'pytest_real_report.xml'), 'utf8'); // 6 reported, 4 executed
@@ -164,4 +165,61 @@ test('assembleCoverage: stale report (mtime predates run) => evidence_ok false',
 
 test('assembleCoverage: no report declared => undefined (backward compatible)', () => {
   assert.equal(assembleCoverage({}, null, Date.now(), null), undefined);
+});
+
+test('assembleCoverage: stale via pre-mtime (delete failed, runner did not rewrite) => fail closed', () => {
+  // Simulate a prior report that survived a failed delete and was NOT rewritten:
+  // preMtime equals the file's current mtime, so the runner produced nothing new.
+  const p = writeTmp(realReport);
+  try {
+    const preMtime = fs.statSync(p).mtimeMs;
+    const cov = assembleCoverage({ report: `junit:${p}` }, p, Date.now() - 100, null, preMtime);
+    assert.equal(cov.evidence_ok, false, 'an unchanged report mtime means the runner wrote nothing this run');
+    assert.match(cov.evidence_error, /not rewritten this run/);
+  } finally { fs.rmSync(p, { force: true }); }
+});
+
+test('assembleCoverage: fresh rewrite (mtime advanced past pre-mtime) => evidence_ok', () => {
+  const p = writeTmp(realReport);
+  try {
+    const cov = assembleCoverage({ report: `junit:${p}` }, p, Date.now() - 100, null, /*preMtime*/ 0);
+    assert.equal(cov.evidence_ok, true, 'current mtime > preMtime(0) means it was rewritten');
+  } finally { fs.rmSync(p, { force: true }); }
+});
+
+// ---------- config_schema: coverage fields fail closed ----------
+
+test('config_schema: min_tests: 0 is REJECTED (would disable the empty-suite gate)', () => {
+  const cfg = {
+    version: 1,
+    runners: { u: {
+      command: 'x', always_run: true, required: true, report: 'junit:r.xml', min_tests: 0,
+    } },
+  };
+  const res = validateConfig(cfg);
+  assert.equal(res.valid, false);
+  assert.match(res.errors.join(' '), /min_tests.*positive integer/);
+});
+
+test('config_schema: a coverage field without a report is REJECTED', () => {
+  const cfg = {
+    version: 1,
+    runners: { u: { command: 'x', always_run: true, reconcile: true, inventory_cmd: 'y', inventory_format: 'count' } },
+  };
+  const res = validateConfig(cfg);
+  assert.equal(res.valid, false, 'reconcile/min_tests without a report is meaningless => fail closed');
+});
+
+test('config_schema: a healthy coverage runner validates', () => {
+  const cfg = {
+    version: 1,
+    require_coverage_evidence: true,
+    runners: { u: {
+      command: 'pytest', always_run: true, required: true, class: 'unit',
+      report: 'junit:r.xml', inventory_cmd: 'pytest --collect-only -q', inventory_format: 'pytest-collect',
+      min_tests: 1, reconcile: true, strict_coverage: true,
+    } },
+  };
+  const res = validateConfig(cfg);
+  assert.equal(res.valid, true, res.errors.join('; '));
 });
