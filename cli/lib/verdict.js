@@ -134,11 +134,32 @@ function computeVerdict(input) {
   for (const r of input.runners) {
     if (r.ran === true) {
       if (typeof r.exit_code !== 'number' || Number.isNaN(r.exit_code)) {
-        hasFail = true;
-        reasons.push(`runner "${r.name}" ran but exit_code is not a number (got ${JSON.stringify(r.exit_code)})`);
+        // A quarantined runner with an indeterminate exit is still neutral, not a
+        // hard FAIL, but a non-quarantined one fails closed.
+        if (r.quarantined === true) {
+          hasFlag = true;
+          reasons.push(`runner "${r.name}" is QUARANTINED and produced no numeric exit_code (neutral, not blocking)`);
+        } else {
+          hasFail = true;
+          reasons.push(`runner "${r.name}" ran but exit_code is not a number (got ${JSON.stringify(r.exit_code)})`);
+        }
       } else if (r.exit_code !== 0) {
-        hasFail = true;
-        reasons.push(`runner "${r.name}" exited ${r.exit_code}`);
+        // Quarantine (v0.10 trust hygiene): a runner explicitly marked quarantined is
+        // a known-flaky suite being fixed. Its failure is a loud NEUTRAL signal (FLAG),
+        // not a blocking FAIL, so one unstable suite cannot hold the whole team hostage.
+        // It stays visible in the receipt so the quarantine cannot be silently permanent.
+        if (r.quarantined === true) {
+          hasFlag = true;
+          reasons.push(`runner "${r.name}" exited ${r.exit_code} but is QUARANTINED (neutral, not blocking; fix and un-quarantine it)`);
+        } else {
+          hasFail = true;
+          reasons.push(`runner "${r.name}" exited ${r.exit_code}`);
+        }
+      } else if (r.flaky === true) {
+        // Passed, but only after a retry. Surface it loudly as a FLAG so a flake is
+        // visible and tracked, without blocking the merge on a transient red.
+        hasFlag = true;
+        reasons.push(`runner "${r.name}" is FLAKY (failed then passed on retry); investigate, do not ignore`);
       }
     }
   }

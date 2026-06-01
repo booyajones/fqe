@@ -408,26 +408,40 @@ function runOne(name, cfg, ctx) {
     };
   }
 
-  // Coverage-liveness setup: delete any pre-existing report so a cached or
-  // committed file cannot be mistaken for this run's evidence, then stamp the
-  // start time. The collection inventory is read-only, so run it up front.
   const reportAbs = reportPathOf(cfg, ctx.repoDir);
-  let preMtime = null;
-  if (reportAbs) {
-    // Record any pre-existing report's mtime BEFORE deleting it, so assembleCoverage
-    // can prove the runner wrote a fresh one even if the delete fails (Windows lock).
-    try { preMtime = fs.statSync(reportAbs).mtimeMs; } catch (_) { preMtime = null; }
-    try { fs.rmSync(reportAbs, { force: true }); } catch (_) { /* best effort; preMtime guards staleness */ }
-  }
-  const startMs = Date.now();
+  // Inventory is read-only and stable across attempts, so run it once.
   const invResult = runInventoryCmd(cfg, ctx);
 
-  const r = spawnSync(cmd, args, {
-    timeout: cfg.timeout_ms || DEFAULT_TIMEOUT_MS,
-    encoding: 'utf8',
-    cwd: ctx.repoDir || process.cwd(),
-    env: { ...process.env, FQE_RUNNER_NAME: name },
-  });
+  // Flaky-retry (v0.10 trust hygiene): re-run a FAILED runner up to `retries` times.
+  // If it fails then passes, it is FLAKY: a neutral signal, not a hard FAIL, so one
+  // random red never blocks a merge. A genuinely failing runner (fails every attempt)
+  // still FAILs. Coverage evidence is taken from the FINAL attempt.
+  const maxAttempts = 1 + (typeof cfg.retries === 'number' && cfg.retries > 0 ? cfg.retries : 0);
+  const attempts = [];
+  let r;
+  let preMtime = null;
+  let startMs = 0;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (reportAbs) {
+      // Record any pre-existing report's mtime BEFORE deleting it (clock-independent
+      // freshness), then delete so a stale report cannot be trusted.
+      try { preMtime = fs.statSync(reportAbs).mtimeMs; } catch (_) { preMtime = null; }
+      try { fs.rmSync(reportAbs, { force: true }); } catch (_) { /* best effort; preMtime guards staleness */ }
+    }
+    startMs = Date.now();
+    r = spawnSync(cmd, args, {
+      timeout: cfg.timeout_ms || DEFAULT_TIMEOUT_MS,
+      encoding: 'utf8',
+      cwd: ctx.repoDir || process.cwd(),
+      env: { ...process.env, FQE_RUNNER_NAME: name, FQE_ATTEMPT: String(attempt) },
+    });
+    const code = typeof r.status === 'number' ? r.status : null;
+    attempts.push(code);
+    if (code === 0) break; // passed; no need to retry
+  }
+  const finalCode = typeof r.status === 'number' ? r.status : null;
+  const flaky = attempts.length > 1 && attempts[0] !== 0 && finalCode === 0;
+
   let parsed = null;
   if (r.stdout) {
     for (const line of r.stdout.split('\n')) {
@@ -445,7 +459,10 @@ function runOne(name, cfg, ctx) {
     required: cfg.required === true,
     class: cfg.class,
     ran: true,
-    exit_code: typeof r.status === 'number' ? r.status : null,
+    exit_code: finalCode,
+    attempts,
+    flaky,
+    quarantined: cfg.quarantined === true,
     stdout: r.stdout || '',
     stderr: r.stderr || '',
     parsed,
@@ -559,6 +576,8 @@ function run(opts) {
       exit_code: r.exit_code,
       class: r.class,
       coverage: r.coverage,
+      flaky: r.flaky === true,
+      quarantined: r.quarantined === true,
     })),
     adversarial_stats: adversarialStats,
     require_classes: requiredClasses,
@@ -579,6 +598,28 @@ function run(opts) {
   const contentHash = computeContentHash(files, repoDir);
   const inputsHash = hashString(JSON.stringify({ config, file_count: files.length }));
 
+  // Human-review telemetry (v0.10): count the items a person must look at this run and
+  // estimate minutes, so the near-autonomy DoD (3-6 team-hours/week) is OBSERVED. The
+  // per-item minute costs are a documented model, not a measurement.
+  const flakyCount = runnerResults.filter(r => r.flaky === true).length;
+  const quarantinedFailing = runnerResults.filter(
+    r => r.quarantined === true && typeof r.exit_code === 'number' && r.exit_code !== 0
+  ).length;
+  const unwiredCount = discovery.unwired.length;
+  const aiDrafts = 0; // wired in Stage B (v0.12)
+  const PER_ITEM_MIN = { flaky: 3, quarantined: 3, unwired: 3, ai: 5 };
+  const estimatedMinutes =
+    flakyCount * PER_ITEM_MIN.flaky + quarantinedFailing * PER_ITEM_MIN.quarantined +
+    unwiredCount * PER_ITEM_MIN.unwired + aiDrafts * PER_ITEM_MIN.ai;
+  const humanReview = {
+    flags: flakyCount + quarantinedFailing + unwiredCount + aiDrafts,
+    flaky: flakyCount,
+    quarantined: quarantinedFailing,
+    unwired_suites: unwiredCount,
+    ai_drafts: aiDrafts,
+    estimated_minutes: estimatedMinutes,
+  };
+
   const receipt = buildReceipt({
     fqe_version: opts.fqeVersion,
     run_id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -598,6 +639,7 @@ function run(opts) {
     verdict_reasons: verdictOut.reasons,
     bypass: null,
     evidence_paths: [],
+    human_review: humanReview,
   });
 
   const { ymlPath, mdPath } = writeReceiptFiles(receipt, opts.outputDir);

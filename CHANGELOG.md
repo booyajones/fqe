@@ -2,6 +2,20 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.10.0] - 2026-06-01
+
+Tag: `fqe-v0.10.0`. Stage A of the near-autonomy roadmap (researched + council/gauntlet vetted): trust hygiene and inter-suite discovery, the deterministic foundation the mutation/AI layer (Stage B) sits on. Sequenced cheap-deterministic-wins-first on the council's correction.
+
+### Added
+- **`fqe discover`** (lib/discover.js): detect test frameworks (pytest, jest, vitest, mocha, playwright, cargo-test, go-test) from manifests and test files, and report any with no matching declared runner. Extends "make absence loud" from inside a suite (v0.9.0) to ACROSS suites. verdict Pass 7: an unwired suite is a FLAG, FAIL under `require_all_suites_wired`. Honors `.fqeignore`. Fail-loud: ambiguous evidence reports the framework rather than hiding it.
+- **Flaky-retry + quarantine** (trust hygiene): a runner `retries: N` re-runs on failure; fail-then-pass is FLAKY, a loud FLAG, never a silent PASS and never a blocking FAIL. `quarantined: true` makes a known-flaky runner's failure a neutral FLAG (stays visible in the receipt) so one unstable suite cannot hold a 10-person team hostage. A non-quarantined failure still FAILs.
+- **Human-review telemetry**: the receipt reports a review queue (flags, flaky, quarantined, unwired suites, AI drafts) with estimated minutes, so the near-autonomy target (3 to 6 team-hours per week) is observed, not asserted.
+- docs/recipes/discovery-and-trust.md (discover, retries/quarantine, deterministic helpers, the review queue).
+
+### Notes
+- Fully backward compatible: runners without the new fields are unaffected.
+- Stage A only. Mutation-on-diff and AI authoring (Stage B) are advisory-first and land in v0.12 after Checkpoint 1.
+
 ## [0.9.0] - 2026-06-01
 
 Tag: `fqe-v0.9.0`. Coverage-liveness ("make absence loud"): a green can no longer be minted by a suite that ran nothing. Proven by plugging fqe COLD into real third-party Python (more-itertools) and Rust (semver) repos on real CI, turning the "works on any stack" claim from a design property into a reproducible fact (n=3 stacks: TypeScript, Python, Rust).

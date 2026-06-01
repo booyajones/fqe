@@ -173,6 +173,10 @@ function buildReceipt(ctx) {
     verdict_reasons: ctx.verdict_reasons || [],
     bypass: ctx.bypass || null,
     evidence_paths: ctx.evidence_paths || [],
+    // v0.10: instruments the near-autonomy DoD. Counts the items a human must look
+    // at this run (flags, flaky/quarantined runners, unwired suites, AI drafts) and
+    // an estimated minutes, so the "3-6 team-hours/week" target is observed, not asserted.
+    human_review: ctx.human_review || null,
   };
   return receipt;
 }
@@ -268,6 +272,13 @@ function renderMarkdownBody(r) {
   if (r.required_classes && r.required_classes.length > 0) {
     lines.push('');
     lines.push(`**Policy required classes:** ${r.required_classes.join(', ')}`);
+  }
+  if (r.human_review) {
+    const h = r.human_review;
+    lines.push('');
+    lines.push(`**Human review queue:** ~${h.estimated_minutes} min ` +
+      `(flags ${h.flags || 0}, flaky ${h.flaky || 0}, quarantined ${h.quarantined || 0}, ` +
+      `unwired suites ${h.unwired_suites || 0}, AI drafts ${h.ai_drafts || 0})`);
   }
   if (r.adversarial_stats && r.adversarial_stats.length > 0) {
     lines.push('');

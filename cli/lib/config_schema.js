@@ -26,6 +26,8 @@ const RUNNER_KEYS = [
   'command', 'args', 'when', 'required', 'always_run', 'timeout_ms', 'class',
   // coverage-liveness (v0.9.0): proof that real tests actually executed.
   'report', 'inventory_cmd', 'inventory_format', 'min_tests', 'reconcile', 'strict_coverage',
+  // trust hygiene (v0.10): flaky-retry + quarantine so one random red never blocks.
+  'retries', 'quarantined',
 ];
 const POLICY_KEYS = ['require_classes', 'require_for'];
 const REQUIRE_FOR_KEYS = ['when', 'classes'];
@@ -259,6 +261,16 @@ function validateRunner(name, cfg, errors) {
   }
   if ('strict_coverage' in cfg && typeof cfg.strict_coverage !== 'boolean') {
     errors.push(`${where}: 'strict_coverage' must be true or false`);
+  }
+
+  if ('retries' in cfg) {
+    const r = cfg.retries;
+    if (typeof r !== 'number' || !Number.isInteger(r) || r < 0 || r > 5) {
+      errors.push(`${where}: 'retries' must be an integer 0..5 (re-runs a failed runner to detect a flake)`);
+    }
+  }
+  if ('quarantined' in cfg && typeof cfg.quarantined !== 'boolean') {
+    errors.push(`${where}: 'quarantined' must be true or false`);
   }
 
   // Coherence (fail closed): coverage fields are meaningless without a report,
