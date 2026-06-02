@@ -52,6 +52,59 @@ const QODO_RUNNER_BLOCK = `
     timeout_ms: 600000
 `;
 
+// MS (v0.15): the PAYMENTS profile (fqe init --payments). Money repos are strict by
+// default: every money/contract runner is locked to the safe configuration fqe enforces
+// (required, coverage evidence, reconcile, strict_coverage, blocking mutation, no
+// quarantine). Loosening any of it FAILS validation loudly. This scaffold validates clean.
+const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init --payments)
+# Money repos are strict by default. The money/contract runners below are locked to the
+# safe configuration fqe enforces. Loosening any of them FAILS validation loudly (the
+# gate refuses to run); it does not silently weaken. Add your own unit/lint runners too.
+
+version: 0.15
+require_money_idempotency: true
+require_money_policy_when_detected: true
+
+mutation:
+  mode: blocking
+  threshold: 80
+  min_mutants: 1
+  max_suppression_ratio: 0.5
+
+policy:
+  require_for:
+    - when: ["src/payments/**", "src/ledger/**", "src/billing/**"]
+      classes: ["money", "regression"]
+
+runners:
+  money:
+    command: "npm"
+    args: ["run", "test:money"]
+    when: ["src/payments/**", "src/ledger/**", "src/billing/**"]
+    class: money
+    required: true
+    report: "junit:reports/money-junit.xml"
+    inventory_cmd: "npm run test:money -- --listTests --silent | grep -c ."
+    inventory_format: count
+    reconcile: true
+    strict_coverage: true
+    min_tests: 1
+    invariant: ["idempotency", "no-negative-balance"]
+
+  contract:
+    command: "npm"
+    args: ["run", "test:contract"]
+    when: ["src/payments/**", "contracts/**"]
+    class: contract
+    required: true
+    report: "junit:reports/contract-junit.xml"
+    inventory_cmd: "npm run test:contract -- --listTests --silent | grep -c ."
+    inventory_format: count
+    reconcile: true
+    strict_coverage: true
+    min_tests: 1
+`;
+
 const FILES = {
   '.fqe.yml': `# Finexio Quality Engine - repo config
 # Each runner declares: command, args, when (glob patterns), required, always_run,
@@ -141,7 +194,7 @@ jobs:
           # To update fqe, push a new tag in finexio-skills and re-run fqe init.
           # When ghcr.io/booyajones/fqe:0.1 is published with cosign verify,
           # this entire step can be replaced with: container: ghcr.io/booyajones/fqe:0.1
-          FQE_TAG="fqe-v0.14.0"
+          FQE_TAG="fqe-v0.15.0"
           git clone --depth=1 --branch "$FQE_TAG" \\
             https://github.com/booyajones/fqe.git /tmp/fqe-src
           cd /tmp/fqe-src/cli
@@ -523,6 +576,12 @@ function init(opts) {
   // to .fqe.yml WITHOUT mutating the module-level FILES constant.
   const dynamicFiles = { ...FILES };
 
+  // MS (v0.15): the payments profile swaps the base .fqe.yml for the strict money
+  // scaffold BEFORE the --with-* appends, so a stryker/qodo runner block lands on it.
+  if (opts.payments) {
+    dynamicFiles['.fqe.yml'] = PAYMENTS_FQE_YML;
+  }
+
   if (opts.withMutation) {
     const strykerRunner = readPackagedTemplate('fqe_stryker_runner.js');
     const strykerConf = readPackagedTemplate('stryker.conf.json');
@@ -579,4 +638,5 @@ module.exports = {
   appendRunnerBlock,
   MUTATION_RUNNER_BLOCK,
   QODO_RUNNER_BLOCK,
+  PAYMENTS_FQE_YML,
 };

@@ -54,7 +54,7 @@ const reconcileLib = require('../lib/reconcile');
 const discoverLib = require('../lib/discover');
 const baselineLib = require('../lib/baseline');
 
-const FQE_VERSION = '0.14.0';
+const FQE_VERSION = '0.15.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -118,6 +118,7 @@ const SUBCOMMANDS = {
       actor: opts.actor,
       withMutation: opts['with-mutation'] === true,
       withQodo: opts['with-qodo'] === true,
+      payments: opts.payments === true,
     });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     if (result.skipped.length > 0 && result.written.length === 0) {

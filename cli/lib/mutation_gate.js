@@ -19,6 +19,10 @@
 
 const KILLED = 'Killed';
 const SURVIVING = new Set(['Survived', 'Timeout', 'NoCoverage']);
+// F6 (v0.15): if more than half the in-scope survivors are allowlisted as equivalent,
+// the allowlist is doing the tests' job. Above this fraction the advisory gate FLAGs the
+// suppression so a wholesale allowlist cannot read as a clean pass. Strict greater-than.
+const DEFAULT_MAX_SUPPRESSION_RATIO = 0.5;
 
 /**
  * Parse a Stryker mutation.json report into a flat per-file + total tally.
@@ -109,11 +113,13 @@ function evaluateMutationAdvisory(o) {
   let suppressed = 0;
   let liveSurvivors = [];
   let adjustedTally = tally;
+  let inScopeBeforeSuppression = 0;
   if (tally && Array.isArray(tally.survivors)) {
     // Respect diff-scope: only survivors in changed files (when provided) are in scope.
     const scope = Array.isArray(opts.changedFiles) && opts.changedFiles.length > 0
       ? new Set(opts.changedFiles.map(normalizePath)) : null;
     const inScope = tally.survivors.filter((s) => !scope || scope.has(normalizePath(s.file)));
+    inScopeBeforeSuppression = inScope.length;
     liveSurvivors = inScope.filter((s) => !allowlist.has(s.key));
     suppressed = inScope.length - liveSurvivors.length;
     // Recompute killed within scope so killRate reflects the diff + allowlist.
@@ -138,26 +144,52 @@ function evaluateMutationAdvisory(o) {
     changedFiles: adjustedTally ? null : opts.changedFiles,
   });
 
+  // F6 (v0.15): suppression-ratio cap. If too large a fraction of the in-scope survivors
+  // were allowlisted as equivalent, the allowlist is masking real survivors. Trip a FLAG
+  // so a wholesale suppression cannot read as a clean pass. Strict greater-than, so an
+  // exact-cap ratio passes. Advisory by nature: it can ADD a FLAG, never clear one.
+  const maxRatio = Math.min(1, Math.max(0,
+    typeof opts.maxSuppressionRatio === 'number' ? opts.maxSuppressionRatio : DEFAULT_MAX_SUPPRESSION_RATIO));
+  // Compare the RAW ratio to the cap; round only for display. (round2 on the comparison
+  // could miss a true over-cap ratio that rounds down to exactly the cap.)
+  const rawRatio = inScopeBeforeSuppression > 0 ? suppressed / inScopeBeforeSuppression : 0;
+  const suppressionRatio = round2(rawRatio);
+  const ratioCapTripped = suppressed > 0 && rawRatio > maxRatio;
+  const ratioReason = `mutation: ${suppressed} of ${inScopeBeforeSuppression} in-scope survivor(s) suppressed as equivalent ` +
+    `(${Math.round(suppressionRatio * 100)}% over the ${Math.round(maxRatio * 100)}% cap); the allowlist may be masking real survivors`;
+  const extra = {
+    suppressed, survivors: liveSurvivors, in_scope_survivors: inScopeBeforeSuppression,
+    suppression_ratio: suppressionRatio, suppression_cap: maxRatio, suppression_cap_tripped: ratioCapTripped,
+  };
+
   if (base.insufficient) {
     return {
       verdict: 'NEUTRAL', killRate: base.killRate, total: base.total, killed: base.killed,
-      surviving: base.surviving, suppressed, survivors: liveSurvivors,
+      surviving: base.surviving, ...extra,
       reasons: [`mutation: cannot judge (${base.reasons[0] || 'insufficient mutants'}); neutral, not a pass`],
     };
   }
   if (base.pass) {
+    if (ratioCapTripped) {
+      return {
+        verdict: 'FLAG', killRate: base.killRate, total: base.total, killed: base.killed,
+        surviving: base.surviving, ...extra, reasons: [ratioReason],
+      };
+    }
     return {
       verdict: 'PASS', killRate: base.killRate, total: base.total, killed: base.killed,
-      surviving: base.surviving, suppressed, survivors: liveSurvivors, reasons: [],
+      surviving: base.surviving, ...extra, reasons: [],
     };
   }
   // Below threshold: advisory -> FLAG, blocking -> FAIL.
   const detail = `mutation kill rate ${base.killRate != null ? base.killRate.toFixed(2) : '?'}% below ${opts.threshold || 70}% ` +
     `(${base.surviving} live survivor(s)${suppressed ? `, ${suppressed} suppressed as equivalent` : ''})`;
+  const reasons = [`${detail} [${mode === 'blocking' ? 'blocking' : 'advisory'}]`];
+  if (ratioCapTripped) reasons.push(ratioReason);
   if (mode === 'blocking') {
-    return { verdict: 'FAIL', killRate: base.killRate, total: base.total, killed: base.killed, surviving: base.surviving, suppressed, survivors: liveSurvivors, reasons: [`${detail} [blocking]`] };
+    return { verdict: 'FAIL', killRate: base.killRate, total: base.total, killed: base.killed, surviving: base.surviving, ...extra, reasons };
   }
-  return { verdict: 'FLAG', killRate: base.killRate, total: base.total, killed: base.killed, surviving: base.surviving, suppressed, survivors: liveSurvivors, reasons: [`${detail} [advisory]`] };
+  return { verdict: 'FLAG', killRate: base.killRate, total: base.total, killed: base.killed, surviving: base.surviving, ...extra, reasons };
 }
 
 /**
@@ -243,4 +275,4 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-module.exports = { parseStryker, evaluateMutationGate, evaluateMutationAdvisory, survivorKey, KILLED, SURVIVING };
+module.exports = { parseStryker, evaluateMutationGate, evaluateMutationAdvisory, survivorKey, KILLED, SURVIVING, DEFAULT_MAX_SUPPRESSION_RATIO };

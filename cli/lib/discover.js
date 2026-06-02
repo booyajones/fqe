@@ -200,7 +200,9 @@ function discover(repoDir, config, opts = {}) {
   const detected = detectFrameworks({ files, manifests });
   const runners = (config && config.runners) || {};
   const { wired, unwired } = matchWired(detected, runners);
-  return { detected, wired, unwired };
+  // v0.15 (F9): expose the scanned repo files so the orchestrator can detect
+  // policy.require_for `when` globs that match nothing (a dead/typo'd money glob).
+  return { detected, wired, unwired, scanned_files: files };
 }
 
 module.exports = { detectFrameworks, matchWired, runnerCmdLine, discover, FRAMEWORKS };

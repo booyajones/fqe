@@ -221,6 +221,10 @@ test('run() with a non-empty FQE_CHANGED_FILES that misses the payments glob doe
     '    - when: ["src/payments/**"]',
     '      classes: ["money"]',
   ].join('\n'));
+  // v0.15 F9: the require_for payments glob must match a real repo file or it is reported
+  // as a dead glob. A real payments repo has payments code; create it so the glob is live.
+  fs.mkdirSync(path.join(dir, 'src', 'payments'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'payments', 'charge.js'), 'module.exports = 1;');
   const prev = process.env.FQE_CHANGED_FILES;
   process.env.FQE_CHANGED_FILES = 'docs/readme.md';
   try {

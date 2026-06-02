@@ -374,3 +374,50 @@ test('require_classes: a class runner with ran:false but exit_code:0 still does 
   assert.equal(out.verdict, FAIL);
   assert.ok(out.reasons.some((r) => /required test class "money"/.test(r)));
 });
+
+// ── v0.15 A4 (Pass 10) + F9 (Pass 11): money detection + dead glob ──
+const PASSRUN = { name: 'unit', required: true, ran: true, exit_code: 0, class: 'unit' };
+test('A4 V6: money detected, no policy -> FLAG', () => {
+  const out = computeVerdict({ runners: [PASSRUN], money_signal: { detected: true, policy_configured: false, path_hits: ['src/ledger/x.js'], keyword_hits: [] } });
+  assert.equal(out.verdict, 'FLAG');
+  assert.ok(out.reasons.some((r) => /no money policy/.test(r)), out.reasons.join(' | '));
+});
+test('A4 V7: money detected, no policy, strict flag -> FAIL', () => {
+  const out = computeVerdict({ runners: [PASSRUN], require_money_policy_when_detected: true, money_signal: { detected: true, policy_configured: false, path_hits: ['src/ledger/x.js'], keyword_hits: [] } });
+  assert.equal(out.verdict, 'FAIL');
+  assert.ok(out.reasons.some((r) => /BLOCKED \(money detected/.test(r)), out.reasons.join(' | '));
+});
+test('A4 V8: money detected WITH policy -> PASS', () => {
+  const out = computeVerdict({ runners: [PASSRUN], money_signal: { detected: true, policy_configured: true, path_hits: ['src/ledger/x.js'], keyword_hits: [] } });
+  assert.equal(out.verdict, 'PASS');
+});
+test('A4 V9: no money detected -> PASS', () => {
+  const out = computeVerdict({ runners: [PASSRUN], money_signal: { detected: false, policy_configured: false, path_hits: [], keyword_hits: [] } });
+  assert.equal(out.verdict, 'PASS');
+});
+test('A4 V10: indeterminate diff alone does not flag money (detected:false) -> PASS', () => {
+  const out = computeVerdict({ runners: [PASSRUN], money_signal: { detected: false, indeterminate: true, policy_configured: false, path_hits: [], keyword_hits: [] } });
+  assert.equal(out.verdict, 'PASS');
+});
+test('A4 V12: money "ok" can never CLEAR a Pass-1 FAIL', () => {
+  const out = computeVerdict({ runners: [{ name: 'm', required: true, ran: false, class: 'money' }], money_signal: { detected: true, policy_configured: true, path_hits: [], keyword_hits: [] } });
+  assert.equal(out.verdict, 'FAIL');
+});
+test('F9 V13: a dead require_for glob -> FLAG', () => {
+  const out = computeVerdict({ runners: [PASSRUN], dead_require_for_globs: [{ index: 0, glob: 'src/paymnt/**' }] });
+  assert.equal(out.verdict, 'FLAG');
+  assert.ok(out.reasons.some((r) => /matches no file/.test(r)), out.reasons.join(' | '));
+});
+test('F9 V14: a dead glob + strict -> FAIL', () => {
+  const out = computeVerdict({ runners: [PASSRUN], require_money_policy_when_detected: true, dead_require_for_globs: [{ index: 0, glob: 'src/paymnt/**' }] });
+  assert.equal(out.verdict, 'FAIL');
+});
+test('A4/F9 V15: no money_signal and no dead globs -> unchanged PASS (back-compat)', () => {
+  const out = computeVerdict({ runners: [PASSRUN] });
+  assert.equal(out.verdict, 'PASS');
+});
+test('V16: verdict.js stays clock-free (no Date usage in the verdict core)', () => {
+  const fs = require('node:fs');
+  const src = fs.readFileSync(require.resolve('../lib/verdict'), 'utf8');
+  assert.ok(!/new Date|Date\.now|Date\.parse|Date\.UTC|Date\(/.test(src), 'verdict.js must not use a clock');
+});

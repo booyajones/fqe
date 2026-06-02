@@ -26,13 +26,72 @@ const { spawnSync } = require('node:child_process');
 const { computeVerdict, BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 const { wilson95 } = require('./wilson');
 const { buildReceipt, serializeReceipt, writeReceiptFiles, hashString } = require('./receipt');
-const { validateConfig } = require('./config_schema');
+const { validateConfig, hasMoneyPolicy, isMoneyClass, parseIsoDateUtc } = require('./config_schema');
 const { parseJUnit } = require('./junit');
 const { parseInventory } = require('./inventory');
 const { discover } = require('./discover');
 const { parseStryker, evaluateMutationAdvisory } = require('./mutation_gate');
+const { detectMoneyPaths, findDeadRequireForGlobs } = require('./money_scan');
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+
+// F1 (v0.15): a quarantine expires after this many days. The CLOCK lives here in the
+// orchestrator; verdict.js only consumes the resulting boolean and stays clock-free.
+const DEFAULT_QUARANTINE_TTL_DAYS = 14;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// A4 (v0.15): bounds on the money-path content scan so a huge diff cannot OOM the gate.
+const MONEY_SCAN_MAX_FILES = 500;
+const MONEY_SCAN_MAX_BYTES = 512 * 1024;
+const MONEY_SCAN_EXT = new Set([
+  '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.rb', '.go', '.java', '.cs', '.php', '.sql', '.kt', '.scala',
+]);
+
+/**
+ * F1 (v0.15): is a runner's quarantine expired as of the run timestamp? Fail CLOSED:
+ * an unparseable quarantined_since or run timestamp counts as EXPIRED (a quarantine that
+ * cannot prove its age cannot keep shielding a failure).
+ * @returns {boolean}
+ */
+function quarantineExpired(cfg, finishedAtIso) {
+  if (!cfg || cfg.quarantined !== true) return false;
+  const sinceMs = parseIsoDateUtc(cfg.quarantined_since);
+  const nowMs = parseIsoDateUtc(finishedAtIso);
+  if (sinceMs === null || nowMs === null) return true; // cannot age it -> expired
+  const ttlDays = (typeof cfg.quarantine_ttl_days === 'number' && Number.isInteger(cfg.quarantine_ttl_days))
+    ? cfg.quarantine_ttl_days : DEFAULT_QUARANTINE_TTL_DAYS;
+  return (nowMs - sinceMs) / MS_PER_DAY > ttlDays;
+}
+
+function scanExtOf(f) {
+  const s = String(f);
+  const d = s.lastIndexOf('.');
+  const sl = s.lastIndexOf('/');
+  return d > sl && d >= 0 ? s.slice(d).toLowerCase() : '';
+}
+
+/**
+ * A4 (v0.15): read the changed source files (bounded) so the money-path heuristic can
+ * keyword-scan them. Never throws: an unreadable or oversized file is skipped.
+ * @returns {Record<string,string>} path -> text
+ */
+function readChangedFileContents(files, repoDir) {
+  const out = {};
+  if (!Array.isArray(files)) return out;
+  let count = 0;
+  for (const f of files) {
+    if (count >= MONEY_SCAN_MAX_FILES) break;
+    if (!MONEY_SCAN_EXT.has(scanExtOf(f))) continue;
+    try {
+      const p = path.resolve(repoDir || process.cwd(), f);
+      const st = fs.statSync(p);
+      if (!st.isFile() || st.size > MONEY_SCAN_MAX_BYTES) continue;
+      out[f] = fs.readFileSync(p, 'utf8');
+      count++;
+    } catch (_) { /* unreadable: skip, never throw */ }
+  }
+  return out;
+}
 
 function parseConfigYaml(text) {
   const lines = text.split(/\r?\n/);
@@ -644,6 +703,9 @@ function run(opts) {
     const unparseableResult = () => ({
       verdict: blocking ? 'FAIL' : 'FLAG',
       killRate: null, total: 0, killed: 0, surviving: 0, suppressed: 0, survivors: [],
+      in_scope_survivors: 0, suppression_ratio: 0,
+      suppression_cap: typeof config.mutation.max_suppression_ratio === 'number' ? config.mutation.max_suppression_ratio : 0.5,
+      suppression_cap_tripped: false,
       reasons: [
         `mutation report present but unparseable or malformed; failing ` +
         `${blocking ? 'closed [blocking]' : 'to a FLAG [advisory]'} ` +
@@ -695,6 +757,7 @@ function run(opts) {
           threshold: typeof config.mutation.threshold === 'number' ? config.mutation.threshold : 70,
           minMutants: typeof config.mutation.min_mutants === 'number' ? config.mutation.min_mutants : 1,
           allowlist: Array.isArray(config.mutation.allowlist) ? config.mutation.allowlist : [],
+          maxSuppressionRatio: typeof config.mutation.max_suppression_ratio === 'number' ? config.mutation.max_suppression_ratio : undefined,
           changedFiles: diff.ok ? files : null,
         });
       }
@@ -711,19 +774,51 @@ function run(opts) {
   let discoveryError = null;
   try { discovery = discover(repoDir, config); } catch (e) { discoveryError = e && e.message ? e.message : String(e); }
 
+  // v0.15 money signals (A4 money-path heuristic + F9 dead-glob + MS idempotency arming).
+  // Computed once. detectMoneyPaths fails LOUD (indeterminate diff -> detected).
+  const moneyPolicyConfigured = hasMoneyPolicy(config);
+  const runnersObj = (config.runners && typeof config.runners === 'object') ? config.runners : {};
+  // A money OR contract runner arms the idempotency invariant (Pass 8). Use isMoneyClass
+  // so this stays consistent with the strict-class set and the schema; otherwise a
+  // contract-only repo over money paths would escape Pass 8 AND A4 (policy_configured).
+  const hasMoneyClassRunner = Object.values(runnersObj).some((c) => isMoneyClass(c));
+  const changedContents = readChangedFileContents(files, repoDir);
+  const moneyDetect = detectMoneyPaths({ changedFiles: files, fileContents: changedContents, diffIndeterminate: !diff.ok });
+  const moneySignal = {
+    detected: moneyDetect.detected,
+    indeterminate: moneyDetect.indeterminate,
+    policy_configured: moneyPolicyConfigured,
+    path_hits: (moneyDetect.pathHits || []).slice(0, 20),
+    keyword_hits: (moneyDetect.keywordHits || []).slice(0, 20),
+  };
+  const deadRequireForGlobs = findDeadRequireForGlobs({
+    policy: config.policy,
+    repoFiles: Array.isArray(discovery.scanned_files) ? discovery.scanned_files : [],
+    fileMatches,
+  });
+
   const verdictInput = {
-    runners: runnerResults.map(r => ({
-      name: r.name,
-      required: r.required === true,
-      ran: r.ran === true,
-      exit_code: r.exit_code,
-      class: r.class,
-      coverage: r.coverage,
-      flaky: r.flaky === true,
-      quarantined: r.quarantined === true,
-      invariant: Array.isArray(config.runners[r.name] && config.runners[r.name].invariant)
-        ? config.runners[r.name].invariant : undefined,
-    })),
+    runners: runnerResults.map((r) => {
+      const cfg = runnersObj[r.name] || {};
+      const money = isMoneyClass(cfg);
+      let coverage = r.coverage;
+      // MS Flip 2: a money runner's coverage is strict + reconciled (only ever tightens).
+      if (money && coverage && typeof coverage === 'object') {
+        coverage = { ...coverage, strict_coverage: true, reconcile: true };
+      }
+      return {
+        name: r.name,
+        required: money ? true : (r.required === true),          // MS Flip 1: money is always required
+        ran: r.ran === true,
+        exit_code: r.exit_code,
+        class: r.class,
+        coverage,
+        flaky: r.flaky === true,
+        quarantined: money ? false : (r.quarantined === true),   // MS: a money runner can never be quarantined
+        quarantine_expired: quarantineExpired(cfg, finishedAt),  // F1
+        invariant: Array.isArray(cfg.invariant) ? cfg.invariant : undefined,
+      };
+    }),
     adversarial_stats: adversarialStats,
     require_stats_for: requireStatsFor,
     require_classes: requiredClasses,
@@ -731,7 +826,12 @@ function run(opts) {
     unwired_suites: discovery.unwired,
     require_all_suites_wired: config.require_all_suites_wired === true,
     discovery_error: discoveryError,
-    require_money_idempotency: config.require_money_idempotency === true,
+    // MS: a repo with a money-movement runner must prove idempotency, even if the flag
+    // was not set explicitly (contract-only does not arm it; that is not money movement).
+    require_money_idempotency: config.require_money_idempotency === true || hasMoneyClassRunner,
+    require_money_policy_when_detected: config.require_money_policy_when_detected === true,
+    money_signal: moneySignal,
+    dead_require_for_globs: deadRequireForGlobs,
     mutation: mutationResult,
   };
   let verdictOut;
@@ -813,4 +913,6 @@ module.exports = {
   computeRequiredClasses,
   reportPathOf,
   assembleCoverage,
+  quarantineExpired,
+  readChangedFileContents,
 };

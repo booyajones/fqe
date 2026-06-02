@@ -135,12 +135,23 @@ function computeVerdict(input) {
   // (gauntlet 11f7fb fatal flaw #4).
   for (const r of input.runners) {
     if (r.ran === true) {
+      // F1 (v0.15): a quarantine SHIELDS a failure only while it is active. The
+      // orchestrator computes expiry from quarantined_since + the run timestamp and
+      // passes the boolean here, so the verdict core stays clock-free. An EXPIRED
+      // quarantine no longer neutralizes a failure: it falls through to a FAIL.
+      // Fail CLOSED: a quarantine shields ONLY when expiry was explicitly computed as
+      // false. An absent quarantine_expired (a caller that did not run it through the
+      // orchestrator) does NOT shield: it falls through to the normal FAIL branch. The
+      // orchestrator always sets this boolean, so production money runners are unaffected.
+      const quarantineActive = r.quarantined === true && r.quarantine_expired === false;
+      const quarantineExpired = r.quarantined === true && r.quarantine_expired === true;
       if (typeof r.exit_code !== 'number' || Number.isNaN(r.exit_code)) {
-        // A quarantined runner with an indeterminate exit is still neutral, not a
-        // hard FAIL, but a non-quarantined one fails closed.
-        if (r.quarantined === true) {
+        if (quarantineActive) {
           hasFlag = true;
           reasons.push(`runner "${r.name}" is QUARANTINED and produced no numeric exit_code (neutral, not blocking)`);
+        } else if (quarantineExpired) {
+          hasFail = true;
+          reasons.push(`runner "${r.name}" QUARANTINE EXPIRED and it produced no numeric exit_code; the quarantine no longer shields it (fix it or refresh quarantined_since)`);
         } else {
           hasFail = true;
           reasons.push(`runner "${r.name}" ran but exit_code is not a number (got ${JSON.stringify(r.exit_code)})`);
@@ -150,9 +161,12 @@ function computeVerdict(input) {
         // a known-flaky suite being fixed. Its failure is a loud NEUTRAL signal (FLAG),
         // not a blocking FAIL, so one unstable suite cannot hold the whole team hostage.
         // It stays visible in the receipt so the quarantine cannot be silently permanent.
-        if (r.quarantined === true) {
+        if (quarantineActive) {
           hasFlag = true;
           reasons.push(`runner "${r.name}" exited ${r.exit_code} but is QUARANTINED (neutral, not blocking; fix and un-quarantine it)`);
+        } else if (quarantineExpired) {
+          hasFail = true;
+          reasons.push(`runner "${r.name}" exited ${r.exit_code} but its QUARANTINE HAS EXPIRED; a quarantine cannot rot forever (fix the suite or refresh quarantined_since)`);
         } else {
           hasFail = true;
           reasons.push(`runner "${r.name}" exited ${r.exit_code}`);
@@ -432,6 +446,41 @@ function computeVerdict(input) {
     }
     // NEUTRAL (too few mutants to judge) and PASS do not change the verdict. NEUTRAL is
     // genuinely "no signal," so it must not turn every small diff yellow.
+  }
+
+  // Pass 10: money-path heuristic (v0.15, A4). When money-LOOKING code is in the diff but
+  // no money policy is configured, FLAG it loudly (FAIL under require_money_policy_when_detected).
+  // The orchestrator does the scanning and passes input.money_signal. Additive only.
+  const ms = input.money_signal;
+  if (ms && typeof ms === 'object' && ms.detected === true && ms.policy_configured !== true) {
+    const strict = input.require_money_policy_when_detected === true;
+    const paths = Array.isArray(ms.path_hits) ? ms.path_hits.slice(0, 5) : [];
+    const kws = Array.isArray(ms.keyword_hits) ? ms.keyword_hits.slice(0, 5).map((k) => (k && k.keyword) || k) : [];
+    const bits = [];
+    if (paths.length) bits.push(`paths: ${paths.join(', ')}`);
+    if (kws.length) bits.push(`keywords: ${kws.join(', ')}`);
+    const detail = `money-looking code is present (${bits.join('; ') || 'detected'}) but no money policy is configured (no money/contract runner, no require_money_idempotency, no require_for money class)`;
+    if (strict) {
+      hasFail = true;
+      reasons.push(`BLOCKED (money detected, no policy): ${detail}`);
+    } else {
+      hasFlag = true;
+      reasons.push(`money detected, no money policy: ${detail}`);
+    }
+  }
+
+  // Pass 11: dead require_for glob (v0.15, F9). A policy.require_for `when` glob that
+  // matches no file in the repo silently grants the loose bar (a typo or moved path).
+  // FLAG it (FAIL under the strict flag). Additive only.
+  const deadGlobs = Array.isArray(input.dead_require_for_globs) ? input.dead_require_for_globs : [];
+  if (deadGlobs.length > 0) {
+    const strict = input.require_money_policy_when_detected === true;
+    for (const d of deadGlobs) {
+      const g = d && typeof d === 'object' ? d.glob : d;
+      const msg = `policy.require_for glob "${g}" matches no file in the repo; this policy currently guards nothing`;
+      if (strict) { hasFail = true; reasons.push(`BLOCKED (dead policy glob): ${msg}`); }
+      else { hasFlag = true; reasons.push(msg); }
+    }
   }
 
   let verdict;

@@ -2,6 +2,22 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.15.0] - 2026-06-02
+
+Tag: `fqe-v0.15.0`. Money-aware strict profile + foot-gun caps. fqe's fail-closed guarantees were real but opt-in: strict protections defaulted off and the abusable carve-outs were unbounded. v0.15.0 makes money repos safe-by-default and caps the carve-outs. Designed via a parallel agent workflow (one designer per feature, synthesized into one conflict-aware build plan).
+
+### Added
+- **`fqe init --payments`**: scaffolds a strict money profile (`PAYMENTS_FQE_YML`) with required, reconciled, strict-coverage, blocking-mutation money/contract runners and `require_money_idempotency`.
+- **Money-strict validation (MS)**: a `class: money`/`class: contract` runner must be `required: true`, declare a `report`, set `reconcile: true` and `strict_coverage: true`, and may not be `quarantined`. Loosening any of these FAILS validation loudly. Under a money policy, `mutation.mode` must be `blocking`, the allowlist is capped at 10, and `max_suppression_ratio` may not exceed 0.5.
+- **F1 quarantine TTL**: a `quarantined: true` runner must carry a `quarantined_since` ISO date and expires after `quarantine_ttl_days` (default 14, max 90). An expired quarantine no longer shields a failure (it FAILs). Quarantine is banned on money/contract classes. The clock lives in the orchestrator; verdict.js stays clock-free.
+- **F6 mutation allowlist suppression-ratio cap**: if more than half the in-scope survivors are allowlisted as equivalent, the advisory gate FLAGs the suppression (configurable via `mutation.max_suppression_ratio`, default 0.5).
+- **F8 `min_mutants` ceiling**: capped at 5, so a high floor cannot pin the gate to NEUTRAL forever.
+- **A4 money-path heuristic** (`cli/lib/money_scan.js`): detects money-looking code in the diff (by path and keyword) and FLAGs it when no money policy is configured (FAIL under `require_money_policy_when_detected`). Detection is by real signal; a blind diff is handled fail-closed by `require_for` activation, not a noisy universal flag.
+- **F9 dead `require_for` glob detection**: a policy glob that matches no repo file is reported (FLAG, or FAIL under the strict flag), catching a typo that would silently guard nothing.
+
+### Notes
+- Backward compatible for non-money repos: the strict rules key on the money/contract class, and the new top-level flags default off. 720 tests (719 pass, 1 Windows-symlink skip). Still NOT proven on a live production money path.
+
 ## [0.14.0] - 2026-06-02
 
 Tag: `fqe-v0.14.0`. Integrity hardening. A completeness-adversary pass (find what is MISSING, not what is wrong) plus an Opus code review found fail-opens that five prior "done" releases shipped past, including a CRITICAL one in the exact part built to defend the money / MCP-write blast radius.

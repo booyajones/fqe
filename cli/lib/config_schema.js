@@ -21,8 +21,8 @@
 const { KNOWN_CLASSES, BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 const { KNOWN_FORMATS } = require('./inventory');
 
-const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired', 'require_money_idempotency', 'mutation'];
-const MUTATION_KEYS = ['mode', 'threshold', 'min_mutants', 'allowlist'];
+const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired', 'require_money_idempotency', 'require_money_policy_when_detected', 'mutation'];
+const MUTATION_KEYS = ['mode', 'threshold', 'min_mutants', 'allowlist', 'max_suppression_ratio'];
 // Invariant ids a runner may declare it proves (payments safety, v0.11).
 const KNOWN_INVARIANTS = Object.freeze(['idempotency', 'double-spend', 'conservation', 'no-negative-balance']);
 const RUNNER_KEYS = [
@@ -30,7 +30,8 @@ const RUNNER_KEYS = [
   // coverage-liveness (v0.9.0): proof that real tests actually executed.
   'report', 'inventory_cmd', 'inventory_format', 'min_tests', 'reconcile', 'strict_coverage',
   // trust hygiene (v0.10): flaky-retry + quarantine so one random red never blocks.
-  'retries', 'quarantined',
+  // v0.15 (F1): a quarantine must carry a start date and may set a TTL; it expires.
+  'retries', 'quarantined', 'quarantined_since', 'quarantine_ttl_days',
   // payments safety (v0.11): the named money invariants this runner proves.
   'invariant',
   // adversarial gate (v0.14): the blast radius this runner attacks. Declaring it
@@ -40,6 +41,17 @@ const RUNNER_KEYS = [
   'blast_radius',
 ];
 const KNOWN_BLAST_RADII = Object.freeze(Object.keys(BLAST_RADIUS_THRESHOLDS));
+
+// v0.15 money-strict profile + foot-gun caps.
+// MONEY_CLASSES: the test classes that move or reconcile money. Runners in these
+// classes are strict-by-default and may not carry the abusable carve-outs.
+const MONEY_CLASSES = Object.freeze(new Set(['money', 'contract']));
+// MONEY_ALLOWLIST_CAP (MS): a small, named, reviewed set of known-equivalent money
+// mutants is fine; an open-ended list could suppress every real money survivor.
+const MONEY_ALLOWLIST_CAP = 10;
+// MAX_MIN_MUTANTS (F8): a real PR diff yields a handful of mutants; above this floor
+// `total < min_mutants` pins NEUTRAL forever, silently disabling the mutation gate.
+const MAX_MIN_MUTANTS = 5;
 const POLICY_KEYS = ['require_classes', 'require_for'];
 const REQUIRE_FOR_KEYS = ['when', 'classes'];
 
@@ -73,6 +85,66 @@ function normalizeRunners(runners) {
   }
   if (isPlainObject(runners)) return { ok: true, value: runners };
   return { ok: false };
+}
+
+/**
+ * Strict ISO-date parser (v0.15 F1). Accepts YYYY-MM-DD or a full ISO timestamp.
+ * Rejects loose inputs ("last tuesday", "2026", "05/20/2026") so a quarantine date
+ * cannot be fudged into something Date() would coerce. Returns a millisecond epoch
+ * (UTC) or null. Pure, no clock.
+ * @returns {number|null}
+ */
+function parseIsoDateUtc(s) {
+  if (typeof s !== 'string') return null;
+  const t = s.trim();
+  // Require at least YYYY-MM-DD; optionally a T...time and zone.
+  if (!/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/.test(t)) {
+    return null;
+  }
+  // Force UTC: a bare date-time with no timezone (e.g. "2026-05-20T12:00:00") would be
+  // parsed as LOCAL time, making quarantine expiry differ across CI timezones. A date-only
+  // value is already UTC per spec. Append Z to a tz-less date-time so the result is
+  // deterministic everywhere.
+  let norm = t.replace(' ', 'T');
+  const hasTime = norm.includes('T');
+  const hasTz = /(Z|[+-]\d{2}:?\d{2})$/.test(norm);
+  if (hasTime && !hasTz) norm += 'Z';
+  const ms = Date.parse(norm);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * Is this runner config a money-class runner (money or contract)? (v0.15)
+ */
+function isMoneyClass(cfg) {
+  return isPlainObject(cfg) && typeof cfg.class === 'string' && MONEY_CLASSES.has(cfg.class);
+}
+
+/**
+ * Does the config carry ANY money policy? (v0.15, single source of truth.)
+ * True when a runner declares a money/contract class, OR require_money_idempotency
+ * is on, OR a policy.require_for entry lists a money/contract class. The orchestrator
+ * and money_scan both import THIS function so the definition never drifts.
+ */
+function hasMoneyPolicy(config) {
+  if (!isPlainObject(config)) return false;
+  if (config.require_money_idempotency === true) return true;
+  const norm = normalizeRunners(config.runners);
+  if (norm.ok) {
+    for (const cfg of Object.values(norm.value)) {
+      if (isMoneyClass(cfg)) return true;
+    }
+  }
+  const policy = config.policy;
+  if (isPlainObject(policy) && Array.isArray(policy.require_for)) {
+    for (const entry of policy.require_for) {
+      if (isPlainObject(entry) && Array.isArray(entry.classes) &&
+          entry.classes.some((c) => MONEY_CLASSES.has(c))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -114,8 +186,34 @@ function validateConfig(config) {
     errors.push(`'require_money_idempotency' must be true or false, got ${typeOf(config.require_money_idempotency)}`);
   }
 
+  // A4 (v0.15): opt-in strict flag. When money-looking code is detected with no money
+  // policy configured, this turns the heuristic FLAG into a blocking FAIL.
+  if ('require_money_policy_when_detected' in config && typeof config.require_money_policy_when_detected !== 'boolean') {
+    errors.push(`'require_money_policy_when_detected' must be true or false, got ${typeOf(config.require_money_policy_when_detected)}`);
+  }
+
+  // MS (v0.15): does this repo carry any money policy? Computed once, used to tighten
+  // the mutation block (below) and each money-class runner (in validateRunner).
+  const moneyPolicy = hasMoneyPolicy(config);
+
   if ('mutation' in config) {
     validateMutation(config.mutation, errors);
+    // MS money-aware mutation caps: under a money policy the mutation gate must BLOCK,
+    // and the equivalent-mutant allowlist + suppression ratio cannot be loosened to
+    // neutralize a real money survivor. Closes the "advisory mutation on money" and
+    // "suppress every survivor" carve-outs.
+    if (moneyPolicy && isPlainObject(config.mutation)) {
+      const mut = config.mutation;
+      if (mut.mode !== 'blocking') {
+        errors.push(`mutation.mode must be 'blocking' under a money policy (advisory mutation lets a money survivor ship green); set mode: blocking`);
+      }
+      if (Array.isArray(mut.allowlist) && mut.allowlist.length > MONEY_ALLOWLIST_CAP) {
+        errors.push(`mutation.allowlist has ${mut.allowlist.length} entries; a money policy caps it at ${MONEY_ALLOWLIST_CAP} (an open-ended allowlist suppresses every real money survivor)`);
+      }
+      if ('max_suppression_ratio' in mut && typeof mut.max_suppression_ratio === 'number' && mut.max_suppression_ratio > 0.5) {
+        errors.push(`mutation.max_suppression_ratio must be at most 0.5 under a money policy (a higher cap re-enables wholesale survivor suppression); got ${mut.max_suppression_ratio}`);
+      }
+    }
   }
 
   if ('policy' in config) {
@@ -237,6 +335,18 @@ function validateMutation(mut, errors) {
     const n = mut.min_mutants;
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) {
       errors.push('mutation.min_mutants must be a positive integer');
+    } else if (n > MAX_MIN_MUTANTS) {
+      // F8 (v0.15): a high floor pins `total < min_mutants` to NEUTRAL forever, which
+      // silently disables the gate while looking like "cannot judge".
+      errors.push(`mutation.min_mutants must be at most ${MAX_MIN_MUTANTS}; a higher floor pins the gate to NEUTRAL forever (cannot judge) and silently disables it. Omit the mutation block to skip mutation, do not set an unreachable floor.`);
+    }
+  }
+  if ('max_suppression_ratio' in mut) {
+    // F6 (v0.15): the fraction of in-scope survivors that may be allowlisted before
+    // the advisory gate flags the suppression as suspicious.
+    const r = mut.max_suppression_ratio;
+    if (typeof r !== 'number' || r < 0 || r > 1) {
+      errors.push('mutation.max_suppression_ratio must be a number between 0 and 1');
     }
   }
   if ('allowlist' in mut && !isArrayOfStrings(mut.allowlist)) {
@@ -345,6 +455,26 @@ function validateRunner(name, cfg, errors) {
   if ('quarantined' in cfg && typeof cfg.quarantined !== 'boolean') {
     errors.push(`${where}: 'quarantined' must be true or false`);
   }
+  // F1 (v0.15): a quarantine must be dated, may set a TTL, and can never hide a money
+  // failure. quarantined_since lets it expire; the orchestrator re-blocks an expired one.
+  if ('quarantine_ttl_days' in cfg) {
+    const d = cfg.quarantine_ttl_days;
+    if (typeof d !== 'number' || !Number.isInteger(d) || d < 1 || d > 90) {
+      errors.push(`${where}: 'quarantine_ttl_days' must be an integer 1..90`);
+    }
+  }
+  if (cfg.quarantined === true) {
+    if (isMoneyClass(cfg)) {
+      errors.push(`${where}: 'quarantined: true' is forbidden on class '${cfg.class}' (a money/contract test failure can never be muted)`);
+    }
+    if (!('quarantined_since' in cfg)) {
+      errors.push(`${where}: 'quarantined: true' requires 'quarantined_since' (an ISO date) so the quarantine can expire`);
+    } else if (parseIsoDateUtc(cfg.quarantined_since) === null) {
+      errors.push(`${where}: 'quarantined_since' is not a parseable ISO date (use YYYY-MM-DD or a full ISO timestamp), got '${cfg.quarantined_since}'`);
+    }
+  } else if ('quarantined_since' in cfg || 'quarantine_ttl_days' in cfg) {
+    errors.push(`${where}: 'quarantined_since'/'quarantine_ttl_days' require 'quarantined: true'`);
+  }
   if ('invariant' in cfg) {
     const inv = cfg.invariant;
     if (!isArrayOfStrings(inv) || inv.length === 0) {
@@ -375,6 +505,28 @@ function validateRunner(name, cfg, errors) {
     errors.push(`${where}: 'inventory_cmd' requires 'inventory_format' so fqe knows how to read its output`);
   }
 
+  // MS (v0.15): a money/contract runner is strict by default. It must be required,
+  // must prove its tests ran (report), must reconcile, must use strict_coverage, and
+  // may not be quarantined. Loosening any of these FAILS validation loudly; the gate
+  // refuses to run rather than silently weaken on a money path.
+  if (isMoneyClass(cfg)) {
+    if (cfg.required !== true) {
+      errors.push(`${where}: a money/contract runner must be 'required: true' (a money test that can be skipped is not a gate)`);
+    }
+    if (!('report' in cfg)) {
+      errors.push(`${where}: a money/contract runner must declare 'report: junit:<path>' so fqe can prove its tests actually ran`);
+    }
+    if (cfg.strict_coverage !== true) {
+      errors.push(`${where}: a money/contract runner must set 'strict_coverage: true' (a partial money suite must block, not flag)`);
+    }
+    if (cfg.reconcile !== true) {
+      errors.push(`${where}: a money/contract runner must set 'reconcile: true' (so a mis-scoped money suite is caught)`);
+    }
+    if (cfg.quarantined === true) {
+      errors.push(`${where}: a money/contract runner can never be 'quarantined' (a muted money failure is a silent loss)`);
+    }
+  }
+
   // Firing rule: a runner with neither a non-empty 'when' nor 'always_run: true'
   // can never fire. That is the silent no-op the permissive parser used to hide.
   // Only report it once the runner is otherwise well-formed: a runner with a
@@ -389,4 +541,8 @@ function validateRunner(name, cfg, errors) {
   }
 }
 
-module.exports = { validateConfig, TOP_LEVEL_KEYS, RUNNER_KEYS };
+module.exports = {
+  validateConfig, TOP_LEVEL_KEYS, RUNNER_KEYS, MUTATION_KEYS,
+  MONEY_CLASSES, MONEY_ALLOWLIST_CAP, MAX_MIN_MUTANTS,
+  hasMoneyPolicy, isMoneyClass, parseIsoDateUtc,
+};

@@ -83,8 +83,14 @@ test('config: invariant must be a non-empty list of strings', () => {
 });
 
 test('config: a valid invariant + require_money_idempotency validates', () => {
+  // v0.15: a money-class runner is strict by default, so it must carry coverage evidence
+  // (report + reconcile + strict_coverage + inventory). Supply them for a valid money runner.
   const res = validateConfig(base(
-    { class: 'money', required: true, invariant: ['idempotency', 'double-spend'] },
+    {
+      class: 'money', required: true, invariant: ['idempotency', 'double-spend'],
+      report: 'junit:reports/m.xml', reconcile: true, strict_coverage: true,
+      inventory_cmd: 'x', inventory_format: 'count',
+    },
     { require_money_idempotency: true }
   ));
   assert.equal(res.valid, true, res.errors.join('; '));
