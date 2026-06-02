@@ -62,7 +62,7 @@ We label PRs `good-first-issue` when the change is well-scoped and has obvious t
 
 fqe ships as a git tag (`fqe-v<major>.<minor>.<patch>`) plus a moved-tag pointer to the public source. Patch releases (bug fixes) keep the same minor. Minor releases add features under stable invariants. Major releases change invariants and require a migration guide.
 
-The release process is documented in `docs/releasing.md` (TODO for v0.2).
+Release process: bump `cli/package.json` (the single version source the CLI derives from), update `CHANGELOG.md`, tag `fqe-v<x.y.z>`, push the tag, cut a GitHub Release, and sync the private mirror, after CI (`tests` + `FQE Self-Host`) is green on the tagged commit.
 
 ## Maintainers
 

@@ -24,8 +24,9 @@ npx --yes github:booyajones/fqe#fqe-v0.17.0 cli/bin/fqe.js init
 #    command you already use (npm test, pytest, your linter, Stryker).
 #    Start with required: false so nothing blocks while you tune.
 
-# 3. Add the Claude reviewer (advisory). Copy .github/workflows/claude-review.yml
-#    from the fqe repo, then set the secret:
+# 3. (Optional) Add Anthropic's Claude review action for advisory PR comments.
+#    Add a workflow that uses anthropics/claude-code-action (see that action's README),
+#    then set the secret:
 gh secret set ANTHROPIC_API_KEY -R <owner>/<repo>   # paste your Anthropic key
 
 # 4. Validate the config before it can silently disable a check:

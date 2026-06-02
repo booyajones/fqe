@@ -49,6 +49,8 @@ The stdout JSON line shape:
 
 The `runner` field must match the runner's name in `.fqe.yml`. The `exit_code` field must match the actual process exit code (defensive: if they disagree, fqe trusts the actual exit code). The `adversarial_stats` array is optional and only needed for runners that produce statistical eval results.
 
+> **As of v0.14, fqe IGNORES a runner-supplied `ci_95`.** The Wilson interval is recomputed server-side from the raw `n` and `successes`, so a runner cannot submit a fabricated tight interval to slip past the threshold. Emit `n` and `successes` (integers); `ci_95` is optional and shown only as a convenience. Likewise, if the runner declares a `blast_radius` in `.fqe.yml`, that declared class is authoritative and overrides any class the runner emits.
+
 Anything the runner writes to stderr is captured in the receipt evidence section. Anything it writes to stdout that is NOT a parseable JSON object is ignored.
 
 ## A minimal runner

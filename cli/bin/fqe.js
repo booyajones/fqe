@@ -37,6 +37,7 @@ const {
   hashFiles, hashString, REQUESTER_SOURCE_OK, REQUESTER_SOURCES_OK,
 } = require('../lib/receipt');
 const { signReceipt, verifyReceipt } = require('../lib/signature');
+const { aggregateScorecard, renderScorecard } = require('../lib/scorecard');
 const tally = require('../lib/bypass_tally');
 const orchestrator = require('../lib/orchestrator');
 const initLib = require('../lib/init');
@@ -539,6 +540,33 @@ const SUBCOMMANDS = {
       process.exit(0);
     } else {
       die(`unknown receipt subcommand: ${sub}`);
+    }
+  },
+
+  scorecard(args) {
+    // fqe scorecard --dir <receipts-dir> [--format json]
+    // Aggregates a directory of QA-RESULT.yml receipts into the shadow-trial scorecard
+    // (false-red rate, gate wall-time, true catches). A REPORT: always exits 0.
+    const opts = parseFlags(args);
+    const dir = opts.dir || args.find((a) => !a.startsWith('--'));
+    if (!dir) die('scorecard: --dir <receipts-dir> required');
+    let entries;
+    try { entries = fs.readdirSync(dir); }
+    catch (e) { die(`scorecard: cannot read ${dir}: ${e.message}`); }
+    const receipts = [];
+    let skipped = 0;
+    for (const f of entries) {
+      if (!/\.ya?ml$/.test(f)) continue;
+      try { receipts.push(parseReceiptYaml(fs.readFileSync(path.join(dir, f), 'utf8'))); }
+      catch (_) { skipped++; } // a non-receipt or unparseable yml is skipped, not fatal (this is a report)
+    }
+    const card = aggregateScorecard(receipts);
+    if (skipped > 0) card.skipped_unparseable = skipped;
+    if (opts.format === 'json') {
+      process.stdout.write(JSON.stringify(card, null, 2) + '\n');
+    } else {
+      process.stdout.write(renderScorecard(card) + '\n');
+      if (skipped > 0) process.stdout.write(`(${skipped} non-receipt/unparseable file(s) skipped)\n`);
     }
   },
 

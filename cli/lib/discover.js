@@ -200,6 +200,11 @@ function discover(repoDir, config, opts = {}) {
       manifests.packageJsonScripts = JSON.stringify(pj.scripts || {});
     }
   } catch (_) { manifests.packageJsonScripts = ''; }
+  // M3 (v0.18): expose the vitest config file as a marker so a project configured ONLY via
+  // vitest.config.* (no package.json devDep/script) is still detected. vitest is the only
+  // framework whose manifestHit reads configMarker (jest/mocha rely on the manifest; playwright
+  // has its own config fileHit), so only the vitest config name is collected here.
+  manifests.configMarker = files.filter((f) => /(^|\/)vitest\.config\.[mc]?[jt]s$/.test(f)).join('\n');
 
   const detected = detectFrameworks({ files, manifests });
   const runners = (config && config.runners) || {};

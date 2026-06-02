@@ -38,7 +38,7 @@ jobs:
       bypass: ${{ steps.bypass-eligibility.outputs.bypass }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Fetch full history so content-hash binding works for receipts.
           fetch-depth: 0

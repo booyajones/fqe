@@ -1,6 +1,6 @@
 {
   "name": "@finexio/fqe",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Finexio Quality Engine — deterministic CI gate CLI",
   "bin": {
     "fqe": "bin/fqe.js"

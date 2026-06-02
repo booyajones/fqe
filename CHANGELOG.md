@@ -2,6 +2,23 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.0] - 2026-06-02
+
+Tag: `fqe-v0.18.0`. The buildable backlog: the shadow-trial scorecard (the adoption-winning artifact), the last discovery gap, the CI-actions bump, and the doc nits.
+
+### Added
+- **`fqe scorecard --dir <receipts-dir>`** (`cli/lib/scorecard.js`): aggregates a directory of QA-RESULT receipts into the shadow-trial scorecard the red-team named as the precondition for trusting a required gate. Reports the three metrics: false-red rate (fraction of FAILs that were bypassed), gate wall-time (p50/p95/max), and true catches (FAILs that stuck). Plus verdict distribution, bypass count, and modeled human-review minutes. A report, not a gate (always exits 0). `--format json` for machine use.
+
+### Fixed
+- **M3:** a framework configured only via its config file (e.g. `vitest.config.ts` with no `package.json` devDep/script) is now detected — `discover()` populates the `configMarker` the framework's `manifestHit` reads. Previously such a suite was invisible.
+
+### Changed
+- CI actions bumped off the deprecated Node 20: `actions/checkout` and `actions/setup-node` to `@v5` across the workflow templates and the repo's own CI.
+- Doc accuracy: `writing-a-runner` now states `ci_95` is recomputed/ignored since v0.14 and that a config `blast_radius` is authoritative; removed the broken `docs/releasing.md` and `claude-review.yml` references and the stale "628 tests" line.
+
+### Notes
+- 758 tests (757 pass, 1 Windows-symlink skip). The false-red signal is the deterministic proxy "a FAIL that a human bypassed"; the wall-time ratio target needs the team's own CI baseline, which is not in the receipt, so the scorecard reports the gate's own time and leaves the ratio to the operator.
+
 ## [0.17.0] - 2026-06-02
 
 Tag: `fqe-v0.17.0`. Full-codebase adversary sweep + hardening. Prompted by "are you sure there is nothing else to do?", three adversaries audited the WHOLE codebase (not just diffs) — the per-version reviews had only ever seen diffs. They found a CRITICAL silent-pass, three HIGH fail-opens, and extensive doc drift, none diff-catchable.
