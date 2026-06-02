@@ -2,6 +2,30 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.17.0] - 2026-06-02
+
+Tag: `fqe-v0.17.0`. Full-codebase adversary sweep + hardening. Prompted by "are you sure there is nothing else to do?", three adversaries audited the WHOLE codebase (not just diffs) — the per-version reviews had only ever seen diffs. They found a CRITICAL silent-pass, three HIGH fail-opens, and extensive doc drift, none diff-catchable.
+
+### Fixed (fail-closed)
+- **CRITICAL: an empty UAT spec is no longer a silent PASS.** `evaluateUat` now FAILs (coverage 0) when a spec declares zero criteria, at the source, so neither the YAML nor the JSON parser branch can mint a green from nothing (the YAML branch guarded this; the JSON branch did not).
+- **The signing key is stripped from runner subprocesses.** Runner + inventory_cmd subprocesses ran with the full `process.env`, exposing `FQE_SIGNING_KEY` (and other CI secrets) to PR-controlled commands, which could exfiltrate the key and forge signed receipts. They now get a sanitized env with secret-named vars removed.
+- **Bypass-rate undercount fixed.** A bypass row with a missing/unparseable timestamp was silently dropped from the rolling-rate numerator (a way to keep the abuse alarm quiet). It now counts (fail closed toward detection); undatable totals do not dilute the denominator.
+- **`.fqeignore` no longer over-matches.** A bare pattern (`src`) matched any prefix (`src_test.py`), which could hide whole test suites from discovery. It now matches only the exact path or a path-segment boundary.
+- **Oracle/golden/config matching is case-insensitive**, so a case-variant rename (`.FQE.YML`, `*.GOLDEN`) on a case-insensitive filesystem can no longer evade the tamper guard.
+- **A malformed lcov payload (`LH:xyz`) is UNREADABLE, not 0** (no longer coerced via `|| 0` into a confident wrong coverage number).
+- **Source hygiene:** removed two literal NUL bytes from `orchestrator.js` (`computeContentHash` used a raw `0x00` delimiter instead of the `\0` escape; same hash, but it made the file read as binary to grep/editors). Added a guard test that fails if any source file ever contains a NUL byte.
+- **Receipt signing key_id check is unconditional** (an absent key_id no longer skips the check); `key_id` is domain-separated. The signed tuple now explicitly includes `bypass` (override authority).
+
+### Changed
+- **Version drift root cause removed.** `bin/fqe.js` and `lib/explain.js` no longer hardcode the version (explain.js was stuck at 0.7.0 and printed it at runtime); both derive it from `package.json`, the single source of truth.
+- **Docs honesty pass:** 27 stale install/pin tags updated to `fqe-v0.17.0`; stale test counts (162/407/613/740) and version badges corrected; the removed `fqe-bypass` label is replaced with the `/fqe-bypass` comment everywhere; the architecture doc's stale Events-API identity path and a broken `validateCtx` reference are corrected; the Docker image org is consistent (`ghcr.io/booyajones/fqe`).
+
+### Added
+- opt-in `require_nonempty_gate` (shipped in 0.16; documented). `cli/test/hardening_v017.test.js` + `source_hygiene.test.js`. 749 tests (748 pass, 1 Windows-symlink skip).
+
+### Notes
+- Confirmed clean by the sweep: bypass_guard, golden, reconcile, trace, junit, inventory, qa_report, and the core verdict / bypass-identity / prototype-pollution / command-injection defenses all held. One audit finding (runner stdout in the receipt) was verified a false positive: stdout is captured for line-parsing but never serialized into the receipt or Check Run.
+
 ## [0.16.0] - 2026-06-02
 
 Tag: `fqe-v0.16.0`. Trust hardening: the receipt goes from tamper-EVIDENT (a hash) to tamper-PROOF (a signature), closing the red-team's "a bare hash is compliance theater" objection. Plus an opt-in empty-gate guard.

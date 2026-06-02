@@ -55,7 +55,7 @@ const reconcileLib = require('../lib/reconcile');
 const discoverLib = require('../lib/discover');
 const baselineLib = require('../lib/baseline');
 
-const FQE_VERSION = '0.16.0';
+const FQE_VERSION = require('../package.json').version; // single source of truth (package.json)
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)

@@ -77,7 +77,12 @@ const DEFAULT_TEST_PATTERNS = Object.freeze([
 const NON_SOURCE_PATTERNS = ['**/*.md', '**/*.markdown', '**/*.txt', '**/LICENSE'];
 
 function matchAny(file, patterns) {
-  return patterns.some((p) => fileMatches(file, p));
+  // M1 (v0.17): match case-INSENSITIVELY. Oracle/golden/config names (.fqe.yml, *.golden,
+  // coverage-baseline.json) are fixed, and on a case-insensitive filesystem (macOS, Windows)
+  // a case-variant rename (.FQE.YML, *.GOLDEN) is the SAME file but evaded the tamper guard,
+  // letting a grading-oracle edit self-approve. Lowercasing both closes that.
+  const lf = String(file).toLowerCase();
+  return patterns.some((p) => fileMatches(lf, String(p).toLowerCase()));
 }
 
 /**

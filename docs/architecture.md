@@ -29,7 +29,7 @@ That API returns the server-recorded `actor.login` field for each `labeled` even
 
 **Why this matters:** an earlier design (gauntlet round 5) put the bypass requester in the receipt and read it back at second-approve time. The receipt lived in the PR branch. An adversarial bypass requester could have written `bypass.requester: alice` while actually being `bob`, then had Bob approve. The same-actor anti-collusion check would have passed. The fix was to source identity only from server-recorded GitHub events.
 
-**Code that enforces this:** `cli/lib/receipt.js` `validateCtx` throws if `bypass.requester_source` is not literally `github_events_api_v3`. `cli/lib/explainer.js` `parseReceiptYaml` re-validates the same field on read.
+**Code that enforces this:** `cli/lib/receipt.js` `buildReceipt` (via `validateCtx`) and `parseReceiptYaml` both reject a `bypass.requester_source` that is not a server-recorded GitHub source. The current bypass path is the SHA-bound `/fqe-bypass` PR comment, so the accepted sources are `github_comments_api_v3` (comment author) and `github_events_api_v3` (legacy labeled-event actor); identity never comes from a PR-branch file.
 
 ### Invariant 2: No LLM is in the verdict path
 

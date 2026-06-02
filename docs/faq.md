@@ -48,9 +48,10 @@ The only way fqe blocks your PR is if a runner you configured returned a non-zer
 
 ## How do I bypass the gate?
 
-Add the `fqe-bypass` label to your PR. Caveats:
+Post a SHA-bound PR comment: `/fqe-bypass <head-sha> <24h|48h|72h>`. (The old unbounded `fqe-bypass` label was removed in v0.4.0.) Caveats:
 
 1. You must be on the `.github/fqe-bypass-allowlist.yml` list at the PR's BASE commit (a PR cannot add itself to the list).
+1b. The `<head-sha>` must equal the live head SHA, so any new push invalidates the bypass; it also expires on the stated TTL.
 2. Every bypass is logged in `bypass-tally.jsonl`.
 3. If the rolling 14-day bypass rate exceeds 10%, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer adds the `fqe-second-approved` label.
 
@@ -85,7 +86,7 @@ Then remove `fqe/pass` and `fqe/second-reviewer-required` from your branch prote
 
 ## What's the upgrade path?
 
-Tags follow semver: `fqe-v<major>.<minor>.<patch>`. To upgrade, find the new tag in github.com/booyajones/fqe, then update the `FQE_TAG="fqe-v0.13.0"` line in `.github/workflows/fqe-quality.yml`. Major versions ship a migration guide in `docs/MIGRATIONS.md`.
+Tags follow semver: `fqe-v<major>.<minor>.<patch>`. To upgrade, find the new tag in github.com/booyajones/fqe, then update the `FQE_TAG="fqe-v0.17.0"` line in `.github/workflows/fqe-quality.yml`. Breaking changes are called out per release in `CHANGELOG.md`.
 
 ## Who maintains it?
 

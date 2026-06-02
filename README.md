@@ -2,14 +2,14 @@
 
 **A CI gate that runs the checks you already have, refuses to let humans skip them, and emits a tamper-evident receipt of what was checked.**
 
-[![tests](https://img.shields.io/badge/tests-613%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.13.0-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-749%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.17.0-blue)](CHANGELOG.md)
 
 fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in 160 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.13.0 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.17.0 cli/bin/fqe.js init
 git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
@@ -180,7 +180,7 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.13.0.** 613 tests passing (1 Windows-symlink skip), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.17.0.** 749 tests passing (1 Windows-symlink skip), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 
 **Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
@@ -194,7 +194,7 @@ These are the honest gaps as of 0.13.0. The architectural invariants are real an
 
 2. **The mutation judge ships ADVISORY by default.** Surviving mutants are a FLAG, not a block, on purpose, so it never sprays false reds before you have measured the false-red rate on your own repo. Ratchet it to `blocking` once that rate is near zero. Its real CI-time and false-positive rate on a given repo are an operational measurement, not a published number.
 
-3. **The receipt is content-hashed, not cryptographically signed.** It is tamper-evident (any edit changes the hash) but not yet signed. HMAC or Sigstore signing with `fqe receipt verify` is a planned hardening.
+3. **The receipt is content-hashed and signable.** It is tamper-evident (any edit changes the hash) and, as of v0.16.0, can be cryptographically signed: `fqe receipt sign` / `fqe receipt verify` (HMAC-SHA256 over the commit + content-hash + inputs + verdict + bypass tuple, fail-closed on tamper). Sigstore keyless signing (OIDC, non-repudiable) is documented as a CI recipe in [docs/recipes/receipt-signing.md](docs/recipes/receipt-signing.md). The HMAC signing key must be kept out of untrusted runner subprocesses (fqe strips it from the runner env).
 
 4. **The default install pins a git tag, which is force-pushable.** For production, pin to a commit SHA. See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned).
 

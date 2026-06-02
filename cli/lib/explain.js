@@ -19,7 +19,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 
-const FQE_VERSION = '0.7.0';
+// Single source of truth: the version lives only in package.json. Hardcoding it here (it
+// was stale at 0.7.0 while the package was 0.16.0, and printed to users by `fqe explain`)
+// is the root cause of version drift. Derive it so it can never go stale again.
+const FQE_VERSION = require('../package.json').version;
 
 const INVARIANTS = [
   {
@@ -134,7 +137,7 @@ function explain(opts = {}) {
     },
     sources: {
       public_repo: 'https://github.com/booyajones/fqe',
-      tag: 'fqe-v0.7.0',
+      tag: `fqe-v${FQE_VERSION}`,
       verdict_source: 'cli/lib/verdict.js',
       audit_source: 'cli/lib/explain.js',                // this file (what you just ran)
       failure_explainer_source: 'cli/lib/explainer.js',  // renders fail/flag explanations

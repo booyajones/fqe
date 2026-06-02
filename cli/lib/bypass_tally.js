@@ -117,10 +117,29 @@ function rate(stateDir, opts = {}) {
   const bypasses = readJsonl(path.join(stateDir, BYPASS_FILE));
   const totals = readJsonl(path.join(stateDir, TOTAL_FILE));
 
-  const numerator = bypasses.filter(b => new Date(b.ts) >= cutoff && new Date(b.ts) <= now).length;
-  const denominator = totals.filter(t => new Date(t.ts) >= cutoff && new Date(t.ts) <= now).length;
-  const r = denominator === 0 ? 0 : numerator / denominator;
-  return { numerator, denominator, rate: r, window_days: windowDays, computed_at: now.toISOString() };
+  // H1 (v0.17): a bypass row with a missing/unparseable `ts` must NOT silently vanish from
+  // the numerator (that would let someone keep the abuse alarm quiet by appending undatable
+  // bypass rows). Count an undatable bypass into the numerator: fail closed toward detection,
+  // it can only raise the observed rate, never lower it. Totals (the denominator) exclude
+  // undatable rows so an undatable total cannot dilute the rate.
+  const cutMs = cutoff.getTime();
+  const nowMs = now.getTime();
+  const numerator = bypasses.filter((b) => {
+    const d = new Date(b && b.ts).getTime();
+    if (!Number.isFinite(d)) return true; // undatable bypass: count it (conservative)
+    return d >= cutMs && d <= nowMs;
+  }).length;
+  const denominator = totals.filter((t) => {
+    const d = new Date(t && t.ts).getTime();
+    return Number.isFinite(d) && d >= cutMs && d <= nowMs;
+  }).length;
+  // H2 (v0.17): if there are bypasses but NO datable totals to divide by (empty/undatable
+  // total-tally, or a deleted file), do NOT report rate 0 — that would silence the abuse
+  // alarm exactly when the denominator is untrustworthy. Report the worst case (1.0) so the
+  // `rate > threshold` check fires. `tally_alarm` makes the condition explicit for callers.
+  const tally_alarm = denominator === 0 && numerator > 0;
+  const r = denominator === 0 ? (numerator > 0 ? 1 : 0) : numerator / denominator;
+  return { numerator, denominator, rate: r, tally_alarm, window_days: windowDays, computed_at: now.toISOString() };
 }
 
 module.exports = {

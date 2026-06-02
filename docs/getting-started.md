@@ -7,7 +7,7 @@
 In any git repo with a `main` or `master` branch:
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.13.0 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.17.0 cli/bin/fqe.js init
 ```
 
 This creates:
@@ -59,11 +59,11 @@ First, install the CLI so you have an `fqe` binary on your PATH. Two options:
 ```bash
 # Option A: clone and link (recommended for iteration)
 git clone https://github.com/booyajones/fqe.git ~/.local/share/fqe
-cd ~/.local/share/fqe && git checkout fqe-v0.13.0
+cd ~/.local/share/fqe && git checkout fqe-v0.17.0
 npm link --prefix ~/.local/share/fqe/cli   # adds `fqe` to PATH
 
 # Option B: one-off via npx (no install, slower)
-alias fqe='npx --yes github:booyajones/fqe#fqe-v0.13.0 cli/bin/fqe.js'
+alias fqe='npx --yes github:booyajones/fqe#fqe-v0.17.0 cli/bin/fqe.js'
 ```
 
 Then, from any repo with a `.fqe.yml`:
@@ -104,7 +104,7 @@ fqe run --full --base origin/main --output ./out/ && cat ./out/runner-node-tests
 5. **Do not allow bypassing**, check this if you want admins to also be gated (recommended).
 6. Save.
 
-Now `main` cannot accept a merge without a green `fqe/pass`. To bypass in an emergency, add the `fqe-bypass` label to your PR (you must be on the allowlist).
+Now `main` cannot accept a merge without a green `fqe/pass`. To bypass in an emergency, an allowlisted maintainer posts a SHA-bound PR comment: `/fqe-bypass <head-sha> <24h|48h|72h>`. The named SHA must equal the live head (any new push invalidates it), it expires on the TTL, and every bypass is logged. (The old unbounded `fqe-bypass` label was removed in v0.4.0.)
 
 ## What the gate doesn't do until you configure it
 
@@ -115,7 +115,7 @@ Empty `.fqe.yml` (or a `.fqe.yml` with all suggestions still commented out) mean
 For JS/TS repos that want the modern AI quality stack (Stryker mutation testing wired as a fqe runner, with Wilson-CI-bounded survival rate as the verdict), add the `--with-mutation` flag:
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.13.0 cli/bin/fqe.js init --with-mutation
+npx --yes github:booyajones/fqe#fqe-v0.17.0 cli/bin/fqe.js init --with-mutation
 npm install --save-dev @stryker-mutator/core
 ```
 
@@ -123,7 +123,7 @@ This drops in `stryker.conf.json`, `scripts/fqe_stryker_runner.js`, and a `stryk
 
 ## Production install (SHA-pinned)
 
-The default install command in Step 1 uses `fqe-v0.13.0`, a git tag. Tags can be force-pushed, so if upstream's tag is moved (accidentally or maliciously) every repo running the tag-pinned install picks up the new code on the next CI run.
+The default install command in Step 1 uses `fqe-v0.17.0`, a git tag. Tags can be force-pushed, so if upstream's tag is moved (accidentally or maliciously) every repo running the tag-pinned install picks up the new code on the next CI run.
 
 For production, pin to a commit SHA instead. Find the SHA for the release you want at https://github.com/booyajones/fqe/releases, then:
 

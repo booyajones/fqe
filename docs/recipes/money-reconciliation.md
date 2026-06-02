@@ -93,7 +93,7 @@ jobs:
       - name: reconcile or halt
         run: |
           set +e
-          npx --yes github:booyajones/fqe#fqe-v0.8.0 cli/bin/fqe.js \
+          npx --yes github:booyajones/fqe#fqe-v0.17.0 cli/bin/fqe.js \
             reconcile --ledger ledger.json
           RC=$?; set -e
           # 0 = balanced. 2 = HALT. anything else = could not run, fail closed.

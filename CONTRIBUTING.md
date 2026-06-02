@@ -14,7 +14,7 @@ fqe is the QA gate Finexio uses on its production repos. It exists because we lo
 git clone https://github.com/booyajones/fqe.git
 cd fqe/cli
 npm install
-node --test test/   # 162 tests, runs in ~10s
+node --test test/   # 749 tests
 node bin/fqe.js explain   # see the staff-engineer audit
 ```
 

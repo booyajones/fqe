@@ -1,20 +1,20 @@
-# Dockerfile for ghcr.io/finexio/fqe:0.1
+# Dockerfile for ghcr.io/booyajones/fqe:0.1
 #
 # Closes gauntlet 11f9c0 flaw: "Container supply-chain not pinned/verified."
 #
 # Build:
-#   docker build -t ghcr.io/finexio/fqe:0.1 .
+#   docker build -t ghcr.io/booyajones/fqe:0.1 .
 #
 # Local smoke (no push):
-#   docker run --rm -v "$PWD:/workspace" ghcr.io/finexio/fqe:0.1 fqe version
+#   docker run --rm -v "$PWD:/workspace" ghcr.io/booyajones/fqe:0.1 fqe version
 #
 # Pin in production by digest, not tag:
-#   docker pull ghcr.io/finexio/fqe:0.1
-#   docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/finexio/fqe:0.1
-#   # Then in workflows: image: ghcr.io/finexio/fqe@sha256:<digest>
+#   docker pull ghcr.io/booyajones/fqe:0.1
+#   docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/booyajones/fqe:0.1
+#   # Then in workflows: image: ghcr.io/booyajones/fqe@sha256:<digest>
 #
 # Sign with cosign (Phase 1.2 deliverable):
-#   cosign sign --yes ghcr.io/finexio/fqe@sha256:<digest>
+#   cosign sign --yes ghcr.io/booyajones/fqe@sha256:<digest>
 #   # Workflows verify with: cosign verify --certificate-identity=...
 
 # ─── Base: Debian slim with Python and Node ─────────────────────────────

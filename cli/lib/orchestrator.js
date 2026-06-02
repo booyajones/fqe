@@ -425,6 +425,32 @@ function reportPathOf(cfg, repoDir) {
   return path.resolve(repoDir || process.cwd(), m[1].trim());
 }
 
+// HIGH-1 (v0.17): runner + inventory subprocesses run PR-controlled commands from .fqe.yml.
+// They must NOT inherit fqe's own signing key or other CI secrets, or a malicious runner
+// could exfiltrate FQE_SIGNING_KEY and forge signed receipts (defeating v0.16 signing). Strip
+// secret-named env vars by a denylist before spawn; GitHub masks values, but the key must
+// never reach an untrusted child at all. Non-secret vars (PATH, HOME, CI, NODE_*, FQE_* run
+// context) pass through.
+// `_KEY` is a substring (not `_KEY$`) so AWS_ACCESS_KEY_ID and other *_KEY_* names are
+// caught, not just names ending in _KEY. ACCESS_KEY/KEY_ID added for the AWS pair.
+const SECRET_ENV_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|_KEY|KEY_ID|ACCESS_KEY|APIKEY|SIGNING|SESSION)/i;
+function sanitizeRunnerEnv(extra) {
+  const out = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (SECRET_ENV_RE.test(k)) continue;
+    out[k] = v;
+  }
+  // Apply the SAME filter to the explicit extras, so a future caller cannot accidentally
+  // re-inject a secret-named var (e.g. sanitizeRunnerEnv({ FQE_SIGNING_KEY })) past the strip.
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (SECRET_ENV_RE.test(k)) continue;
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 /**
  * Run the inventory_cmd (a shell string, e.g. `pytest --collect-only -q`) and
  * capture stdout. Returns null when no inventory_cmd is declared.
@@ -438,7 +464,7 @@ function runInventoryCmd(cfg, ctx) {
     encoding: 'utf8',
     cwd: ctx.repoDir || process.cwd(),
     timeout: cfg.timeout_ms || DEFAULT_TIMEOUT_MS,
-    env: { ...process.env },
+    env: sanitizeRunnerEnv(),
   });
   if (r.status !== 0) {
     return { ok: false, stdout: r.stdout || '', error: `inventory_cmd exited ${r.status === null ? 'by signal/timeout' : r.status}` };
@@ -536,7 +562,7 @@ function runOne(name, cfg, ctx) {
       timeout: cfg.timeout_ms || DEFAULT_TIMEOUT_MS,
       encoding: 'utf8',
       cwd: ctx.repoDir || process.cwd(),
-      env: { ...process.env, FQE_RUNNER_NAME: name, FQE_ATTEMPT: String(attempt) },
+      env: sanitizeRunnerEnv({ FQE_RUNNER_NAME: name, FQE_ATTEMPT: String(attempt) }),
     });
     const code = typeof r.status === 'number' ? r.status : null;
     attempts.push(code);
@@ -592,9 +618,9 @@ function computeContentHash(files, repoDir) {
     const stat = fs.statSync(abs);
     if (!stat.isFile()) continue;
     h.update(f);
-    h.update(' ');
+    h.update('\0');
     h.update(fs.readFileSync(abs));
-    h.update(' ');
+    h.update('\0');
   }
   return `sha256:${h.digest('hex')}`;
 }
@@ -916,4 +942,5 @@ module.exports = {
   assembleCoverage,
   quarantineExpired,
   readChangedFileContents,
+  sanitizeRunnerEnv,
 };

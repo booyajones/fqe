@@ -217,12 +217,15 @@ const cases = [
     },
   },
   {
-    name: 'empty criteria -> PASS, coverage 100',
+    // C1 (v0.17): zero criteria is NOT 100% coverage. A spec with nothing to verify must
+    // never mint a green; it fails closed. (Was PASS/100 pre-v0.17 — that was the hole.)
+    name: 'empty criteria -> FAIL, coverage 0 (cannot mint a green from nothing)',
     input: { criteria: [] },
-    expected: PASS,
+    expected: FAIL,
     check: (r) => {
       assert.equal(r.total, 0);
-      assert.equal(r.coverage_pct, 100);
+      assert.equal(r.coverage_pct, 0);
+      assert.ok(r.reasons.some((x) => /zero criteria/.test(x)), r.reasons.join(' | '));
     },
   },
 ];
@@ -278,9 +281,10 @@ test('coverage_pct: 2 of 3 rounds to 66.7', () => {
   assert.equal(r.coverage_pct, 66.7);
 });
 
-test('coverage_pct: 0 of 0 = 100', () => {
+test('coverage_pct: 0 of 0 = 0 and FAIL (C1: zero criteria cannot be 100% covered)', () => {
   const r = evaluateUat({ criteria: [] });
-  assert.equal(r.coverage_pct, 100);
+  assert.equal(r.coverage_pct, 0);
+  assert.equal(r.verdict, 'FAIL');
 });
 
 // ---------------------------------------------------------------------------

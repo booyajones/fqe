@@ -141,8 +141,18 @@ function parseLcov(text) {
   let found = 0;
   let hit = 0;
   for (const line of text.split(/\r?\n/)) {
-    if (line.startsWith('LF:')) found += parseInt(line.slice(3), 10) || 0;
-    else if (line.startsWith('LH:')) hit += parseInt(line.slice(3), 10) || 0;
+    // M2 (v0.17): a malformed LF/LH payload (e.g. `LH:xyz`) must mark the report UNREADABLE
+    // (return null -> the CLI fails closed as COVERAGE_REPORT_UNREADABLE), not silently coerce
+    // to 0 via `|| 0`, which would fabricate a confident wrong number from a garbled report.
+    if (line.startsWith('LF:')) {
+      const n = parseInt(line.slice(3), 10);
+      if (!Number.isInteger(n) || n < 0) return null;
+      found += n;
+    } else if (line.startsWith('LH:')) {
+      const n = parseInt(line.slice(3), 10);
+      if (!Number.isInteger(n) || n < 0) return null;
+      hit += n;
+    }
   }
   if (found === 0) return null;
   return round2((hit / found) * 100);

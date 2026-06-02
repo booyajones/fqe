@@ -115,17 +115,23 @@ function evaluateUat(o) {
 
   const total = criteria.length;
   const covered = automatedCovered + manualCovered;
-  const coverage_pct = total === 0 ? 100 : round1((covered / total) * 100);
+  // C1 (v0.17): zero criteria is NOT 100% coverage. A UAT spec that declares nothing to
+  // verify must never mint a green. Fail closed at the source, so neither the YAML nor the
+  // JSON parser branch can turn an empty (or upstream-dropped) criteria list into a PASS.
+  const coverage_pct = total === 0 ? 0 : round1((covered / total) * 100);
 
   let verdict;
-  if (failed.length > 0 || (strict && unverified.length > 0)) verdict = FAIL;
+  if (total === 0) verdict = FAIL;
+  else if (failed.length > 0 || (strict && unverified.length > 0)) verdict = FAIL;
   else if (unverified.length > 0) verdict = FLAG;
   else verdict = PASS;
 
-  const reasons = buildReasons({
-    total, covered, automatedCovered, manualCovered,
-    failed, unverified, coverage_pct, verdict, strict,
-  });
+  const reasons = total === 0
+    ? ['UAT spec declares zero criteria; a gate with nothing to verify fails closed (it cannot be 100% covered)']
+    : buildReasons({
+      total, covered, automatedCovered, manualCovered,
+      failed, unverified, coverage_pct, verdict, strict,
+    });
 
   return {
     total,

@@ -169,7 +169,11 @@ function loadIgnore(repoDir) {
   return (p) => pats.some((pat) => {
     if (pat.endsWith('/')) return p.startsWith(pat) || p.startsWith(pat.replace(/\/$/, '') + '/');
     if (pat.startsWith('*')) return p.endsWith(pat.slice(1));
-    return p === pat || p.startsWith(pat + '/') || p.startsWith(pat);
+    // H2 (v0.17): a bare pattern matches the exact path or a path-SEGMENT boundary only.
+    // The old `p.startsWith(pat)` over-matched (a bare `src` hid `src_test.py`, `srcfoo`),
+    // which could silently remove whole suites from discovery and defeat absence detection.
+    // Use explicit `*`/`/` syntax for prefix/glob matches.
+    return p === pat || p.startsWith(pat + '/');
   });
 }
 

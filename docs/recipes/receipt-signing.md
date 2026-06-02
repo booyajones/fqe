@@ -7,8 +7,8 @@ auditor (SOC2, PCI) is meant to trust, the receipt must be SIGNED. fqe supports 
 ## Layer 1: HMAC-SHA256 (deterministic, offline, built in)
 
 `fqe receipt sign` computes an HMAC over the receipt's canonical field tuple
-(`schema_version`, `fqe_version`, `commit_sha`, `content_hash`, `inputs_hash`, `verdict`) using
-`FQE_SIGNING_KEY`. Because `content_hash` already covers every file at the commit, the signature
+(`schema_version`, `fqe_version`, `commit_sha`, `content_hash`, `inputs_hash`, `verdict`, `bypass`) using
+`FQE_SIGNING_KEY`. Because `content_hash` already covers every file at the commit and `bypass` carries the override authority, the signature
 authenticates the whole claim: at this commit, over this content, with these inputs, the verdict
 was X. `fqe receipt verify` recomputes the HMAC and fails closed (exit 2) on any tamper, a wrong
 key, or a missing signature under `--require-signature`.
