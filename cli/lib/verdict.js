@@ -483,6 +483,20 @@ function computeVerdict(input) {
     }
   }
 
+  // Pass 12: empty/hollow gate (v0.16, F2, opt-in). With require_nonempty_gate set, a gate
+  // that has no teeth (no required runner, no required test class, no money-idempotency
+  // requirement) FAILs instead of minting a green that protects nothing. Additive; opt-in so
+  // the documented "no runners = PASS" default is unchanged unless the operator turns it on.
+  if (input.require_nonempty_gate === true) {
+    const hasRequiredRunner = Array.isArray(input.runners) && input.runners.some((r) => r && r.required === true);
+    const hasRequiredClass = Array.isArray(input.require_classes) && input.require_classes.length > 0;
+    const hasMoneyReq = input.require_money_idempotency === true || input.require_money_policy_when_detected === true;
+    if (!hasRequiredRunner && !hasRequiredClass && !hasMoneyReq) {
+      hasFail = true;
+      reasons.push('require_nonempty_gate is set but this gate blocks nothing: no required runner, no required test class, and no money-idempotency requirement. A green here would protect nothing.');
+    }
+  }
+
   let verdict;
   if (hasFail) verdict = FAIL;
   else if (hasFlag) verdict = FLAG;

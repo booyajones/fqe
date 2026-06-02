@@ -266,3 +266,7 @@ test('parseIsoDateUtc treats a tz-less date-time as UTC', () => {
   assert.equal(parseIsoDateUtc('2026-05-20'), Date.parse('2026-05-20T00:00:00Z'));
   assert.equal(parseIsoDateUtc('garbage'), null);
 });
+
+// v0.16 F2: require_nonempty_gate
+test('F2: require_nonempty_gate boolean valid', () => { valid({ require_nonempty_gate: true, runners: {} }); });
+test('F2: require_nonempty_gate non-boolean rejected', () => { invalid({ require_nonempty_gate: 'yes', runners: {} }, /true or false/); });

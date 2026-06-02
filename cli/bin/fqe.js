@@ -36,6 +36,7 @@ const {
   buildReceipt, serializeReceipt, parseReceiptYaml, writeReceiptFiles,
   hashFiles, hashString, REQUESTER_SOURCE_OK, REQUESTER_SOURCES_OK,
 } = require('../lib/receipt');
+const { signReceipt, verifyReceipt } = require('../lib/signature');
 const tally = require('../lib/bypass_tally');
 const orchestrator = require('../lib/orchestrator');
 const initLib = require('../lib/init');
@@ -54,7 +55,7 @@ const reconcileLib = require('../lib/reconcile');
 const discoverLib = require('../lib/discover');
 const baselineLib = require('../lib/baseline');
 
-const FQE_VERSION = '0.15.0';
+const FQE_VERSION = '0.16.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -499,6 +500,43 @@ const SUBCOMMANDS = {
       const r = buildReceipt(ctx);
       const { ymlPath, mdPath } = writeReceiptFiles(r, opts.output);
       process.stdout.write(`${ymlPath}\n${mdPath}\n`);
+    } else if (sub === 'sign') {
+      // fqe receipt sign <yml-path>  — HMAC-sign a receipt with FQE_SIGNING_KEY (a CI secret).
+      const p = rest.find((a) => !a.startsWith('--'));
+      if (!p) die('receipt sign: <yml-path> required');
+      const key = process.env.FQE_SIGNING_KEY;
+      if (!key) die('receipt sign: FQE_SIGNING_KEY env var is required (set it as a CI secret)');
+      const parsed = parseReceiptYaml(fs.readFileSync(p, 'utf8'));
+      const signed = signReceipt(parsed, key, parsed.finished_at || null);
+      fs.writeFileSync(p, serializeReceipt(signed).yaml);
+      process.stdout.write(`signed ${p} (alg hmac-sha256, key_id ${signed.signature.key_id})\n`);
+    } else if (sub === 'verify') {
+      // fqe receipt verify <yml-path> [--require-signature]
+      // exit 0 = OK (or no signature without --require-signature); exit 2 = verification FAILED.
+      const p = rest.find((a) => !a.startsWith('--'));
+      if (!p) die('receipt verify: <yml-path> required');
+      const requireSig = rest.includes('--require-signature');
+      const parsed = parseReceiptYaml(fs.readFileSync(p, 'utf8'));
+      if (!parsed.signature) {
+        if (requireSig) {
+          process.stderr.write('receipt verify: FAILED — no signature present (--require-signature)\n');
+          process.exit(2);
+        }
+        process.stdout.write('receipt verify: no signature present (pass --require-signature to require one)\n');
+        process.exit(0);
+      }
+      const key = process.env.FQE_SIGNING_KEY;
+      if (!key) {
+        process.stderr.write('receipt verify: FAILED — FQE_SIGNING_KEY required to verify the signature\n');
+        process.exit(2);
+      }
+      const res = verifyReceipt(parsed, key);
+      if (!res.ok) {
+        process.stderr.write(`receipt verify: FAILED — ${res.reason}\n`);
+        process.exit(2);
+      }
+      process.stdout.write(`receipt verify: OK (key_id ${res.key_id})\n`);
+      process.exit(0);
     } else {
       die(`unknown receipt subcommand: ${sub}`);
     }

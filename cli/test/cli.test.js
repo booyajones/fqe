@@ -523,3 +523,26 @@ test('fqe unknown subcommand exits non-zero', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /unknown subcommand/);
 });
+
+test('fqe receipt sign + verify round-trips through YAML; verify catches a tamper (A3)', () => {
+  const dir = tmpDir();
+  const ctxPath = path.join(dir, 'ctx.json');
+  fs.writeFileSync(ctxPath, JSON.stringify({
+    fqe_version: '0.16.0', run_id: 'cli-sig', started_at: '2026-06-02T00:00:00Z', finished_at: '2026-06-02T00:01:00Z',
+    commit_sha: fortyHex('a'), content_hash: 'sha256:' + 'b'.repeat(64), inputs_hash: 'sha256:' + 'c'.repeat(64),
+    classifier_version: 1, runner_versions: { fqe: '0.16.0' }, runners_fired: ['unit'],
+    runners: [{ name: 'unit', exit_code: 0 }], verdict: 'PASS', verdict_reasons: [],
+  }));
+  const ymlPath = path.join(dir, 'QA-RESULT.yml');
+  fs.writeFileSync(ymlPath, run(['receipt', 'build', ctxPath]).stdout);
+  const prev = process.env.FQE_SIGNING_KEY;
+  process.env.FQE_SIGNING_KEY = 'cli-test-key';
+  try {
+    assert.equal(run(['receipt', 'sign', ymlPath]).status, 0);
+    assert.equal(run(['receipt', 'verify', ymlPath]).status, 0, 'a freshly signed receipt verifies');
+    fs.writeFileSync(ymlPath, fs.readFileSync(ymlPath, 'utf8').replace('verdict: PASS', 'verdict: FAIL'));
+    assert.equal(run(['receipt', 'verify', ymlPath]).status, 2, 'a tampered receipt fails verification (exit 2)');
+  } finally {
+    if (prev === undefined) delete process.env.FQE_SIGNING_KEY; else process.env.FQE_SIGNING_KEY = prev;
+  }
+});

@@ -830,6 +830,7 @@ function run(opts) {
     // was not set explicitly (contract-only does not arm it; that is not money movement).
     require_money_idempotency: config.require_money_idempotency === true || hasMoneyClassRunner,
     require_money_policy_when_detected: config.require_money_policy_when_detected === true,
+    require_nonempty_gate: config.require_nonempty_gate === true,
     money_signal: moneySignal,
     dead_require_for_globs: deadRequireForGlobs,
     mutation: mutationResult,

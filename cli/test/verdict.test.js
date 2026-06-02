@@ -421,3 +421,21 @@ test('V16: verdict.js stays clock-free (no Date usage in the verdict core)', () 
   const src = fs.readFileSync(require.resolve('../lib/verdict'), 'utf8');
   assert.ok(!/new Date|Date\.now|Date\.parse|Date\.UTC|Date\(/.test(src), 'verdict.js must not use a clock');
 });
+
+// ── v0.16 F2: opt-in empty/hollow gate ──
+test('F2: require_nonempty_gate + hollow gate (no required runner/class/money) -> FAIL', () => {
+  const out = computeVerdict({ runners: [{ name: 'opt', required: false, ran: true, exit_code: 0 }], require_nonempty_gate: true });
+  assert.equal(out.verdict, 'FAIL');
+  assert.ok(out.reasons.some((r) => /blocks nothing/.test(r)), out.reasons.join(' | '));
+});
+test('F2: require_nonempty_gate + a required runner -> PASS', () => {
+  const out = computeVerdict({ runners: [{ name: 'unit', required: true, ran: true, exit_code: 0 }], require_nonempty_gate: true });
+  assert.equal(out.verdict, 'PASS');
+});
+test('F2: require_nonempty_gate + a required class (with a passing runner) is not hollow -> PASS', () => {
+  const out = computeVerdict({ runners: [{ name: 'u', required: false, ran: true, exit_code: 0, class: 'unit' }], require_classes: ['unit'], require_nonempty_gate: true });
+  assert.equal(out.verdict, 'PASS');
+});
+test('F2: require_nonempty_gate UNSET + empty runners -> PASS (default unchanged)', () => {
+  assert.equal(computeVerdict({ runners: [] }).verdict, 'PASS');
+});

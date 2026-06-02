@@ -2,6 +2,18 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.16.0] - 2026-06-02
+
+Tag: `fqe-v0.16.0`. Trust hardening: the receipt goes from tamper-EVIDENT (a hash) to tamper-PROOF (a signature), closing the red-team's "a bare hash is compliance theater" objection. Plus an opt-in empty-gate guard.
+
+### Added
+- **Receipt signing** (`cli/lib/signature.js`, `fqe receipt sign` / `fqe receipt verify`). HMAC-SHA256 over a canonical field tuple (`schema_version`, `fqe_version`, `commit_sha`, `content_hash`, `inputs_hash`, `verdict`); `content_hash` already covers every file, so the signature authenticates the full claim. Signing is deterministic (the caller passes `signed_at`; it is metadata, not part of the signed payload) and the tuple is robust to YAML round-trip. `verify` fails closed (exit 2) on any tamper, a wrong key, or a missing signature under `--require-signature`. A `key_id` records which key signed.
+- **Sigstore keyless recipe** (`docs/recipes/receipt-signing.md`): the CI workflow step for OIDC identity-bound, non-repudiable, transparency-logged signing — the SOC2/PCI-grade layer above HMAC.
+- **F2 (opt-in) empty/hollow-gate guard**: with top-level `require_nonempty_gate: true`, a gate with no teeth (no required runner, no required test class, no money-idempotency requirement) FAILs instead of minting a green that protects nothing. Default off, so the documented "no runners = PASS" behavior is unchanged.
+
+### Notes
+- HMAC proves key possession (the CI runner held `FQE_SIGNING_KEY`); Sigstore keyless is the non-repudiation answer and runs in CI. Honest scope documented in the recipe. 740 tests (739 pass, 1 Windows-symlink skip).
+
 ## [0.15.0] - 2026-06-02
 
 Tag: `fqe-v0.15.0`. Money-aware strict profile + foot-gun caps. fqe's fail-closed guarantees were real but opt-in: strict protections defaulted off and the abusable carve-outs were unbounded. v0.15.0 makes money repos safe-by-default and caps the carve-outs. Designed via a parallel agent workflow (one designer per feature, synthesized into one conflict-aware build plan).
