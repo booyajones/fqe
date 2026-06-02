@@ -9,7 +9,7 @@ fqe is an orchestrator. It does not lint, test, or judge. It runs the runners yo
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.7.0 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.13.0 cli/bin/fqe.js init
 git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
@@ -103,7 +103,7 @@ fqe uses Claude in two places, both **around** the gate: it reviews every PR (ad
 | [FAQ](docs/faq.md) | Pre-empts the 10 questions every engineer asks. |
 | [Security](SECURITY.md) | Threat model. What fqe protects against and what it does not. |
 | [Contributing](CONTRIBUTING.md) | PR process and ground rules. |
-| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.7.0). |
+| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.13.0). |
 
 ## Recipes
 
@@ -180,31 +180,27 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.1.0 stable.** 162 tests passing. Validated against three production Finexio repos plus the [vinci1it2000/formulas](https://github.com/vinci1it2000/formulas) test corpus (13,383-formula xlsx). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.13.0.** 613 tests passing (1 Windows-symlink skip), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 
-## Known limitations in 0.1.0 (read this before adopting)
+**Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
-The architectural invariants are real. The implementation does not yet enforce all of them on the hard threats. If you are putting fqe on the critical path of a production repo, you need to know these:
+What each release added: coverage-liveness (v0.9.0, no green over an empty/mis-scoped suite), inter-suite discovery + flaky/quarantine + human-review telemetry (v0.10.0), a mandatory money-idempotency invariant (v0.11.0), contract baseline from an OpenAPI spec (v0.12.0), and an advisory-first mutation-on-diff judge (v0.13.0). See the [Changelog](CHANGELOG.md).
 
-1. **Default install uses a tag, not a SHA.** Git tags are force-pushable, so a maintainer-account compromise can silently change what `fqe-v0.7.0` resolves to. The README install command is tag-pinned for ergonomic onboarding. **For production: pin to a commit SHA.** See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned). The `ghcr.io/finexio/fqe:0.1` Docker image planned for 0.2 will be pinned by digest.
+## Known limitations (read this before adopting on a critical path)
 
-2. **Bypass labels are not bound to the head SHA.** Once an allowlisted user adds `fqe-bypass`, the label persists across subsequent pushes to that PR. If the allowlisted account is compromised mid-PR, the attacker can push malicious commits without re-triggering the gate. **Mitigation today: branch protection rule "Dismiss stale pull request approvals when new commits are pushed" combined with a no-push-after-bypass team norm.** TTL-bound labels with head-SHA binding are the 0.2 fix.
+These are the honest gaps as of 0.13.0. The architectural invariants are real and the earlier bypass/retention limitations are now fixed (head-SHA-bound TTL bypass in 0.4.0, allowlist read at default-branch HEAD and 365-day receipt retention in 0.6.0).
 
-3. **Allowlist is read at the PR's BASE commit, not at `refs/heads/main` HEAD.** This means a long-lived PR branch that diverged before someone was removed from the allowlist still treats that person as allowlisted. **Mitigation today: short-lived PRs and pruning the allowlist on departure.** The 0.2 fix is to fetch the allowlist from the default branch at workflow-run time.
+1. **Proven on third-party OSS and earlier on an internal repo, not yet on a live production service.** The cold-plug proofs run on real third-party repos and the gate caught real bugs on an internal TypeScript service earlier, but the v0.9.0+ capabilities have not yet run against a live production money path. That proof needs a sandbox environment.
 
-4. **Receipt durability is bounded by GitHub artifact retention (90 days default).** The Check Run output text persists with the commit indefinitely but is limited to ~65KB and not exportable in bulk. **For SOX-grade (7-year) retention: mirror receipts to an external object store via a post-merge workflow.** See [docs/recipes/](docs/recipes/) for the pattern, or wait for 0.2 which ships an opt-in `audits/<sha>/` post-merge archiver.
+2. **The mutation judge ships ADVISORY by default.** Surviving mutants are a FLAG, not a block, on purpose, so it never sprays false reds before you have measured the false-red rate on your own repo. Ratchet it to `blocking` once that rate is near zero. Its real CI-time and false-positive rate on a given repo are an operational measurement, not a published number.
 
-5. **The rolling bypass tally writes JSONL to the protected branch from a workflow.** Fork PRs (read-only `GITHUB_TOKEN`) cannot bypass at all, which is intentional. First-party PRs that bypass record to `.github/fqe-state/bypass-tally.jsonl` via a `workflow_run` event after merge, not from the PR's own workflow. **Concurrency:** if two bypasses are recorded inside the same second, the second one rebases on top. Stress-tested up to ~5 concurrent merges. **For higher concurrency:** move state to an external KV in 0.2.
+3. **The receipt is content-hashed, not cryptographically signed.** It is tamper-evident (any edit changes the hash) but not yet signed. HMAC or Sigstore signing with `fqe receipt verify` is a planned hardening.
 
-These are documented because they are real. If they are deal-breakers for your repo, do not enable `fqe/pass` as a required check until 0.2.
+4. **The default install pins a git tag, which is force-pushable.** For production, pin to a commit SHA. See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned).
 
-**Planned for 0.2:**
+5. **The runtime layer (synthetic canaries, shadow replay) ships as recipes, not running code.** Wiring it needs a sandbox endpoint and credentials.
 
-- Docker image (`ghcr.io/finexio/fqe:0.1`) pinned by digest, default install path
-- TTL-bound bypass labels (`fqe-bypass-24h`, `-48h`, `-72h`) with head-SHA binding
-- Allowlist read from `refs/heads/main` at workflow-run time
-- Optional post-merge `audits/<sha>/` archiver for durable receipt retention
-- External KV state backend for bypass tally
+**Planned next:** receipt signing, the runtime/canary layer once a sandbox is available, and ratcheting the mutation gate to blocking after the false-red rate is measured on a real repo.
 - `fqe doctor` subcommand to diagnose environment issues
 - More recipes (Go, Rust, monorepo)
 
