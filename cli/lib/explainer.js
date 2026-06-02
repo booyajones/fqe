@@ -62,8 +62,10 @@ function explainReason(reason, ctx = {}) {
     };
   }
 
-  // Pattern 4: Wilson CI exceeds canonical threshold
-  m = reason.match(/^Wilson CI upper ([\d.]+) exceeds canonical threshold ([\d.]+) for blast_radius=(\S+) on runner=(\S+)$/);
+  // Pattern 4: Wilson CI exceeds canonical threshold (v0.14: now carries an
+  // optional "(recomputed from N/M)" segment because the interval is re-derived
+  // from the raw counts in verdict Pass 3).
+  m = reason.match(/^Wilson CI upper ([\d.]+) (?:\(recomputed from \d+\/\d+\) )?exceeds canonical threshold ([\d.]+) for blast_radius=(\S+) on runner=(\S+)$/);
   if (m) {
     const [, ciUpper, threshold, blast, runner] = m;
     const ciUpperNum = parseFloat(ciUpper);

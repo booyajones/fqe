@@ -16,7 +16,7 @@ git commit -m "Add fqe quality gate"
 
 That's the install. The gate is now live on every PR. To make it actually block merges, add `fqe/pass` to your branch protection's required checks (one click).
 
-> **Before adopting on production-critical repos, read [Known limitations in 0.1.0](#known-limitations-in-010-read-this-before-adopting) below.** The install command above pins to a git tag, which is force-pushable. For production, use the SHA-pinned install in [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned).
+> **Before adopting on production-critical repos, read [Known limitations](#known-limitations-read-this-before-adopting-on-a-critical-path) below.** The install command above pins to a git tag, which is force-pushable. For production, use the SHA-pinned install in [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned).
 
 ## The problem
 

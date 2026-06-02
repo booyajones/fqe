@@ -27,11 +27,19 @@ const SURVIVING = new Set(['Survived', 'Timeout', 'NoCoverage']);
  *             killRate: number|null, perFile: Record<string,{killed:number,surviving:number}> }}
  */
 function parseStryker(report) {
+  // Fail LOUD on an unparseable report. Returning a zeroed tally here used to read
+  // downstream as "0 mutants -> NEUTRAL -> silent pass", which is a fail-open on any
+  // caller that hands raw file content to parseStryker (e.g. the `fqe mutation-gate`
+  // CLI). A corrupt mutation report must block, never quietly pass. (HIGH-1, v0.14.0.)
   let j;
-  try {
-    j = typeof report === 'string' ? JSON.parse(report) : report;
-  } catch {
-    return { total: 0, killed: 0, surviving: 0, killRate: null, perFile: {}, survivors: [] };
+  if (typeof report === 'string') {
+    try {
+      j = JSON.parse(report);
+    } catch (e) {
+      throw new Error(`parseStryker: mutation report is not valid JSON: ${e.message}`);
+    }
+  } else {
+    j = report;
   }
   const files = j && j.files ? j.files : {};
   const perFile = {};

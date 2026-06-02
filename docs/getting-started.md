@@ -95,7 +95,7 @@ fqe run --full --base origin/main --output ./out/ && cat ./out/runner-node-tests
 
 ## Step 5: Make it block merges (one-time GitHub UI change)
 
-`fqe` is non-blocking by default in v0.1. To make `fqe/pass` actually gate merges:
+`fqe` is non-blocking by default until you mark `fqe/pass` as a required check. To make `fqe/pass` actually gate merges:
 
 1. Repo Settings, Branches, click the default branch (main or master).
 2. Edit the protection rule.
@@ -135,7 +135,7 @@ npx --yes "github:booyajones/fqe#${SHA}" cli/bin/fqe.js init
 
 The generated workflow YAML will also pin its `git clone` step to that SHA. To re-pin to a new release later, re-run `init` with the new SHA, or hand-edit `.github/workflows/fqe-quality.yml`.
 
-The 0.2 Docker image (`ghcr.io/finexio/fqe:0.1`) will be pinned by image digest, which is content-addressed and cannot be silently changed. Once 0.2 ships, that's the recommended default.
+A SHA-pinned Docker image (`ghcr.io/booyajones/fqe`) will be pinned by image digest, which is content-addressed and cannot be silently changed. Once it ships, that's the recommended default.
 
 ## Common next steps
 

@@ -17,6 +17,8 @@
  * Table-driven unit tests live in test/verdict.test.js.
  */
 
+const { wilson95 } = require('./wilson');
+
 const PASS = 'PASS';
 const FLAG = 'FLAG';
 const FAIL = 'FAIL';
@@ -80,9 +82,9 @@ const KNOWN_CLASSES = Object.freeze([
  *
  * @typedef {Object} AdversarialStat
  * @property {string} runner
- * @property {number} n
- * @property {number} successes
- * @property {[number, number]} ci_95
+ * @property {number} n               // total adversarial attempts (positive integer)
+ * @property {number} successes       // attack successes (integer, 0..n) — the CI is the input the gate trusts
+ * @property {[number, number]=} ci_95 // IGNORED if supplied: Pass 3 RECOMPUTES it via wilson95(successes, n)
  * @property {string} blast_radius    // MUST be a key in BLAST_RADIUS_THRESHOLDS
  *
  * @typedef {Object} VerdictInput
@@ -164,19 +166,22 @@ function computeVerdict(input) {
     }
   }
 
-  // Pass 3: adversarial CI upper exceeds CANONICAL threshold -> FLAG
-  // (only matters if no FAIL).
+  // Pass 3: adversarial attack-success rate vs CANONICAL threshold (only matters if no FAIL).
+  //
+  // The Wilson 95% CI upper bound is RECOMPUTED here from the raw (n, successes)
+  // counts. Any runner-supplied `ci_95` is IGNORED. (Closes C1, 2026-06-02: Pass 3
+  // used to trust the runner's `ci_95`, so a fabricated tight interval like
+  // [0, 0.0001] on a real 50/100 attack run sailed past the 0.01 money bar. The
+  // statistical method is POLICY and lives in this deterministic core, never in
+  // runner output. A runner now controls only the raw counts, not the inference.)
+  // wilson95() throws on missing/non-integer counts or successes > n, which fails
+  // the gate closed through computeVerdict's caller — a dropped count cannot pass.
   const stats = input.adversarial_stats || [];
   for (const s of stats) {
-    if (!s || typeof s.runner !== 'string' || !Array.isArray(s.ci_95)) {
-      throw new Error('verdict: adversarial stat malformed');
+    if (!s || typeof s.runner !== 'string') {
+      throw new Error('verdict: adversarial stat malformed (missing runner)');
     }
-    if (s.ci_95.length !== 2 || typeof s.ci_95[0] !== 'number' || typeof s.ci_95[1] !== 'number') {
-      throw new Error(`verdict: ci_95 for ${s.runner} must be [lo:number, hi:number]`);
-    }
-    if (s.ci_95[0] > s.ci_95[1]) {
-      throw new Error(`verdict: ci_95 inverted for ${s.runner}: [${s.ci_95[0]}, ${s.ci_95[1]}]`);
-    }
+    const ci = wilson95(s.successes, s.n); // recomputed, authoritative — ignores any supplied ci_95
 
     // Threshold comes from CANONICAL map keyed by blast_radius.
     // Orchestrator can request a class but cannot pass an arbitrary threshold.
@@ -191,9 +196,9 @@ function computeVerdict(input) {
       continue;
     }
     const threshold = BLAST_RADIUS_THRESHOLDS[s.blast_radius];
-    const ciUpper = s.ci_95[1];
+    const ciUpper = ci.hi;
     if (ciUpper > threshold) {
-      const msg = `Wilson CI upper ${ciUpper.toFixed(4)} exceeds canonical threshold ${threshold.toFixed(4)} for blast_radius=${s.blast_radius} on runner=${s.runner}`;
+      const msg = `Wilson CI upper ${ciUpper.toFixed(4)} (recomputed from ${s.successes}/${s.n}) exceeds canonical threshold ${threshold.toFixed(4)} for blast_radius=${s.blast_radius} on runner=${s.runner}`;
       if (BLAST_RADIUS_BLOCKS.has(s.blast_radius)) {
         hasFail = true; // money/state breach blocks; it is not advisory
         reasons.push(`BLOCKED (money/state breach): ${msg}`);
@@ -304,7 +309,17 @@ function computeVerdict(input) {
     }
 
     // Reconciliation against the framework's own collected count.
-    if (
+    if (cov.reconcile === true && (typeof cov.collected !== 'number' || typeof cov.reported !== 'number')) {
+      // M1 (2026-06-02): reconcile was requested but no numeric collected/reported
+      // count is present, so reconciliation cannot be verified. A check that only
+      // runs when an optional field happens to be numeric is the "omit the field to
+      // bypass" pattern; fail closed instead.
+      hasFail = true;
+      reasons.push(
+        `runner "${r.name}" requested reconcile but produced no numeric collected/reported count ` +
+        `(reconciliation cannot be verified, so the gate fails closed)`
+      );
+    } else if (
       cov.reconcile === true &&
       typeof cov.collected === 'number' &&
       typeof cov.reported === 'number'

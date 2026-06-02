@@ -65,6 +65,22 @@ function parseConfigYaml(text) {
           result.policy = parsePolicyBlock(block);
           i = j - 1; // resume at the next top-level line (the loop does i++)
           current = null;
+        } else if (current === 'mutation') {
+          // v0.14 fix: the `mutation:` block was never parsed from .fqe.yml (it fell
+          // through to `{}`), so the mutation gate was unreachable through `fqe run`
+          // — configurable only via the raw `fqe verdict` JSON path. Parse it as a
+          // flat map of scalars/inline-lists, same collection strategy as policy.
+          const block = [];
+          let j = i + 1;
+          for (; j < lines.length; j++) {
+            const l = lines[j];
+            if (l.trim() === '' || l.trim().startsWith('#')) continue;
+            if (l.length - l.trimStart().length === 0) break;
+            block.push(l);
+          }
+          result.mutation = parseFlatMapBlock(block);
+          i = j - 1;
+          current = null;
         }
       } else {
         result[current] = parseInlineScalar(m[2]);
@@ -108,6 +124,33 @@ function parseInlineScalar(v) {
   if (t.startsWith('"') && t.endsWith('"')) return JSON.parse(t);
   if (t.startsWith("'") && t.endsWith("'")) return t.slice(1, -1);
   return t;
+}
+
+/**
+ * Parse a flat nested map block (key: scalar-or-inline-list per line), used for
+ * the `mutation:` block. Fail closed on a key with no inline value. Unknown keys
+ * pass through so config_schema.validateConfig rejects them with a clear message.
+ */
+function parseFlatMapBlock(lines) {
+  const out = {};
+  for (const raw of lines) {
+    const t = raw.trim();
+    const m = t.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
+    if (!m) {
+      throw new Error(
+        `config parse: malformed mapping line: ${raw.trim()}. ` +
+        `This block takes flat 'key: value' lines only; use inline-list syntax ` +
+        `for lists (e.g. allowlist: ["file:1:Mutator"]), not a nested '- item' block.`
+      );
+    }
+    const key = m[1];
+    const val = m[2];
+    if (val === '') {
+      throw new Error(`config parse: key '${key}' must have an inline value (e.g. ${key}: blocking)`);
+    }
+    out[key] = parseMaybeList(val);
+  }
+  return out;
 }
 
 /**
@@ -552,11 +595,36 @@ function run(opts) {
   }
   const finishedAt = new Date().toISOString();
 
+  // Adversarial stats assembly (v0.14 hardening, closes C1+C2 2026-06-02):
+  //  - require_stats_for: any runner that RAN and DECLARES a blast_radius in config
+  //    MUST emit adversarial_stats. A dropped payload then fails closed in verdict
+  //    Pass 4 (previously this list was never populated, so the check was dead).
+  //  - blast_radius is BOUND from the runner's config, not trusted from runner
+  //    output, so a money-class runner cannot emit a stat tagged with a weaker
+  //    class to dodge the 0.01 bar.
+  //  - verdict Pass 3 recomputes the Wilson interval from (n, successes); any
+  //    runner-supplied ci_95 is ignored, so a fabricated tight interval cannot pass.
   const adversarialStats = [];
+  const requireStatsFor = [];
   for (const r of runnerResults) {
+    const declaredBlast = config.runners[r.name] && typeof config.runners[r.name].blast_radius === 'string'
+      ? config.runners[r.name].blast_radius : null;
+    if (declaredBlast && r.ran === true) {
+      requireStatsFor.push(r.name);
+    }
     if (r.parsed && Array.isArray(r.parsed.adversarial_stats)) {
       for (const stat of r.parsed.adversarial_stats) {
-        adversarialStats.push(stat);
+        // Bind the declared blast_radius (config is authoritative; prevents downgrade).
+        const bound = declaredBlast ? { ...stat, blast_radius: declaredBlast } : { ...stat };
+        // Attach the AUTHORITATIVE recomputed interval, overwriting any runner-claimed
+        // ci_95, so the receipt displays the true number. verdict Pass 3 independently
+        // recomputes from (n, successes) regardless, so this is display-only (defense in
+        // depth). Bad counts are left for Pass 3 / wilson95 to fail closed on.
+        try {
+          const ci = wilson95(bound.successes, bound.n);
+          bound.ci_95 = [ci.lo, ci.hi];
+        } catch (_) { /* leave counts; verdict recomputes and fails closed */ }
+        adversarialStats.push(bound);
       }
     }
   }
@@ -568,33 +636,68 @@ function run(opts) {
   // rather than crashing the gate.
   let mutationResult = null;
   if (config.mutation && typeof config.mutation === 'object') {
+    const blocking = config.mutation.mode === 'blocking';
+    // H1 (2026-06-02): a DECLARED mutation gate must never go dark on a corrupt
+    // report. Distinguish "unparseable/malformed" (fail closed: FAIL when blocking,
+    // FLAG when advisory) from "valid but too few mutants" (legitimately NEUTRAL).
+    // The previous code swallowed both to a zeroed tally -> NEUTRAL -> silent pass.
+    const unparseableResult = () => ({
+      verdict: blocking ? 'FAIL' : 'FLAG',
+      killRate: null, total: 0, killed: 0, surviving: 0, suppressed: 0, survivors: [],
+      reasons: [
+        `mutation report present but unparseable or malformed; failing ` +
+        `${blocking ? 'closed [blocking]' : 'to a FLAG [advisory]'} ` +
+        `(a declared mutation gate cannot go dark on a corrupt report)`,
+      ],
+    });
     const mutRunner = runnerResults.find((r) => r.class === 'mutation' && r.parsed &&
       (r.parsed.mutation_report || r.parsed.mutation));
     if (mutRunner) {
+      let tally = null;
+      let unparseable = false;
       try {
-        let tally = null;
         if (mutRunner.parsed.mutation_report) {
-          tally = parseStryker(mutRunner.parsed.mutation_report);
+          const rep = mutRunner.parsed.mutation_report;
+          let obj = rep;
+          if (typeof rep === 'string') {
+            try { obj = JSON.parse(rep); } catch { unparseable = true; }
+          } else if (rep === null || typeof rep !== 'object') {
+            unparseable = true;
+          }
+          // A valid object missing the `files` map is a malformed Stryker report.
+          if (!unparseable && (!obj || typeof obj.files !== 'object' || obj.files === null)) {
+            unparseable = true;
+          }
+          if (!unparseable) tally = parseStryker(obj);
         } else if (mutRunner.parsed.mutation && typeof mutRunner.parsed.mutation === 'object') {
           const m = mutRunner.parsed.mutation;
-          tally = {
-            killed: Number(m.killed) || 0,
-            surviving: Number(m.surviving) || (Array.isArray(m.survivors) ? m.survivors.length : 0),
-            perFile: m.perFile || {},
-            survivors: Array.isArray(m.survivors) ? m.survivors : [],
-          };
+          const killedN = Number(m.killed);
+          const survN = m.surviving != null ? Number(m.surviving)
+            : (Array.isArray(m.survivors) ? m.survivors.length : NaN);
+          // Reject junk counts instead of coercing to 0 (which read as NEUTRAL).
+          if (!Number.isFinite(killedN) || !Number.isFinite(survN)) {
+            unparseable = true;
+          } else {
+            tally = {
+              killed: killedN, surviving: survN, perFile: m.perFile || {},
+              survivors: Array.isArray(m.survivors) ? m.survivors : [],
+            };
+          }
         }
-        if (tally) {
-          mutationResult = evaluateMutationAdvisory({
-            tally,
-            mode: config.mutation.mode || 'advisory',
-            threshold: typeof config.mutation.threshold === 'number' ? config.mutation.threshold : 70,
-            minMutants: typeof config.mutation.min_mutants === 'number' ? config.mutation.min_mutants : 1,
-            allowlist: Array.isArray(config.mutation.allowlist) ? config.mutation.allowlist : [],
-            changedFiles: diff.ok ? files : null,
-          });
-        }
-      } catch (_) { mutationResult = null; /* advisory; never crash the gate */ }
+      } catch (_) { unparseable = true; }
+
+      if (unparseable) {
+        mutationResult = unparseableResult();
+      } else if (tally) {
+        mutationResult = evaluateMutationAdvisory({
+          tally,
+          mode: config.mutation.mode || 'advisory',
+          threshold: typeof config.mutation.threshold === 'number' ? config.mutation.threshold : 70,
+          minMutants: typeof config.mutation.min_mutants === 'number' ? config.mutation.min_mutants : 1,
+          allowlist: Array.isArray(config.mutation.allowlist) ? config.mutation.allowlist : [],
+          changedFiles: diff.ok ? files : null,
+        });
+      }
     }
   }
 
@@ -622,6 +725,7 @@ function run(opts) {
         ? config.runners[r.name].invariant : undefined,
     })),
     adversarial_stats: adversarialStats,
+    require_stats_for: requireStatsFor,
     require_classes: requiredClasses,
     require_coverage_evidence: config.require_coverage_evidence === true,
     unwired_suites: discovery.unwired,

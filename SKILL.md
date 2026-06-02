@@ -5,7 +5,7 @@ description: Finexio Quality Engine (fqe). A unified deterministic CI gate for F
 
 # fqe: Finexio Quality Engine
 
-**Status:** v0.7.0. Full-suite QA: a test-class taxonomy + a policy that blocks, plus `fqe uat` (acceptance gate), `fqe golden` (regression engine), and `fqe qa-report` (scorecard). 410 tests (409 pass, 1 Windows-symlink skip) on Windows + real GitHub Actions ubuntu-latest. Independent code review + 3 gauntlet rounds (81/100, no confirmed fatal flaw). Source: `github.com/booyajones/fqe` (public) and `github.com/booyajones/finexio-skills/fqe` (mirror).
+**Status:** v0.14.0. Deterministic, fail-closed CI gate with a no-LLM verdict and a SHA-bound, tamper-evident receipt. 622 tests (621 pass, 1 Windows-symlink skip) on Windows + real GitHub Actions ubuntu-latest. v0.14.0 hardened the adversarial money gate: the Wilson interval is recomputed from raw counts so a runner cannot submit a fabricated tight interval, a runner that declares a blast class must emit its stats, a malformed mutation report fails closed instead of going quiet, and the `mutation:` block now actually parses from `.fqe.yml`. Proven cold on third-party OSS (Python/pytest, Rust/cargo) on real CI. Not yet proven on a live production money path (that needs a sandbox). The receipt is content-hashed, not cryptographically signed. Source: `github.com/booyajones/fqe` (public) and `github.com/booyajones/finexio-skills/fqe` (mirror).
 
 ## When to fire (auto-invoke triggers)
 
@@ -134,6 +134,7 @@ Classes: unit, integration, e2e, regression, contract, property, uat, lint, type
 - Docker image build + in-container tools verified: https://github.com/booyajones/fqe-smoke-test/actions/runs/26348823911
 - 7 rounds of multi-LLM code gauntlet; final score 88/100 SHIP, 0 fatal flaws
 - 6 rounds of plan gauntlet; final 76/100 with 0 invariant-violating flaws
+- v0.14.0: a 3-agent completeness-adversary pass + an Opus full-file code review + a technical gauntlet (no confirmed fatal flaw) found and closed a CRITICAL integrity fail-open (the adversarial money gate trusted a runner-supplied Wilson interval) plus its CLI-path siblings. 628 tests green.
 
 ## Files in the skill
 
@@ -151,7 +152,7 @@ fqe/
 │   │   ├── bypass_tally.js           # JSONL rolling rate
 │   │   ├── orchestrator.js           # composes the pieces
 │   │   └── init.js                   # one-command bootstrap
-│   └── test/                         # 122/122 pass
+│   └── test/                         # 622 tests (621 pass, 1 Windows-symlink skip)
 ├── schemas/receipt-v1.yml            # receipt schema
 ├── workflows/
 │   ├── fqe-quality.yml.template      # main CI gate

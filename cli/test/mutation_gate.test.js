@@ -47,8 +47,13 @@ test('parseStryker ignores CompileError/RuntimeError/Ignored', () => {
   assert.equal(r.killRate, 100);
 });
 
-test('parseStryker returns null killRate + empty on garbage', () => {
-  const r = parseStryker('not json');
+test('parseStryker THROWS on unparseable JSON (fails loud, never a zeroed NEUTRAL)', () => {
+  // v0.14.0 HIGH-1: a corrupt report must block, not parse to a 0-mutant NEUTRAL.
+  assert.throws(() => parseStryker('not json'), /not valid JSON/);
+});
+
+test('parseStryker on a valid-but-empty report -> 0 mutants, null killRate (legitimately neutral later)', () => {
+  const r = parseStryker('{"files":{}}');
   assert.equal(r.killRate, null);
   assert.equal(r.total, 0);
 });

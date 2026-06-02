@@ -18,7 +18,7 @@
  * Pure, dependency-free, no LLM. Same input -> same errors.
  */
 
-const { KNOWN_CLASSES } = require('./verdict');
+const { KNOWN_CLASSES, BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 const { KNOWN_FORMATS } = require('./inventory');
 
 const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired', 'require_money_idempotency', 'mutation'];
@@ -33,7 +33,13 @@ const RUNNER_KEYS = [
   'retries', 'quarantined',
   // payments safety (v0.11): the named money invariants this runner proves.
   'invariant',
+  // adversarial gate (v0.14): the blast radius this runner attacks. Declaring it
+  // (a) forces the runner to emit adversarial_stats (require_stats_for, no dropped
+  // payload) and (b) binds the canonical threshold so the runner cannot downgrade
+  // its own class. Value must be a known BLAST_RADIUS_THRESHOLDS key.
+  'blast_radius',
 ];
+const KNOWN_BLAST_RADII = Object.freeze(Object.keys(BLAST_RADIUS_THRESHOLDS));
 const POLICY_KEYS = ['require_classes', 'require_for'];
 const REQUIRE_FOR_KEYS = ['when', 'classes'];
 
@@ -285,6 +291,20 @@ function validateRunner(name, cfg, errors) {
 
   if ('class' in cfg) {
     validateClassName(cfg.class, `${where}: 'class'`, errors);
+  }
+
+  // adversarial gate (v0.14): blast_radius must name a canonical class so the
+  // orchestrator can bind its threshold and require its stats. An unknown value
+  // would otherwise be assembled and only caught at verdict time; reject it here.
+  if ('blast_radius' in cfg) {
+    if (typeof cfg.blast_radius !== 'string' || !KNOWN_BLAST_RADII.includes(cfg.blast_radius)) {
+      errors.push(`${where}: 'blast_radius' must be one of ${KNOWN_BLAST_RADII.join(', ')}, got '${cfg.blast_radius}'`);
+    } else if (cfg.required !== true) {
+      // HIGH-2 (v0.14.0): a blast-class runner that is not required could simply not
+      // fire (a diff that misses its `when` globs) and silently skip the adversarial
+      // stat requirement. Force it required so a non-firing money runner FAILs Pass 1.
+      errors.push(`${where}: a runner that declares 'blast_radius' must be 'required: true' (otherwise a diff that avoids its 'when' globs would skip the adversarial-stat requirement)`);
+    }
   }
 
   // --- coverage-liveness fields (v0.9.0) ---

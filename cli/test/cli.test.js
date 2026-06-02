@@ -142,6 +142,25 @@ test('fqe verdict — same input -> same output (deterministic)', () => {
   assert.equal(r1.status, r2.status);
 });
 
+test('fqe verdict — rejected input (bad stat counts) exits 2 FAIL, not 1 ERROR (CRIT-1)', () => {
+  // A stat missing `successes` makes wilson95 throw. The CLI must fail CLOSED as a
+  // block (exit 2), matching the orchestrator, not surface as a retryable infra error.
+  const bad = {
+    runners: [{ name: 'mcp', required: true, ran: true, exit_code: 0 }],
+    adversarial_stats: [{ runner: 'mcp', n: 100, blast_radius: 'mcp-write-or-financial' }],
+  };
+  const r = run(['verdict', '-'], JSON.stringify(bad));
+  assert.equal(r.status, 2, `expected exit 2 (FAIL), got ${r.status}; stderr: ${r.stderr}`);
+});
+
+test('fqe mutation-gate — a corrupt report file exits 2 FAIL, not a neutral pass (HIGH-1)', () => {
+  const dir = tmpDir();
+  const bad = path.join(dir, 'mutation.json');
+  fs.writeFileSync(bad, 'this is not json {');
+  const r = run(['mutation-gate', '--report', bad]);
+  assert.equal(r.status, 2, `expected exit 2 (FAIL) on a corrupt report, got ${r.status}; stderr: ${r.stderr}`);
+});
+
 test('fqe receipt write + parse round-trips through filesystem', () => {
   const dir = tmpDir();
   const ctx = {

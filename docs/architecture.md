@@ -106,7 +106,7 @@ Bounded scope is a trust signal. fqe does not:
 
 ## Three commitments that shape every decision
 
-1. **Engineers don't get locked out by fqe's own bugs.** Exit code 4 (INFRA) emits a Check Run with conclusion `neutral`. GitHub API timeouts, missing `gh` binary, transient runner crashes all map here. **A neutral conclusion does NOT block merges in GitHub's branch protection model: required checks treat `neutral` as success.** If you observe `neutral` blocking, the issue is your branch-protection setting "Require branches to be up to date before merging" combined with a state quirk, not `fqe` policy. Tested behavior is documented in the integration test at `cli/test/check-run-neutral.test.js`.
+1. **Engineers don't get locked out by fqe's own bugs.** Exit code 4 (INFRA) emits a Check Run with conclusion `neutral`. GitHub API timeouts, missing `gh` binary, transient runner crashes all map here. **A neutral conclusion does NOT block merges in GitHub's branch protection model: required checks treat `neutral` as success.** If you observe `neutral` blocking, the issue is your branch-protection setting "Require branches to be up to date before merging" combined with a state quirk, not `fqe` policy. The exit-code taxonomy (0 PASS, 1 ERROR, 2 FAIL, 3 FLAG, 4 INFRA/neutral) is defined in `cli/bin/fqe.js`, and the verdict logic that produces it is pinned in `cli/test/verdict.test.js`.
 
 2. **Bypass is a deliberate, audited act.** Every bypass writes to `bypass-tally.jsonl`, posts to a Check Run, gets archived in `audits/<sha>/`. Rolling rate above 10% in 14 days flips the `fqe/second-reviewer-required` check to FAIL, requiring an allowlisted second approver.
 

@@ -54,7 +54,7 @@ const reconcileLib = require('../lib/reconcile');
 const discoverLib = require('../lib/discover');
 const baselineLib = require('../lib/baseline');
 
-const FQE_VERSION = '0.13.0';
+const FQE_VERSION = '0.14.0';
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
@@ -128,7 +128,18 @@ const SUBCOMMANDS = {
 
   verdict(args) {
     const input = readJsonInput(args[0]);
-    const out = computeVerdict(input);
+    let out;
+    try {
+      out = computeVerdict(input);
+    } catch (e) {
+      // CRIT-1 (v0.14.0): a rejected verdict input (e.g. a stat with bad counts that
+      // makes wilson95 throw) must FAIL CLOSED as a block (exit 2), not surface as an
+      // infra ERROR (exit 1). The orchestrator path already does this; the raw CLI now
+      // matches, so a consumer that distinguishes "blocked" from "retryable infra" is right.
+      process.stderr.write(`fqe: verdict rejected input (failing closed): ${e.message}\n`);
+      process.stdout.write(JSON.stringify({ verdict: FAIL, reasons: [`verdict rejected input: ${e.message}`] }, null, 2) + '\n');
+      process.exit(2);
+    }
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
     if (out.verdict === FAIL) process.exit(2);
     if (out.verdict === FLAG) process.exit(3);
@@ -702,7 +713,16 @@ const SUBCOMMANDS = {
       } catch (e) {
         return failInfra(`mutation-gate: cannot read report ${opts.report}: ${e.message}`);
       }
-      gateInput = { tally: mutationGate.parseStryker(text), threshold, changedFiles, minMutants };
+      let tally;
+      try {
+        tally = mutationGate.parseStryker(text);
+      } catch (e) {
+        // HIGH-1 (v0.14.0): a corrupt mutation report BLOCKS (exit 2), it does not
+        // fall through to a zeroed NEUTRAL. A gate cannot go dark on garbage.
+        process.stderr.write(`mutation-gate: ${e.message} (failing closed)\n`);
+        process.exit(2);
+      }
+      gateInput = { tally, threshold, changedFiles, minMutants };
     } else if (opts.killed !== undefined && opts.surviving !== undefined) {
       gateInput = { killed: parseFloat(opts.killed), surviving: parseFloat(opts.surviving), threshold, minMutants };
     } else {

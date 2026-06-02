@@ -166,3 +166,27 @@ test('multiple problems are reported together', () => {
   assert.equal(r.valid, false);
   assert.ok(r.errors.length >= 3, `expected several errors, got ${r.errors.length}`);
 });
+
+// ── v0.14.0: blast_radius runner key (adversarial gate) ──────────────────────
+test('blast_radius must be a canonical class', () => {
+  const r = validateConfig({
+    runners: { atk: { command: 'x', always_run: true, required: true, blast_radius: 'made-up' } },
+  });
+  assert.equal(r.valid, false);
+  assert.ok(r.errors.some((e) => /blast_radius/.test(e)), r.errors.join('; '));
+});
+
+test('blast_radius runner MUST be required:true (HIGH-2: cannot silently skip the stat requirement)', () => {
+  const r = validateConfig({
+    runners: { atk: { command: 'x', always_run: true, required: false, blast_radius: 'mcp-write-or-financial' } },
+  });
+  assert.equal(r.valid, false);
+  assert.ok(r.errors.some((e) => /must be 'required: true'/.test(e)), r.errors.join('; '));
+});
+
+test('a well-formed required blast_radius runner is valid', () => {
+  const r = validateConfig({
+    runners: { atk: { command: 'x', always_run: true, required: true, blast_radius: 'mcp-write-or-financial' } },
+  });
+  assert.equal(r.valid, true, r.errors.join('; '));
+});

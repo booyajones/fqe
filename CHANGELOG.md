@@ -2,6 +2,29 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.14.0] - 2026-06-02
+
+Tag: `fqe-v0.14.0`. Integrity hardening. A completeness-adversary pass (find what is MISSING, not what is wrong) plus an Opus code review found fail-opens that five prior "done" releases shipped past, including a CRITICAL one in the exact part built to defend the money / MCP-write blast radius.
+
+### Fixed (fail-closed)
+- **Adversarial Wilson CI is recomputed from raw counts (CRITICAL).** verdict Pass 3 used to trust a runner-supplied `ci_95`, so a runner reporting a real 50/100 attack run with a fabricated tight interval passed the 0.01 money bar. The interval is now recomputed via `wilson95(successes, n)` inside the deterministic core; any supplied `ci_95` is ignored. A runner controls only the raw counts, not the inference.
+- **`require_stats_for` is now wired in the real `fqe run` path.** A runner that declares a `blast_radius` must emit its adversarial stats; a dropped payload fails closed. The orchestrator derives the requirement from config (previously the check was dead code never populated outside the raw `fqe verdict` JSON path).
+- **`blast_radius` is bound from config, not trusted from runner output.** A money-class runner cannot self-label a weaker class to dodge the bar. A `blast_radius` runner must be `required: true` so a diff that misses its `when` globs cannot skip the stat requirement.
+- **A malformed mutation report fails closed.** A declared mutation gate with an unparseable or junk report now FAILs (blocking) or FLAGs (advisory) instead of silently going NEUTRAL. `parseStryker` throws on invalid JSON instead of returning a zeroed tally, so the `fqe mutation-gate` CLI path cannot pass a corrupt report.
+- **The `mutation:` block now parses from `.fqe.yml`.** It previously fell through to `{}`, so the mutation gate was unreachable through `fqe run` (configurable only via the raw `fqe verdict` JSON path).
+- **`reconcile` with no numeric collected count fails closed** instead of silently skipping reconciliation.
+- **`fqe verdict` CLI fails closed to exit 2 (FAIL)** on a rejected input, matching the orchestrator, rather than surfacing as an infra error (exit 1).
+
+### Added
+- `blast_radius` runner config key (validated against the canonical blast classes).
+- `cli/test/integrity_v014.test.js` plus CLI and schema regressions. 628 tests (627 pass, 1 Windows-symlink skip).
+
+### Honesty
+- `package.json` version was stale at 0.7.0 (now 0.14.0); SKILL.md was frozen at v0.7.0/410 tests; `fqe init` scaffolded a stale `fqe-v0.7.0` tag; a doc cited a test that does not exist; README/getting-started carried stale 0.1/0.7 anchors and a wrong Docker org. All corrected.
+
+### Notes
+- Reviewed by a 3-agent completeness adversary, an Opus code review (full files), and a technical gauntlet (no confirmed fatal flaw). Still NOT proven on a live production money path; that needs a sandbox. The receipt is content-hashed, not cryptographically signed (planned).
+
 ## [0.13.0] - 2026-06-01
 
 Tag: `fqe-v0.13.0`. Stage B linchpin: the mutation-on-diff judge with advisory-first governance. Coverage-liveness proves a test RAN, mutation proves it would CATCH the code breaking. This is what lets fqe trust AI-authored tests without a human reading each one.

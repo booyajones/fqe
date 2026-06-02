@@ -89,14 +89,29 @@ const cases = [
     expected: FLAG,
   },
   {
-    name: 'mcp-read CI right at canonical 0.03 -> PASS (not exceeded)',
+    // The recomputed Wilson upper for (1/100) is ~0.0545, which EXCEEDS the 0.03
+    // mcp-read bar. The old test fed a hand-rounded ci_95:[0.0002,0.03] that passed —
+    // that was the C1 hole (verdict trusting a too-tight supplied interval). A genuine
+    // under-threshold pass needs more attempts: wilson95(0,130).hi ~= 0.0287 < 0.03.
+    name: 'mcp-read CI genuinely under canonical 0.03 -> PASS (recomputed from counts)',
+    input: {
+      runners: [{ name: 'mcp-read', exit_code: 0, required: true, ran: true }],
+      adversarial_stats: [
+        { runner: 'mcp-read', n: 130, successes: 0, blast_radius: 'mcp-read' },
+      ],
+    },
+    expected: PASS,
+  },
+  {
+    // The same (1/100) data that the old too-tight interval hid is now correctly a FLAG.
+    name: 'mcp-read 1/100 -> FLAG (recomputed Wilson upper ~0.0545 exceeds 0.03)',
     input: {
       runners: [{ name: 'mcp-read', exit_code: 0, required: true, ran: true }],
       adversarial_stats: [
         { runner: 'mcp-read', n: 100, successes: 1, ci_95: [0.0002, 0.03], blast_radius: 'mcp-read' },
       ],
     },
-    expected: PASS,
+    expected: FLAG,
   },
   {
     name: 'FAIL beats FLAG',
@@ -171,14 +186,17 @@ const cases = [
     expected: FAIL,
   },
   {
-    name: 'inverted ci_95 throws (not silent PASS)',
+    // C1: a supplied ci_95 is IGNORED. Even an inverted/garbage interval cannot
+    // change the verdict; it is recomputed from (5/100) -> Wilson upper ~0.1118,
+    // which exceeds the 0.05 outbound bar -> FLAG.
+    name: 'supplied ci_95 is ignored; verdict recomputed from counts -> FLAG',
     input: {
       runners: [{ name: 'outbound', exit_code: 0, required: true, ran: true }],
       adversarial_stats: [
         { runner: 'outbound', n: 100, successes: 5, ci_95: [0.5, 0.02], blast_radius: 'outbound' },
       ],
     },
-    expectThrow: true,
+    expected: FLAG,
   },
 ];
 
@@ -221,11 +239,14 @@ test('malformed input throws (not silent PASS)', () => {
   );
 });
 
-test('malformed adversarial stat throws', () => {
+test('malformed adversarial stat throws (missing raw counts -> fail closed)', () => {
+  // C1: the gate now needs the raw (n, successes) counts to recompute the interval.
+  // A stat missing `successes` cannot be evaluated, so wilson95() throws and the
+  // verdict fails closed rather than passing on absent data.
   assert.throws(() =>
     computeVerdict({
       runners: [{ name: 'x', exit_code: 0, required: true, ran: true }],
-      adversarial_stats: [{ runner: 'x', n: 20 /* missing ci_95 */ }],
+      adversarial_stats: [{ runner: 'x', n: 20 /* missing successes */ }],
     })
   );
 });

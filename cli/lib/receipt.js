@@ -287,7 +287,11 @@ function renderMarkdownBody(r) {
     lines.push('| Runner | Class | N | Successes | CI 95% | Threshold |');
     lines.push('|---|---|---|---|---|---|');
     for (const s of r.adversarial_stats) {
-      const ci = `[${s.ci_95[0].toFixed(4)}, ${s.ci_95[1].toFixed(4)}]`;
+      // ci_95 is the authoritative interval the orchestrator recomputed from the
+      // counts; render defensively in case a stat reaches here without one.
+      const ci = Array.isArray(s.ci_95) && typeof s.ci_95[0] === 'number' && typeof s.ci_95[1] === 'number'
+        ? `[${s.ci_95[0].toFixed(4)}, ${s.ci_95[1].toFixed(4)}]`
+        : '(recomputed at verdict)';
       lines.push(`| ${s.runner} | ${s.blast_radius} | ${s.n} | ${s.successes} | ${ci} | (canonical) |`);
     }
   }
