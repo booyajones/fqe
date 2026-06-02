@@ -2,6 +2,18 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.1] - 2026-06-02
+
+Tag: `fqe-v0.18.1`. Acting on an external multi-LLM review (council + gauntlet, GPT/DeepSeek/Gemini) of the finished v0.18.0 package. The verdict is recorded honestly: internal dev-team use SHIP-WITH-CONDITIONS (~63/100), required money-path gate NOT-YET (~25/100), overall RECONSIDER (66/100), capped by what only people and data can fix (no live-money-path proof, bus factor 1, HMAC-not-Sigstore-by-default). This patch closes the two findings that were solo-fixable and were the structural blind spots a Claude-only review had missed.
+
+### Added
+- **`docs/build-vs-buy.md`**: the honest answer to the single most likely staff-engineer objection the review named ("why not Codecov + Stryker + Sigstore + branch protection?"). fqe does not replace those tools, it composes them; its only unique job is one deterministic, fail-closed, money-aware verdict across heterogeneous runners. For everything else: buy, do not build. Includes the honest adoption sequencing (off-the-shelf first, fqe as a non-blocking layer, required gate only after shadow-trial data).
+- **Strictly-additive invariant guard** (`cli/test/source_hygiene.test.js`): fqe's strongest claim was that a verdict pass can only ADD a FLAG/FAIL and never clear one, but that was a convention enforced by discipline alone (the fragility the review flagged: "a Pass 13 by a tired human could silently break it"). A source guard now proves the two verdict accumulators in `verdict.js` are initialized once to `false` and thereafter only ever assigned the literal `true`. Any direct clear (`= false`, `&&=`, `||=`, `??=`, or a non-literal RHS) fails the test. Scope kept honest: it covers direct assignment, not aliasing/destructuring (verdict.js uses plain locals, so it is complete for the code as written).
+
+### Fixed
+- **`fqe init` scaffold pinned a stale, security-behind release.** The payments workflow `fqe init` writes pinned `FQE_TAG="fqe-v0.16.0"`, so new adopters got a version missing the v0.17 security fixes (the signing-key environment leak and the empty-UAT silent PASS). Bumped to `fqe-v0.18.1`.
+- **`fqe init` scaffold emitted soon-deprecated CI actions.** Bumped the scaffolded `actions/checkout` and `actions/setup-node` to `@v5` to match the repo's own CI (GitHub deprecates the node20 action runtime in 2026). `upload-artifact` stays at `@v4` (current major).
+
 ## [0.18.0] - 2026-06-02
 
 Tag: `fqe-v0.18.0`. The buildable backlog: the shadow-trial scorecard (the adoption-winning artifact), the last discovery gap, the CI-actions bump, and the doc nits.

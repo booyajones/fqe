@@ -178,12 +178,12 @@ jobs:
   fqe:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
@@ -194,7 +194,7 @@ jobs:
           # To update fqe, push a new tag in finexio-skills and re-run fqe init.
           # When ghcr.io/booyajones/fqe:0.1 is published with cosign verify,
           # this entire step can be replaced with: container: ghcr.io/booyajones/fqe:0.1
-          FQE_TAG="fqe-v0.16.0"
+          FQE_TAG="fqe-v0.18.1"
           git clone --depth=1 --branch "$FQE_TAG" \\
             https://github.com/booyajones/fqe.git /tmp/fqe-src
           cd /tmp/fqe-src/cli
@@ -391,7 +391,7 @@ jobs:
     container:
       image: ghcr.io/booyajones/fqe:0.1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: \${{ github.event.pull_request.base.sha }}
 

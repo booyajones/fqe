@@ -96,6 +96,7 @@ fqe uses Claude in two places, both **around** the gate: it reviews every PR (ad
 | Doc | For |
 |---|---|
 | [Adopting fqe (runbook)](docs/adopt.md) | The small-team playbook: the 3 layers, 10-minute turn-on, when to enforce. Start here. |
+| [Why fqe and not off-the-shelf?](docs/build-vs-buy.md) | The honest build-vs-buy answer: what to buy (Codecov, Stryker, Sigstore, branch protection) and the one narrow job fqe owns. |
 | [Getting Started](docs/getting-started.md) | First-time setup. 5 minutes to a gated PR. |
 | [Writing a Runner](docs/writing-a-runner.md) | The contract every runner must satisfy. |
 | [Architecture](docs/architecture.md) | The three invariants, the verdict logic, why it's deterministic. |
