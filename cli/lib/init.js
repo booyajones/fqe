@@ -194,9 +194,17 @@ jobs:
           # To update fqe, push a new tag in finexio-skills and re-run fqe init.
           # When ghcr.io/booyajones/fqe:0.1 is published with cosign verify,
           # this entire step can be replaced with: container: ghcr.io/booyajones/fqe:0.1
-          FQE_TAG="fqe-v0.18.7"
-          git clone --depth=1 --branch "$FQE_TAG" \\
-            https://github.com/booyajones/fqe.git /tmp/fqe-src
+          # FQE_REF accepts a tag OR a 40-char commit SHA. It is fetched rather
+          # than cloned --branch, because --branch takes a ref name only: setting
+          # it to a SHA (which SECURITY.md and getting-started.md both recommend
+          # for production) failed with "Remote branch <sha> not found in upstream
+          # origin", so the documented hardening path broke the gate outright.
+          FQE_REF="fqe-v0.18.8"
+          mkdir -p /tmp/fqe-src && cd /tmp/fqe-src
+          git init -q .
+          git remote add origin https://github.com/booyajones/fqe.git
+          git fetch -q --depth=1 origin "$FQE_REF"
+          git checkout -q --detach FETCH_HEAD
           cd /tmp/fqe-src/cli
           npm install --omit=dev
           chmod +x bin/fqe.js

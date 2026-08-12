@@ -23,8 +23,12 @@ jobs:
           name: Install fqe (tag-pinned)
           command: |
             set -euo pipefail
-            FQE_TAG="fqe-v0.18.7"
-            git clone --depth=1 --branch "$FQE_TAG" https://github.com/booyajones/fqe.git /tmp/fqe-src
+            # FQE_REF takes a tag OR a 40-char commit SHA. Fetch, do not
+            # `clone --branch`: that flag takes a ref name only and fails on a SHA.
+            FQE_REF="fqe-v0.18.8"
+            mkdir -p /tmp/fqe-src && cd /tmp/fqe-src
+            git init -q . && git remote add origin https://github.com/booyajones/fqe.git
+            git fetch -q --depth=1 origin "$FQE_REF" && git checkout -q --detach FETCH_HEAD
             (cd /tmp/fqe-src/cli && npm install --omit=dev)
             echo 'fqe(){ node /tmp/fqe-src/cli/bin/fqe.js "$@"; }' >> "$BASH_ENV"
       - run:
@@ -65,6 +69,6 @@ CircleCI reports each job to GitHub as a status check. In your GitHub branch-pro
 
 ## Notes
 
-- **Pin the tag, not HEAD.** The `FQE_TAG` clone is the supply-chain boundary. For higher assurance, pin to a commit SHA (`git rev-parse fqe-v0.18.7`).
+- **Pin the ref, not HEAD.** The `FQE_REF` fetch is the supply-chain boundary. For higher assurance set it to a commit SHA (`git rev-parse fqe-v0.18.8`); the fetch form accepts a tag or a SHA, which `git clone --branch` does not.
 - **Cache `node_modules` if install time bothers you.** Use CircleCI's `restore_cache`/`save_cache` around `npm ci`. The fqe install is small and rarely the bottleneck.
 - **The receipt is portable.** `fqe run` writes the same `QA-RESULT.{yml,md}` on CircleCI. Persist it with `store_artifacts` so the tamper-evident record survives the build.
