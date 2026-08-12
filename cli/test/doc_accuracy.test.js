@@ -410,6 +410,31 @@ test('root and cli package.json versions agree', () => {
  * resolves the `fqe` bin and nothing else. A typo here reintroduces exactly the
  * bug this file was extended to close, and it would not show up in any doc scan.
  */
+/**
+ * The ROOT manifest is what npm installs, so its `dependencies` are what an
+ * adopter actually gets. This is the same shape as the bug this release fixed.
+ *
+ * `cli/lib/*` gaining a runtime dependency would naturally be added to
+ * cli/package.json, where NOTHING installs it for an adopter. The install job
+ * would stay green, because `fqe version` / `init` / `validate` do not exercise a
+ * dependency used only by, say, reconcile.js. Green CI here, MODULE_NOT_FOUND in
+ * the adopter's gate — the tested path differing from the shipped path, which is
+ * exactly how the install stayed broken for eighteen releases.
+ *
+ * Both are empty today, so this is preventive. That is the point: it fails on the
+ * commit that introduces the divergence, not on the bug report months later.
+ */
+test('root and cli package.json dependencies agree', () => {
+  const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
+  assert.deepStrictEqual(
+    root.dependencies || {},
+    PKG.dependencies || {},
+    'the ROOT manifest is what npm installs, so a runtime dependency declared only ' +
+      'in cli/package.json is never installed for an adopter. Declare it in both, or ' +
+      'the documented install ships code that cannot resolve its own requires.'
+  );
+});
+
 test('root package.json bin points at a CLI entry point that exists', () => {
   const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
   assert.ok(root.bin && root.bin.fqe, 'root package.json must declare a `fqe` bin');
@@ -464,4 +489,37 @@ test('README status badge matches the current package.json version', () => {
     PKG.version,
     `README status badge says v${m[1]} but package.json says v${PKG.version}`
   );
+});
+
+/**
+ * The PROSE status label, not just the badge.
+ *
+ * The badge check above passed at v0.18.3 while README's own Status paragraph and
+ * SKILL.md's `**Status:**` line both still read v0.18.2. Guarding the machine-
+ * readable badge and not the sentence a human actually reads is a guard aimed at
+ * the wrong target: the badge is decoration, the paragraph is the claim.
+ */
+test('prose "current release" labels match the package.json version', () => {
+  const PATTERNS = [
+    /\*\*Status:\*\*\s*v(\d+\.\d+\.\d+)/g, // SKILL.md
+    /^\*\*v(\d+\.\d+\.\d+)\.\*\*/gm, // README's Status paragraph opener
+  ];
+  const wrong = [];
+  let checked = 0;
+
+  for (const file of FILES) {
+    if (path.extname(file) !== '.md') continue;
+    const text = fs.readFileSync(file, 'utf8');
+    for (const re of PATTERNS) {
+      for (const m of text.matchAll(re)) {
+        checked++;
+        if (m[1] !== PKG.version) {
+          wrong.push(`${path.relative(REPO, file)} labels the current release v${m[1]}, expected v${PKG.version}`);
+        }
+      }
+    }
+  }
+
+  assert.ok(checked > 0, 'found no prose release label to check; the format changed and this guard is now vacuous');
+  assert.deepStrictEqual(wrong, [], `stale current-release label(s):\n  ${wrong.join('\n  ')}`);
 });
