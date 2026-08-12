@@ -23,7 +23,7 @@ jobs:
     if: github.event.label.name == 'fqe-second-approved'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/finexio/fqe:0.1
+      image: ghcr.io/booyajones/fqe:0.1
     steps:
       - uses: actions/checkout@v5
         with:

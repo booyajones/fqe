@@ -423,7 +423,14 @@ const MAX_SANE_PROXIMITY = 300;
 
 test('PIN_PROXIMITY is small enough that distant prose cannot claim a tag', () => {
   const tag = 'fqe-v1.2.3';
-  const line = `${tag}${'x'.repeat(MAX_SANE_PROXIMITY)}git clone`;
+  const verb = 'git clone';
+  // Gap is MAX_SANE minus the verb's length, so the assertion flips at exactly
+  // MAX_SANE. A trailing token must END inside the window, so a bare
+  // `repeat(MAX_SANE)` gap made it flip at MAX_SANE + verb.length instead: the
+  // message said 300 while the real threshold was 309. Small, but this file's
+  // whole subject is a stated number matching the real one, and the two boundary
+  // tests above already use this idiom.
+  const line = `${tag}${'x'.repeat(MAX_SANE_PROXIMITY - verb.length)}${verb}`;
   assert.strictEqual(
     pinContextNear(line, 0, tag.length),
     false,
