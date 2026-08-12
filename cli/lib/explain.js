@@ -34,8 +34,11 @@ const FQE_VERSION = require('../package.json').version;
  * moment an engineer is auditing whether to trust it, which is the worst possible
  * place to be wrong. Read the real file instead.
  *
- * Falls back to a size-free phrasing rather than throwing: `fqe explain` must not
- * crash because a doc-flavored nicety could not be computed.
+ * The catch covers a read that fails on a file that IS resolvable (permissions, a
+ * bad mount, transient I/O). It does NOT cover verdict.js being absent: this module
+ * already requires ./verdict at load time for the thresholds, so a missing file is
+ * fatal several lines above and never reaches here. Stated precisely because a
+ * comment that overclaims its own guard is the defect this release exists to fix.
  */
 function verdictSize() {
   try {
