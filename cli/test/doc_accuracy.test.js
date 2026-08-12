@@ -50,7 +50,24 @@ const EXPECTED_TAG = `fqe-v${PKG.version}`;
 
 const DOC_EXTS = new Set(['.md', '.yml', '.yaml', '.template', '.js', '.json']);
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.fqe-out', 'out']);
-const EXCLUDE_FILES = new Set([path.join(REPO, 'CHANGELOG.md')]);
+/**
+ * Files the repo scan does not read, and the only two reasons that is allowed.
+ *
+ *   CHANGELOG.md          every version tag in it is history, and history is correct.
+ *   doc_accuracy.test.js  THIS file. It necessarily contains deliberately-wrong
+ *                         counter-examples ("verdict.js is 160 lines") as unit-test
+ *                         fixtures. Scanning them means the guard reports its own
+ *                         test data as repo defects, so the only way to stay green
+ *                         would be to delete the tests that prove it works.
+ *
+ * An exemption outlives the reason it was added, so this set is asserted below to
+ * be EXACTLY these two. Adding a third requires editing that assertion on purpose,
+ * in a diff a reviewer can see, rather than appending one line here.
+ */
+const EXCLUDE_FILES = new Set([
+  path.join(REPO, 'CHANGELOG.md'),
+  path.join(REPO, 'cli', 'test', 'doc_accuracy.test.js'),
+]);
 
 /** Lines on which a version tag is EXECUTABLE (a real pin), not prose. */
 const PIN_CONTEXT = /npx\s|git\s+clone|git\s+checkout|FQE_TAG|--branch|github:booyajones\/fqe#|git\s+rev-parse/;
@@ -74,6 +91,40 @@ const SIZE_CLAIM_TARGETS = [
   { file: 'cli/lib/verdict.js', keyword: /verdict/i },
   { file: 'cli/bin/fqe.js', keyword: /bin\/fqe\.js|entry point/i },
 ];
+
+/**
+ * Attribute one size claim to one target file. NEAREST MENTION WINS.
+ *
+ * The first version of this did `TARGETS.find(t => t.keyword.test(window))`, which
+ * returns the first entry in ARRAY ORDER whose keyword appears anywhere in the
+ * window. Because `verdict` is listed first, it beat `bin/fqe.js` whenever both
+ * appeared, no matter which one the claim was actually about. SKILL.md's file tree
+ * passed only by luck: `bin/fqe.js  # entry point (~1070 LOC)` sits ABOVE the
+ * `lib/verdict.js` line. Sort that tree alphabetically (lib/ before bin/) and the
+ * guard reports `claims 1070 for cli/lib/verdict.js, actual 516 (107% off)` — red,
+ * for the wrong file, with a message that sends you to fix a file that is correct.
+ * A guard that cries wolf gets deleted, which is the failure mode this file exists
+ * to prevent.
+ *
+ * Scanning outward from the claim line makes proximity decide, which is what a
+ * human reader uses. Two targets named on the SAME nearest line is genuinely
+ * ambiguous, so it fails loudly instead of silently picking one: guessing is how
+ * you get a confident wrong answer.
+ *
+ * Pure and total: no I/O, no state. Exported below so it can be tested directly
+ * with synthetic fixtures rather than only through the whole-repo scan, where a
+ * bug like the one above hides behind whatever the real files happen to look like.
+ *
+ * @returns {{file: string}|{ambiguous: string[]}|null}
+ */
+function attributeSizeClaim(lines, index, targets = SIZE_CLAIM_TARGETS, window = ATTRIBUTION_WINDOW) {
+  for (let i = index; i >= Math.max(0, index - window); i--) {
+    const hits = targets.filter((t) => t.keyword.test(lines[i]));
+    if (hits.length === 1) return { file: hits[0].file };
+    if (hits.length > 1) return { ambiguous: hits.map((h) => h.file) };
+  }
+  return null;
+}
 
 const SIZE_TOLERANCE = 0.15;
 
@@ -147,12 +198,26 @@ test('every source-size claim in the docs is within 15% of the real file', () =>
     const lines = fs.readFileSync(file, 'utf8').split('\n');
     lines.forEach((line, i) => {
       for (const m of line.matchAll(SIZE_RE)) {
-        const context = lines.slice(Math.max(0, i - ATTRIBUTION_WINDOW), i + 1).join('\n');
-        const target = SIZE_CLAIM_TARGETS.find((t) => t.keyword.test(context));
-        if (!target) return; // unattributable prose claim, out of scope (see header)
+        const target = attributeSizeClaim(lines, i);
+        // `continue`, NOT `return`. A bare return here exits the forEach callback
+        // for the WHOLE LINE, so a line holding two claims would silently skip the
+        // second one whenever the first was unattributable. That is a guard quietly
+        // checking less than it reports.
+        if (!target) continue; // unattributable prose claim, out of scope (see header)
+
+        const claimed = Number(m[1].replace(/,/g, ''));
+
+        if (target.ambiguous) {
+          checked++;
+          wrong.push(
+            `${path.relative(REPO, file)}:${i + 1} claims ${claimed}, but its nearest line names ` +
+              `more than one source file (${target.ambiguous.join(', ')}), so the guard cannot tell ` +
+              `which one the claim is about. Reword so a single file is named nearest the number.`
+          );
+          continue;
+        }
 
         checked++;
-        const claimed = Number(m[1].replace(/,/g, ''));
         const actual = lineCountOf(target.file);
         const drift = Math.abs(claimed - actual) / actual;
         if (drift > SIZE_TOLERANCE) {
@@ -176,6 +241,88 @@ test('every source-size claim in the docs is within 15% of the real file', () =>
     [],
     `source-size claim(s) drifted from reality. fqe asks readers to audit the source; ` +
       `a wrong size is the first thing they check:\n  ${wrong.join('\n  ')}`
+  );
+});
+
+/**
+ * Direct tests for the attribution rule, with synthetic fixtures.
+ *
+ * These exist because the whole-repo scan above CANNOT catch an attribution bug:
+ * it only ever sees the real files, so a rule that picks the wrong target still
+ * passes as long as today's files happen to be ordered favorably. That is exactly
+ * how the array-order bug survived: SKILL.md listed bin/ above lib/, so the wrong
+ * answer and the right answer coincided. Feed it the ordering that separates them.
+ */
+test('attribution: nearest named file wins, not array order', () => {
+  // The real regression. SKILL.md's tree, sorted lib/ before bin/, which is the
+  // plausible alphabetical ordering. The claim is about bin/fqe.js on its own line.
+  const lines = [
+    '|   +-- lib/',
+    '|   |   +-- verdict.js                # deterministic verdict (no LLM)',
+    '|   |   +-- orchestrator.js',
+    '|   +-- bin/fqe.js                    # entry point (~1070 LOC)',
+  ];
+  assert.deepStrictEqual(
+    attributeSizeClaim(lines, 3),
+    { file: 'cli/bin/fqe.js' },
+    'a claim on the bin/fqe.js line must attribute to bin/fqe.js even though ' +
+      'verdict.js is named earlier in the window and earlier in SIZE_CLAIM_TARGETS'
+  );
+});
+
+test('attribution: a mention on an earlier line still wins when nothing is nearer', () => {
+  // README's ASCII diagram case: subject named one line above the number.
+  const lines = ['|   verdict.js      |  <- no LLM in path', '|   (deterministic) |     pure JS, ~500 LOC'];
+  assert.deepStrictEqual(attributeSizeClaim(lines, 1), { file: 'cli/lib/verdict.js' });
+});
+
+test('attribution: outside the window is unattributable, not a wrong guess', () => {
+  const lines = ['verdict.js is the core', '', '', '', '', '', '', 'some unrelated thing is 42 lines'];
+  assert.strictEqual(
+    attributeSizeClaim(lines, 7),
+    null,
+    'a subject 7 lines away is beyond the 6-line window and must not be attributed'
+  );
+});
+
+test('attribution: two files named on the same nearest line is ambiguous, not a guess', () => {
+  const lines = ['bin/fqe.js dispatches to verdict.js in about 500 lines'];
+  const got = attributeSizeClaim(lines, 0);
+  assert.ok(got && got.ambiguous, 'expected an ambiguity signal rather than a silent pick');
+  assert.deepStrictEqual(got.ambiguous.sort(), ['cli/bin/fqe.js', 'cli/lib/verdict.js']);
+});
+
+test('size guard checks EVERY claim on a line, not just the first', () => {
+  // Regression test for `return` vs `continue` inside the forEach callback. The
+  // first claim here is unattributable; the second is about verdict.js and wrong.
+  // With a bare `return`, the second is never examined and the line reads clean.
+  const lines = ['a 50-line block, whereas verdict.js is 160 lines'];
+  const found = [];
+  lines.forEach((line, i) => {
+    for (const m of line.matchAll(SIZE_RE)) {
+      const target = attributeSizeClaim(lines, i);
+      if (!target || target.ambiguous) continue;
+      found.push({ claimed: Number(m[1].replace(/,/g, '')), file: target.file });
+    }
+  });
+  assert.ok(
+    found.some((f) => f.claimed === 160),
+    'the second claim on the line must still be inspected after the first is skipped'
+  );
+});
+
+test('the scan exemption list has not quietly grown', () => {
+  const expected = [
+    path.join(REPO, 'CHANGELOG.md'),
+    path.join(REPO, 'cli', 'test', 'doc_accuracy.test.js'),
+  ].sort();
+  assert.deepStrictEqual(
+    [...EXCLUDE_FILES].sort(),
+    expected,
+    'A file was exempted from the doc-accuracy scan. Exemptions are how a guard ' +
+      'stops guarding: each one is a place false claims may live forever. If the new ' +
+      'exemption is genuinely justified, update this assertion in the same commit so ' +
+      'the decision is visible in review rather than buried in a set literal.'
   );
 });
 

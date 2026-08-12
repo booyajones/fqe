@@ -145,6 +145,44 @@ test('renderExplainText() includes canonical thresholds table', () => {
   }
 });
 
+/**
+ * The verdict.js size printed by `fqe explain` must equal the real file.
+ *
+ * This is the one claim in the product that a reader is MOST likely to check,
+ * because `fqe explain` is pitched as the 5-minute audit. It used to be
+ * hardcoded, and drifted to 3x reality (160 vs 516) while saying two different
+ * numbers in consecutive sentences.
+ *
+ * It is now computed at runtime, which is why it needs a test HERE and cannot be
+ * covered by doc_accuracy.test.js: that guard scans for literal numbers in source
+ * text, and there is deliberately no longer a literal to find. Without this
+ * assertion the fixed claim would be guarded by nothing at all, and a revert to a
+ * hardcoded string, a moved verdict.js, or a silent fall into the catch would all
+ * pass CI.
+ */
+test('renderExplainText() reports verdict.js at its REAL line count', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'verdict.js'), 'utf8');
+  const fileLines = src.split('\n');
+  // Match `wc -l`: a trailing newline terminates the last line, it does not add one.
+  if (fileLines[fileLines.length - 1] === '') fileLines.pop();
+  const real = fileLines.length;
+
+  const text = renderExplainText(explain({ dir: freshDir() }));
+
+  assert.match(
+    text,
+    new RegExp(`${real} lines`),
+    `fqe explain must print verdict.js's real size (${real} lines). If this fails, the ` +
+      'CLI is reciting a wrong number to someone auditing whether to trust it.'
+  );
+  // Pin the fallback out of the happy path: a silent read failure degrades to
+  // "a few hundred lines", which would otherwise look like a normal sentence.
+  assert.ok(
+    !text.includes('a few hundred lines'),
+    'fqe explain fell back to the size-free phrasing, so reading verdict.js failed'
+  );
+});
+
 test('renderExplainText() includes the exit code taxonomy', () => {
   const data = explain({ dir: freshDir() });
   const text = renderExplainText(data);
