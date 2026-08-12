@@ -384,6 +384,77 @@ test('cli/test holds only *.test.js, so bare `node --test` runs exactly the suit
   );
 });
 
+/**
+ * The repo now has TWO package.json files and they must agree.
+ *
+ * The root one exists so `npx github:booyajones/fqe#<tag>` resolves at all: npm
+ * clones the repo and immediately reads package.json from the root, so without one
+ * the documented install failed with ENOENT on every version ever tagged. Adding
+ * it fixed the install and created a new drift risk in the same stroke, because
+ * the CLI reports its version from cli/package.json while npm reports the root's.
+ * Two numbers for one release is precisely how the original rot started.
+ */
+test('root and cli package.json versions agree', () => {
+  const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
+  assert.strictEqual(
+    root.version,
+    PKG.version,
+    `root package.json is ${root.version} but cli/package.json is ${PKG.version}. ` +
+      'npm would advertise one version while `fqe version` printed the other.'
+  );
+});
+
+/**
+ * The root package.json's `bin` must point at the real CLI entry point, since
+ * that mapping IS the documented install: `npx -p github:booyajones/fqe#<tag> fqe`
+ * resolves the `fqe` bin and nothing else. A typo here reintroduces exactly the
+ * bug this file was extended to close, and it would not show up in any doc scan.
+ */
+test('root package.json bin points at a CLI entry point that exists', () => {
+  const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
+  assert.ok(root.bin && root.bin.fqe, 'root package.json must declare a `fqe` bin');
+  const target = path.join(REPO, root.bin.fqe);
+  assert.ok(fs.existsSync(target), `root package.json bin.fqe points at ${root.bin.fqe}, which does not exist`);
+});
+
+/**
+ * No doc may tell a reader to run the install form that cannot work.
+ *
+ * `npx <pkg> cli/bin/fqe.js <sub>` passes the PATH as the subcommand, so the CLI
+ * exits with "unknown subcommand: cli/bin/fqe.js". Thirteen documented commands
+ * were in that form across nine files, including the README's headline install,
+ * and the pin guard happily confirmed every one of them named the current version
+ * while none of them ran. Checking that a claim is CURRENT is not checking that it
+ * is TRUE.
+ */
+test('nothing uses the npx form that passes a path as the subcommand', () => {
+  const broken = [];
+  for (const file of FILES) {
+    // Every scanned extension, NOT just .md. The first version of this test
+    // narrowed to Markdown and therefore missed the one occurrence that actually
+    // mattered: workflows/fqe-oracle-guard.yml.template, which adopters COPY into
+    // their own .github/workflows/ rather than read. There, the broken command
+    // makes fqe exit "unknown subcommand", which the template scores as ERROR and
+    // fails closed, so every PR in that repo demands a second reviewer while the
+    // guard never once reads the diff. The narrower scope excluded precisely the
+    // files that get EXECUTED instead of read.
+    fs.readFileSync(file, 'utf8')
+      .split('\n')
+      .forEach((line, i) => {
+        if (/npx\s[^\n]*github:booyajones\/fqe[^\n]*cli\/bin\/fqe\.js/.test(line)) {
+          broken.push(`${path.relative(REPO, file)}:${i + 1}`);
+        }
+      });
+  }
+  assert.deepStrictEqual(
+    broken,
+    [],
+    'these commands pass cli/bin/fqe.js to npx as if it were a subcommand, which ' +
+      'exits with "unknown subcommand". Use `npx --yes -p github:booyajones/fqe#<tag> fqe <sub>`:\n  ' +
+      broken.join('\n  ')
+  );
+});
+
 test('README status badge matches the current package.json version', () => {
   const readme = fs.readFileSync(path.join(REPO, 'README.md'), 'utf8');
   const m = readme.match(/status-v(\d+\.\d+\.\d+)-blue/);

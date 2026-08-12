@@ -57,6 +57,82 @@ jobs:
         working-directory: cli
         run: node scripts/check_test_count.js
 
+  # The documented install, actually executed.
+  #
+  # This is the job that would have caught the worst defect in the repo's history.
+  # The README's headline command was `npx --yes github:booyajones/fqe#<tag>
+  # cli/bin/fqe.js init`, and it had NEVER worked on any tagged version: there was
+  # no package.json at the repo root, so npm cloned the repo and died with ENOENT
+  # before running anything. Thirteen documented commands across nine files were in
+  # that form, and the doc guards confirmed every one of them named the current
+  # version while not one of them ran. Checking that a claim is CURRENT is not
+  # checking that it is TRUE, and only running the command closes that gap.
+  #
+  # Installs the commit under review rather than a tag, so it validates the
+  # packaging of THIS change instead of the last release.
+  #
+  # It installs from a `npm pack` TARBALL, not from the directory. Since npm 7 a
+  # `file:` directory spec is LINKED rather than packed, which would skip the
+  # pack-then-install path a real `github:` install takes. Today the two are
+  # equivalent, but the root manifest gaining a `files` array that omitted `cli/`
+  # would break the documented install while a linked install stayed green. The
+  # whole thesis here is that only running the thing proves the thing, so run the
+  # mechanism the adopter actually gets.
+  install:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    name: documented install (${{ matrix.os }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: pack this commit the way npm would
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          # Read the version via a RELATIVE path. Interpolating an absolute
+          # Windows path into a JS string literal makes node treat the
+          # backslashes as escapes: D:\a\fqe\fqe collapsed to D:aqeqe (\a bell,
+          # \f formfeed) and the require failed. The install was fine, the check
+          # was not. Caught by the windows leg on its first run.
+          expected="$(node -p "require('./package.json').version")"
+          echo "EXPECTED_VERSION=$expected" >> "$GITHUB_ENV"
+          npm pack --pack-destination "$RUNNER_TEMP" >/dev/null
+          # npm derives the tarball name from the manifest; find it rather than
+          # guessing, so a name change here does not silently skip the test.
+          tgz="$(ls "$RUNNER_TEMP"/*.tgz | head -1)"
+          echo "TARBALL=$tgz" >> "$GITHUB_ENV"
+          echo "packed: $tgz (expecting version $expected)"
+
+      - name: npx-install the tarball and run the CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(npx --yes -p "$TARBALL" fqe version)"
+          echo "fqe reported: $out"
+          # Must be the version this commit declares, not merely any version: a
+          # stale cached install would otherwise pass silently.
+          case "$out" in
+            *"$EXPECTED_VERSION"*) echo "matches the root manifest ($EXPECTED_VERSION)" ;;
+            *) echo "::error::expected version $EXPECTED_VERSION, got: $out"; exit 1 ;;
+          esac
+
+      - name: the CLI can actually do work after install
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/probe" && cd "$RUNNER_TEMP/probe" && git init -q .
+          npx --yes -p "$TARBALL" fqe init
+          test -f .fqe.yml || { echo "::error::fqe init produced no .fqe.yml"; exit 1; }
+          test -f .github/workflows/fqe-quality.yml || { echo "::error::fqe init produced no workflow"; exit 1; }
+          npx --yes -p "$TARBALL" fqe validate
+          echo "init + validate both work from a clean npx install"
+
   # This job exists to keep the branch-protection contract stable.
   #
   # `test` is the context required by branch protection on main. Turning the old
@@ -72,16 +148,19 @@ jobs:
   # treated as success by branch protection: the gate would go green precisely
   # when the tests went red.
   test:
-    needs: [suite, doc-counts]
+    needs: [suite, doc-counts, install]
     if: always()
     runs-on: ubuntu-latest
     name: test
     steps:
-      - name: every matrix leg and the doc-count check passed
+      - name: every matrix leg, the doc-count check, and the install check passed
         run: |
           echo "suite:      ${{ needs.suite.result }}"
           echo "doc-counts: ${{ needs.doc-counts.result }}"
-          if [ "${{ needs.suite.result }}" != "success" ] || [ "${{ needs.doc-counts.result }}" != "success" ]; then
+          echo "install:    ${{ needs.install.result }}"
+          if [ "${{ needs.suite.result }}" != "success" ] \
+            || [ "${{ needs.doc-counts.result }}" != "success" ] \
+            || [ "${{ needs.install.result }}" != "success" ]; then
             echo "::error::a required check did not succeed"
             exit 1
           fi

@@ -29,7 +29,7 @@ jobs:
   oracle-guard:
     runs-on: ubuntu-latest
     env:
-      FQE_TAG: "fqe-v0.18.2"
+      FQE_TAG: "fqe-v0.18.3"
       # Set to "--include-tests" to also require a second reviewer when a test
       # file changes alongside the source it grades. Leave empty to guard only
       # ground truth and grading rules (lower friction).
@@ -57,7 +57,7 @@ jobs:
           set -uo pipefail
           git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" || true
           set +e
-          npx --yes github:booyajones/fqe#${FQE_TAG} cli/bin/fqe.js \
+          npx --yes -p github:booyajones/fqe#${FQE_TAG} fqe \
             oracle-guard --base "$BASE_SHA" --head "$HEAD_SHA" $INCLUDE_TESTS
           GUARD_EXIT=$?
           set -e

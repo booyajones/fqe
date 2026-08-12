@@ -18,7 +18,7 @@ The rule of thumb: the gate and the bouncer block, Claude advises, the bypass is
 
 ```bash
 # 1. Bootstrap the gate (writes .fqe.yml, the workflow, the allowlists)
-npx --yes github:booyajones/fqe#fqe-v0.18.2 cli/bin/fqe.js init
+npx --yes -p github:booyajones/fqe#fqe-v0.18.3 fqe init
 
 # 2. Tell it your real runners. Edit .fqe.yml: point each runner at the
 #    command you already use (npm test, pytest, your linter, Stryker).
@@ -30,7 +30,7 @@ npx --yes github:booyajones/fqe#fqe-v0.18.2 cli/bin/fqe.js init
 gh secret set ANTHROPIC_API_KEY -R <owner>/<repo>   # paste your Anthropic key
 
 # 4. Validate the config before it can silently disable a check:
-npx --yes github:booyajones/fqe#fqe-v0.18.2 cli/bin/fqe.js validate
+npx --yes -p github:booyajones/fqe#fqe-v0.18.3 fqe validate
 
 # 5. Commit and open a PR. The gate runs, Claude reviews. Both are advisory
 #    until you do the next step.

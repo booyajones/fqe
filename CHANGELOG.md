@@ -2,6 +2,28 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.3] - 2026-08-12
+
+Tag: `fqe-v0.18.3`. **The documented install had never worked.** v0.18.2 shipped guards that proved every install pin named the current version. Running one revealed that none of those commands ran at all.
+
+### Fixed
+
+- **`npx --yes github:booyajones/fqe#<tag> cli/bin/fqe.js …` failed on every version ever tagged.** Verified identical `ENOENT` on v0.13.0, v0.17.0 and v0.18.2. Two independent causes, both now closed:
+  1. **No `package.json` at the repo root.** npm clones the repo and immediately reads the root manifest to install it; fqe's manifest lives in `cli/`, so npm died before running anything. A root manifest now exists, declaring `bin: { fqe: "cli/bin/fqe.js" }`.
+  2. **The command form passed a path where npx expects a binary name.** `npx <pkg> cli/bin/fqe.js init` makes `cli/bin/fqe.js` the subcommand, so the CLI exits with `unknown subcommand: cli/bin/fqe.js`. All 14 documented commands across nine files are now `npx --yes -p github:booyajones/fqe#<tag> fqe <subcommand>`.
+
+  The `git clone --branch` install used by the CircleCI recipe and the scaffolded workflow was never affected, which is why CI stayed green: the gate installs itself the way that works and documents the way that does not.
+
+### Added
+
+- **A CI job that runs the documented install** on ubuntu and windows: `npx`-installs the commit under review from `file:`, asserts the reported version equals the root manifest's, then runs `fqe init` and `fqe validate` in a scratch repo. This is the check that would have caught the defect. Installing from the checkout rather than a tag means it validates the commit being reviewed, not the last release.
+- **Three guards** in `doc_accuracy.test.js`: the root and `cli/` manifest versions must agree (adding the root one created a fresh drift risk in the same stroke, since npm advertises one version while `fqe version` prints the other); `bin.fqe` must point at a file that exists; and no doc may use the npx form that passes a path as a subcommand.
+
+### Notes
+
+- 776 tests, green on ubuntu + windows across Node 20 and 22.
+- The lesson worth keeping: v0.18.2's pin guard confirmed all 25 pins named the current version while not one of those commands could run. **Checking that a claim is current is not checking that it is true.** The only guard that closes that gap executes the thing.
+
 ## [0.18.2] - 2026-08-12
 
 Tag: `fqe-v0.18.2`. Doc-accuracy release. A cold re-read of the repo found that the claims fqe makes about ITSELF had rotted, in the exact places a skeptical engineer checks first. Nothing in the verdict core was wrong; everything describing it was. The fix is guards, not another hand-pass, because v0.17.0 already did a hand-pass and it did not hold for one release.

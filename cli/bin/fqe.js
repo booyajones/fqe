@@ -56,7 +56,10 @@ const reconcileLib = require('../lib/reconcile');
 const discoverLib = require('../lib/discover');
 const baselineLib = require('../lib/baseline');
 
-const FQE_VERSION = require('../package.json').version; // single source of truth (package.json)
+// cli/package.json is authoritative for the CLI's version. The repo also has a
+// ROOT manifest (added so `npx github:booyajones/fqe#<tag>` resolves at all), and
+// doc_accuracy.test.js pins the two to be equal, so bumping only one fails CI.
+const FQE_VERSION = require('../package.json').version;
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
 //   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
