@@ -7,6 +7,13 @@
 # broken at `node --test test/` (MODULE_NOT_FOUND on Node 22) while CI stayed
 # green on a different command. Running the documented command is what proves the
 # documented command.
+#
+# The matrix exists for the same reason. package.json declares engines
+# node >= 20, and a floor nothing runs is a claim, not a fact. Node 20 is the
+# floor and 22 is what the workflows scaffold, so both are proven on every PR.
+# Windows is here because the repo asserts cross-platform behavior in several
+# places ("1 Windows-symlink skip", "no shell glob expansion needed on any
+# platform"), and an untested self-claim is the exact defect v0.18.2 closes.
 name: tests
 
 on:
@@ -20,12 +27,32 @@ permissions:
 
 jobs:
   test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '22']
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - name: unit + integration tests
+        working-directory: cli
+        run: npm test
+
+  # Separate job: a suite cannot count itself without spawning itself forever,
+  # so the doc test-count claims are verified here, once, after the suite.
+  doc-counts:
     runs-on: ubuntu-latest
+    name: doc test-count claims
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - name: unit + integration tests
+      - name: every documented test count matches reality
         working-directory: cli
-        run: npm test
+        run: node scripts/check_test_count.js

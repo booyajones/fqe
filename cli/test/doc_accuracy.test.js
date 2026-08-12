@@ -49,7 +49,12 @@ const PKG = JSON.parse(fs.readFileSync(path.join(REPO, 'cli', 'package.json'), '
 const EXPECTED_TAG = `fqe-v${PKG.version}`;
 
 const DOC_EXTS = new Set(['.md', '.yml', '.yaml', '.template', '.js', '.json']);
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.fqe-out', 'out']);
+// Generated / transient trees. `.stryker-tmp` and `reports` are gitignored build
+// output: a Stryker sandbox holds a SNAPSHOT copy of package.json and the docs, so
+// scanning it could report a stale pin sourced from a directory that is not part of
+// the working tree at all. Cheap insurance, since a local `npx stryker run` before
+// `npm test` is a workflow this repo documents.
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.fqe-out', 'out', '.stryker-tmp', 'reports']);
 /**
  * Files the repo scan does not read, and the only two reasons that is allowed.
  *
@@ -136,6 +141,20 @@ const SIZE_TOLERANCE = 0.15;
  */
 const MIN_SIZE_CLAIMS = 8;
 
+/**
+ * The same floor, for pins. This one matters more than it looks.
+ *
+ * The pin check originally asserted only `checked > 0`, which is barely a floor at
+ * all. This release exists because 26 stale pins across 15 files went unnoticed, so
+ * "how many pins am I actually watching" is the number that decides whether the
+ * guard is doing its job. A future PR that consolidates most install examples into
+ * a form PIN_CONTEXT does not match (a Docker run, say) would drop coverage from 25
+ * to 1 and still pass a "not zero" assertion, checking 96% less while looking
+ * identical in CI. Set below the current count so ordinary edits do not trip it,
+ * and high enough that a collapse is loud.
+ */
+const MIN_PIN_CLAIMS = 20;
+
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
@@ -178,9 +197,11 @@ test('every executable install pin matches the current package.json version', ()
   }
 
   assert.ok(
-    checked > 0,
-    'found zero executable install pins to check; the pin regex or the docs changed shape, ' +
-      'so this guard is checking nothing (fail closed rather than report a hollow pass)'
+    checked >= MIN_PIN_CLAIMS,
+    `only ${checked} install pin(s) inspected, expected at least ${MIN_PIN_CLAIMS}. ` +
+      'Either the pin regex stopped matching the docs, or the docs stopped stating pins ' +
+      'in a recognizable form. Both mean this guard is now watching far less than it ' +
+      'appears to (fail closed rather than report a hollow pass).'
   );
   assert.deepStrictEqual(
     stale,
@@ -323,6 +344,43 @@ test('the scan exemption list has not quietly grown', () => {
       'stops guarding: each one is a place false claims may live forever. If the new ' +
       'exemption is genuinely justified, update this assertion in the same commit so ' +
       'the decision is visible in review rather than buried in a set literal.'
+  );
+});
+
+/**
+ * Bare `node --test` (the package script) uses Node's DEFAULT discovery, which
+ * treats ANY .js file under a directory named `test` as a test file, not just
+ * `*.test.js`. Verified on Node 22.16: dropping `cli/test/fixtures/stray.js` in
+ * place causes it to be discovered and EXECUTED as a test.
+ *
+ * `fixtures/` is deliberately scanned rather than skipped, because that is exactly
+ * where the trap is: a contributor adding a `.js` fixture next to the existing
+ * `.xml`/`.txt` ones is doing the natural thing, and would silently get it run as
+ * a test. Skipping the directory would put the hole precisely where the risk is.
+ *
+ * Also verified: Node does NOT descend into dot-directories, so a crashed Stryker
+ * run leaving `.stryker-tmp/sandbox-*/test/*.test.js` behind is not picked up
+ * (0 phantom tests, suite count unchanged).
+ */
+test('cli/test holds only *.test.js, so bare `node --test` runs exactly the suite', () => {
+  const strays = [];
+  (function scan(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) scan(full);
+      else if (e.name.endsWith('.js') && !e.name.endsWith('.test.js')) {
+        strays.push(path.relative(REPO, full));
+      }
+    }
+  })(__dirname);
+
+  assert.deepStrictEqual(
+    strays,
+    [],
+    'non-test .js file(s) live under cli/test/. Node\'s default discovery executes ' +
+      'these as test files under `npm test`, so a helper or fixture module runs as ' +
+      'if it were a suite. Put shared code in cli/lib/, or name it *.test.js:\n  ' +
+      strays.join('\n  ')
   );
 });
 

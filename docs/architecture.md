@@ -70,10 +70,21 @@ Every output fqe needs at decision time persists in at least one of these server
 ## What the verdict logic actually does
 
 `computeVerdict` runs a fixed sequence of passes over its input. Each pass may only
-ADD a FLAG or a FAIL. No pass can ever clear one, which is why the order does not
-matter to the outcome and why a new pass cannot weaken an existing guarantee. That
-property is not a convention: `test/source_hygiene.test.js` fails the build if either
-accumulator is ever assigned anything but the literal `true`.
+ADD a FLAG or a FAIL. No pass clears one, which is why the order does not matter to
+the verdict and why a new pass cannot weaken an existing guarantee. That property is
+not left to convention: `test/source_hygiene.test.js` fails the build if either
+accumulator is assigned anything but the literal `true`. Its reach is honest rather
+than total, and worth knowing: it is a regex over stripped source, so it catches
+every *direct* assignment but not aliasing (`let h = hasFail; h = false`),
+destructuring, or property writes. `verdict.js` uses plain directly-assigned locals,
+so that is sufficient for the code as written, and the guard is what makes changing
+that a visible decision.
+
+Order does not matter to the *verdict*. It can matter to the `reasons` list: a
+malformed adversarial count makes `wilson95()` throw inside Pass 3, so Passes 4-12
+never run and their reasons never appear. That fails closed, so the merge decision
+is unaffected, but a receipt read alongside this table may hold fewer reasons than
+the table implies.
 
 ```
 Pass 1   required runner declared but did not run            -> FAIL

@@ -51,6 +51,17 @@ function verdictSize() {
   }
 }
 
+/**
+ * Computed ONCE. Two reasons, both learned from the bug being fixed:
+ *
+ *  - The original defect was two sentences printing different numbers (160 and
+ *    140). A single constant makes that structurally impossible rather than
+ *    merely unlikely.
+ *  - Every `require('./explain')` would otherwise re-read verdict.js once per
+ *    interpolation site, on a module that bin/fqe.js loads for ordinary commands.
+ */
+const VERDICT_SIZE = verdictSize();
+
 const INVARIANTS = [
   {
     n: 1,
@@ -70,12 +81,12 @@ const INVARIANTS = [
     name: 'No LLM in the verdict path',
     plain_english:
       'The verdict (PASS / FLAG / FAIL) is computed by a deterministic Node function ' +
-      `(cli/lib/verdict.js, ${verdictSize()}, fully unit-tested). Same inputs always produce ` +
+      `(cli/lib/verdict.js, ${VERDICT_SIZE}, fully unit-tested). Same inputs always produce ` +
       'the same output. No language model is ever asked "is this PR good?" — that would ' +
       'introduce non-determinism and an evaluator with its own failure mode.',
     why_it_matters:
       'This means the gate is auditable, reproducible, and Claude-skill-version-independent. ' +
-      `You can read ${verdictSize()} of pure JavaScript and know exactly when the gate blocks.`,
+      `You can read ${VERDICT_SIZE} of pure JavaScript and know exactly when the gate blocks.`,
   },
   {
     n: 3,

@@ -123,7 +123,7 @@ This drops in `stryker.conf.json`, `scripts/fqe_stryker_runner.js`, and a `stryk
 
 ## Production install (SHA-pinned)
 
-The default install command in Step 1 uses `fqe-v0.18.2`, a git tag. Tags can be force-pushed, so if upstream's tag is moved (accidentally or maliciously) every repo running the tag-pinned install picks up the new code on the next CI run.
+The default install command in Step 1 pins a git tag. Tags can be force-pushed, so if upstream's tag is moved (accidentally or maliciously) every repo running the tag-pinned install picks up the new code on the next CI run.
 
 For production, pin to a commit SHA instead. Find the SHA for the release you want at https://github.com/booyajones/fqe/releases, then:
 

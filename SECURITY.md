@@ -24,7 +24,7 @@ fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when 
 
 ### Actor 3: Compromised maintainer or stolen GitHub token
 
-**Goal:** push a malicious patch under the `fqe-v0.18.2` tag and have it executed automatically by every gated repo.
+**Goal:** push a malicious patch under the release tag that gated repos clone, and have it executed automatically by every one of them.
 
 **Mitigation:** tags can be force-moved, which is the supply-chain risk here. Defences: (1) signed commits on the public repo, (2) branch protection on `main` requiring review, (3) the workflow can be re-pinned to a SHA instead of a tag for higher assurance (`--branch fqe-v0.18.2` becomes `--branch <40-char SHA>`).
 
@@ -33,12 +33,12 @@ fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when 
 Three commitments the codebase enforces. If you find code that violates one, that's a critical bug. Report it.
 
 1. **No identity claim is read from a file the constrained actor wrote.** Bypass requester identity comes from the server-recorded comment author (`gh api /repos/{owner}/{repo}/issues/{pr}/comments`, `user.login`). Receipt content is informational only. `bypass.requester_source` MUST be a server-recorded source (`github_comments_api_v3`, or the legacy `github_events_api_v3`) or `buildReceipt` throws.
-2. **No LLM is in the verdict path.** `cli/lib/verdict.js` is a pure deterministic Node function. Same inputs produce the same output. 749 tests cover the failure paths (Claude reviews and can author tests, but never computes the verdict). No language model is ever asked "is this PR good?" The full-suite policy (require_classes) is enforced here too: a required test class with no passing runner is a FAIL, fail closed.
+2. **No LLM is in the verdict path.** `cli/lib/verdict.js` is a pure deterministic Node function. Same inputs produce the same output. The test suite covers the failure paths (Claude reviews and can author tests, but never computes the verdict). No language model is ever asked "is this PR good?" The full-suite policy (require_classes) is enforced here too: a required test class with no passing runner is a FAIL, fail closed.
 3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts AND Check Run outputs (server-side, immutable per run). In 0.1.0, GitHub workflow artifacts default to 90-day retention (configurable down, not up without an Enterprise plan). Check Run outputs are limited to ~65KB but persist with the commit indefinitely. **For SOX-grade 7-year retention, mirror the receipt to an external object store via a post-merge `workflow_run` job.** The 0.2 release ships an opt-in `audits/<sha>/` archiver that commits the receipt to the protected branch automatically.
 
 ## Supply chain
 
-- **fqe-v0.18.2 tag** is the only pinned reference workflows use. To pin tighter, replace the tag with a 40-char SHA in `.github/workflows/fqe-quality.yml`.
+- **The pinned release tag** is the only reference workflows clone. To pin tighter, replace the tag with a 40-char SHA in `.github/workflows/fqe-quality.yml`.
 - **Node, yq, gh CLI**: SHA256-pinned in the workflow's install step. Failed verification means the workflow fails closed.
 - **LibreOffice**: installed from the Ubuntu apt repository inside the GitHub-hosted runner (no third-party mirror).
 - **No `curl | bash`**. All downloads are checksum-verified.

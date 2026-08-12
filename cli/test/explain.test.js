@@ -175,6 +175,13 @@ test('renderExplainText() reports verdict.js at its REAL line count', () => {
     `fqe explain must print verdict.js's real size (${real} lines). If this fails, the ` +
       'CLI is reciting a wrong number to someone auditing whether to trust it.'
   );
+
+  // BOTH sentences, checked separately. The original defect was not just a stale
+  // number, it was invariant 2 stating two DIFFERENT sizes one line apart. Asserting
+  // only the rendered blob would pass if one of them drifted again.
+  const inv2 = INVARIANTS.find((i) => i.n === 2);
+  assert.match(inv2.plain_english, new RegExp(`\\b${real} lines\\b`));
+  assert.match(inv2.why_it_matters, new RegExp(`\\b${real} lines\\b`));
   // Pin the fallback out of the happy path: a silent read failure degrades to
   // "a few hundred lines", which would otherwise look like a normal sentence.
   assert.ok(
