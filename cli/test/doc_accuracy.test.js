@@ -762,6 +762,36 @@ test("SKILL.md's status narrative leads with the release its number claims", () 
   );
 });
 
+/**
+ * Every container reference must name the real org.
+ *
+ * v0.17.0's changelog said the Docker org had been made consistent, by hand. It
+ * had not: two shipped templates still read `ghcr.io/finexio/fqe` at v0.18.9, and
+ * those are files an adopter copies. v0.18.10 fixed them by hand again, which is
+ * the same move that already failed once. A hand-fix does not hold; the only thing
+ * that holds is a test, which is the founding premise of this whole file.
+ */
+test('every container reference names the booyajones org', () => {
+  const wrong = [];
+  for (const file of FILES) {
+    fs.readFileSync(file, 'utf8')
+      .split('\n')
+      .forEach((line, i) => {
+        const m = line.match(/ghcr\.io\/([a-z0-9_.-]+)\//i);
+        if (m && m[1] !== 'booyajones') {
+          wrong.push(`${path.relative(REPO, file)}:${i + 1} references ghcr.io/${m[1]}/`);
+        }
+      });
+  }
+  assert.deepStrictEqual(
+    wrong,
+    [],
+    'container image(s) under the wrong org. These ship to adopters, who copy or ' +
+      `generate them, so a wrong org is a pull that fails or resolves somewhere ` +
+      `unintended:\n  ${wrong.join('\n  ')}`
+  );
+});
+
 test('README status badge matches the current package.json version', () => {
   const readme = fs.readFileSync(path.join(REPO, 'README.md'), 'utf8');
   const m = readme.match(/status-v(\d+\.\d+\.\d+)-blue/);

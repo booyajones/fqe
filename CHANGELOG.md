@@ -2,6 +2,25 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.11] - 2026-08-12
+
+Tag: `fqe-v0.18.11`. Follow-ups to v0.18.10, and the last release of this session.
+
+### Fixed
+
+- **The `RUNNER_TEMP` fallback was dead code for the case it was written for.** The step opens with `set -euo pipefail`, so under `set -u` an UNSET `RUNNER_TEMP` aborts on the expansion itself with `unbound variable` and the following fallback never runs. It caught only set-but-empty. Unset is the normal state outside GitHub Actions (`act`, a bare-shell copy-paste), which is precisely who the fallback exists for. Now `${RUNNER_TEMP:-/tmp}`, escaped for the JS template literal that generates it. Verified both directions: the new form creates a directory with `RUNNER_TEMP` unset under `set -u`; the old form dies with `unbound variable`.
+- **The SECURITY.md table under-reported in the direction it was written to fix.** It attributed the container form to "the two files an adopter copies", but `fqe init` **generates** it too, into `.github/workflows/fqe-second-approve.yml`. So "what init scaffolds" was not a synonym for the fetch row. It also graded two rows on their optional hardening and the third on its shipped state: **as shipped all three are mutable pins**. The table now separates "as shipped" from "ceiling if hardened" and says which files are generated rather than copied.
+- **The CircleCI baked path was unquoted inside the emitted shell function.** `mktemp -d` honours `TMPDIR`, so an executor with a space in `TMPDIR` would split the path and every later `fqe` call would fail with `Cannot find module`.
+- The scaffold now runs `npm ci --omit=dev` rather than `npm install`. `cli/package-lock.json` is checked in and was just fetched, so `ci` installs exactly it and fails closed when manifest and lock disagree. Identical today (zero runtime deps); the moment one is added, `install` could resolve outside the lockfile, which is the same drift channel v0.18.4 closed on the manifest side.
+
+### Added
+
+- **A guard that the container org is `booyajones`.** v0.17.0's changelog claimed this was made consistent by hand; it was not, and v0.18.10 fixed it by hand again. Two hand-fixes of the same fact is the signal to write the test. Negative-controlled: reverting one template to `finexio` turns it red and names the file.
+
+### Notes
+
+- 786 tests. Seven review rounds on this file line, every one finding something real. The findings shrank steadily (a broken headline install, then a broken hardening path, then a dead fallback, then a quoting bug) but never hit zero, so this stops on a judgment call rather than on a clean sweep. The remaining known gap is stated plainly above: the container image is a mutable tag and is not production-ready until it is published and pinned by digest.
+
 ## [0.18.10] - 2026-08-12
 
 Tag: `fqe-v0.18.10`. Supply-chain follow-ups to v0.18.9, all found by review of it.

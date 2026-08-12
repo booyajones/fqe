@@ -199,7 +199,7 @@ jobs:
           # it to a SHA (which SECURITY.md and getting-started.md both recommend
           # for production) failed with "Remote branch <sha> not found in upstream
           # origin", so the documented hardening path broke the gate outright.
-          FQE_REF="fqe-v0.18.10"
+          FQE_REF="fqe-v0.18.11"
           # A FRESH directory per job, never a fixed path under /tmp.
           #
           # This step fetches code and then executes it, so where it stages that
@@ -211,14 +211,25 @@ jobs:
           # belongs to someone else, which under set -e is the same red gate it
           # was meant to remove. RUNNER_TEMP is per-job and runner-owned, and
           # mktemp -d gives a fresh unique name under it on every run.
-          FQE_TMPDIR="$RUNNER_TEMP"
-          [ -n "$FQE_TMPDIR" ] || FQE_TMPDIR=/tmp
-          FQE_SRC="$(mktemp -d "$FQE_TMPDIR/fqe-src.XXXXXX")"
+          # \${VAR:-default}, not a two-line test. This step opens with
+          # \`set -euo pipefail\`, so under set -u an UNSET RUNNER_TEMP aborts on
+          # the expansion itself with "unbound variable" and a following fallback
+          # never runs. It would only have caught set-but-empty, which is not the
+          # case that motivates a fallback. Unset is the normal state outside
+          # GitHub Actions (act, a bare-shell copy-paste), which is exactly who
+          # the fallback is for. The backslashes escape this JS template literal:
+          # the file generates shell, so \${...} and backticks are JS syntax here.
+          FQE_SRC="$(mktemp -d "\${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
           git -C "$FQE_SRC" init -q .
           git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
           git -C "$FQE_SRC" checkout -q --detach FETCH_HEAD
           cd "$FQE_SRC/cli"
-          npm install --omit=dev
+          # npm ci, not npm install: cli/package-lock.json is checked in and was
+          # just fetched, so ci installs exactly it and fails closed when manifest
+          # and lock disagree. Identical today (the CLI has zero runtime deps);
+          # the moment one is added, install could resolve outside the lockfile,
+          # which is the same drift channel v0.18.4 closed on the manifest side.
+          npm ci --omit=dev
           chmod +x bin/fqe.js
           sudo ln -sf "$PWD/bin/fqe.js" /usr/local/bin/fqe
           fqe version
