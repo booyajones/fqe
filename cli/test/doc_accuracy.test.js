@@ -316,45 +316,90 @@ test('every source-size claim in the docs is within 15% of the real file', () =>
  * characters away, and nothing went red because the dropped pin happened to be
  * correct.
  *
- * These pass `proximity` EXPLICITLY rather than leaning on the constant, and pin
- * both edges at exactly the boundary. An earlier version used the default and put
- * the negative case 240 characters past it, which only asserted "the window is
- * somewhere between 161 and 399" and would have stayed green for almost any value.
- * A control that brackets a boundary does not pin it.
+ * THE WINDOW IS ASYMMETRIC, and none of the earlier comments here said so.
+ * `pinContextNear` slices `[matchStart - proximity, matchEnd + proximity)`, so a
+ * token BEFORE the tag need only START within `proximity`, while a token AFTER it
+ * must END inside the window. The allowed gap is therefore a full `proximity`
+ * leading but only `proximity - token.length` trailing. That asymmetry is exactly
+ * why SECURITY.md's pin fell out at 80: `git clone` began 85 past the tag and had
+ * to finish by 80.
+ *
+ * Two kinds of control below, because they answer different questions:
+ *   - the PROX-parameterised pair pins the RULE, independent of the constant
+ *   - the default-constant pair pins the CONSTANT itself
+ * Only the first pair existed after v0.18.6, which left the shipped default
+ * unconstrained downward: PIN_PROXIMITY could have been lowered to almost nothing
+ * and every test stayed green. The v0.18.6 changelog claimed the reverse, that the
+ * older control bounded the window only loosely. Working the arithmetic out, that
+ * older control sat exactly at the lower edge and went red the moment the constant
+ * dropped below 160, so the claim was wrong and the change traded a real bound for
+ * a parameterised one. Keep both.
  */
 const PROX = 50; // small, explicit, and independent of PIN_PROXIMITY
 
-test('pin proximity: a context token exactly at the trailing edge counts', () => {
+test('pin proximity: a trailing token ending exactly at the edge counts', () => {
   const tag = 'fqe-v1.2.3';
-  // `git clone` must START within `proximity` chars past the end of the tag.
+  // A trailing token must END within the window, so the gap it may sit after the
+  // tag is `PROX - token.length`, not `PROX`.
   const line = `${tag}${'x'.repeat(PROX - 'git clone'.length)}git clone`;
   assert.strictEqual(pinContextNear(line, 0, tag.length, PROX), true);
 });
 
-test('pin proximity: one character past the trailing edge does not count', () => {
+test('pin proximity: a trailing token one character further does not count', () => {
   const tag = 'fqe-v1.2.3';
   const line = `${tag}${'x'.repeat(PROX - 'git clone'.length + 1)}git clone`;
   assert.strictEqual(
     pinContextNear(line, 0, tag.length, PROX),
     false,
     'one character past the window must flip the result, or the boundary is not ' +
-      'where the constant says it is and the window can drift silently'
+      'where the parameter says it is and the window can drift silently'
   );
 });
 
-test('pin proximity: a context token exactly at the leading edge counts', () => {
+test('pin proximity: a leading token starting exactly at the edge counts', () => {
   const tag = 'fqe-v1.2.3';
   const verb = 'git clone';
-  // Real commands put the verb BEFORE the tag, so the window must look behind.
+  // Leading side is the asymmetric one: the token only has to START in the window.
   const line = `${verb}${'x'.repeat(PROX - verb.length)}${tag}`;
   assert.strictEqual(pinContextNear(line, line.indexOf(tag), tag.length, PROX), true);
 });
 
-test('pin proximity: one character past the leading edge does not count', () => {
+test('pin proximity: a leading token one character further does not count', () => {
   const tag = 'fqe-v1.2.3';
   const verb = 'git clone';
   const line = `${verb}${'x'.repeat(PROX - verb.length + 1)}${tag}`;
   assert.strictEqual(pinContextNear(line, line.indexOf(tag), tag.length, PROX), false);
+});
+
+/**
+ * These two pin the SHIPPED CONSTANT, not just the rule. Without them
+ * `PIN_PROXIMITY` can be lowered freely and the parameterised tests above stay
+ * green, which is how the real SECURITY.md pin was dropped in the first place.
+ */
+test('PIN_PROXIMITY is large enough for the real SECURITY.md-shaped pin', () => {
+  const tag = 'fqe-v1.2.3';
+  const verb = 'git clone';
+  // The case that regressed at 80: the verb began 85 characters past the tag.
+  const line = `${tag}${'x'.repeat(85)}${verb}`;
+  assert.strictEqual(
+    pinContextNear(line, 0, tag.length),
+    true,
+    `PIN_PROXIMITY (${PIN_PROXIMITY}) is too small: a context token 85 characters ` +
+      'past the tag is a real shape in SECURITY.md, and dropping it silently shrinks ' +
+      'pin coverage without turning anything red'
+  );
+});
+
+test('PIN_PROXIMITY is small enough that distant prose cannot claim a tag', () => {
+  const tag = 'fqe-v1.2.3';
+  const line = `${tag}${'x'.repeat(PIN_PROXIMITY + 50)}git clone`;
+  assert.strictEqual(
+    pinContextNear(line, 0, tag.length),
+    false,
+    `PIN_PROXIMITY (${PIN_PROXIMITY}) is too large: an unrelated command far away ` +
+      'would claim this tag, which is how one incidental "npx" in a 4000-character ' +
+      'paragraph marked every version token in it as an executable pin'
+  );
 });
 
 /**
@@ -568,7 +613,14 @@ test('root and cli package.json dependency fields agree', () => {
     const where = [
       extraInCli.length ? `only in cli/package.json: ${extraInCli.join(', ')}` : '',
       extraInRoot.length ? `only in the root package.json: ${extraInRoot.join(', ')}` : '',
-      !extraInCli.length && !extraInRoot.length ? 'same keys on both sides, so the values differ (a version skew)' : '',
+      // The bundle* fields are ARRAYS, so equal membership with unequal content
+      // means order or a duplicate, not a version skew. Saying "version skew" there
+      // sends the reader hunting for a version that does not exist.
+      !extraInCli.length && !extraInRoot.length
+        ? Array.isArray(rootVal)
+          ? 'same entries on both sides, so the order or a duplicate differs'
+          : 'same keys on both sides, so the values differ (a version skew)'
+        : '',
     ]
       .filter(Boolean)
       .join('; ');
@@ -647,7 +699,12 @@ test("SKILL.md's status narrative leads with the release its number claims", () 
   // doc in this repo carries an install pin, and adding one below the status block
   // would hand this guard a `v0.18.x` that has nothing to do with the narrative. It
   // fails closed on the paragraph it actually names.
-  const after = text.slice(label.index + label[0].length).split('\n')[0];
+  // Split on a BLANK line, so this bounds the paragraph the comment and the failure
+  // message both name. `.split('\n')[0]` bounded the LINE instead, which coincides
+  // today only because the status block is one ~4000-character line. Hard-wrapping
+  // it would have turned this guard red with "names no release after its label",
+  // pointing at a formatting change rather than at drift.
+  const after = text.slice(label.index + label[0].length).split(/\n\s*\n/)[0];
   const firstVersion = after.match(/v(\d+\.\d+\.\d+)/);
   assert.ok(
     firstVersion,

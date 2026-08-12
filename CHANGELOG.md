@@ -2,6 +2,25 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.7] - 2026-08-12
+
+Tag: `fqe-v0.18.7`. Corrections to v0.18.6, including a false claim in its own changelog entry.
+
+### Fixed
+
+- **v0.18.6 traded a real bound for a parameterised one, and said the opposite.** Its entry claimed the older proximity control "only asserted that the window was somewhere between 161 and 399". Working the arithmetic out, that control placed `git clone` ending at index 169 against a slice ending at `matchEnd + proximity`, so it went red the moment `PIN_PROXIMITY` dropped below 160: it was pinned exactly at the lower edge. Replacing it with tests that pass `proximity` explicitly pinned the RULE but left the shipped CONSTANT unconstrained downward, which is the very thing that dropped a real SECURITY.md pin at 80. Both kinds of control now exist, and the constant is pinned in both directions (verified: 80 goes red as too small, 5000 as too large).
+- **The proximity window is asymmetric and no comment said so.** A token before the tag need only START within `proximity`; one after it must END inside the window, so the trailing allowance is `proximity - token.length`. That asymmetry is exactly why SECURITY.md's `git clone`, beginning 85 characters past the tag, fell out at 80. Three comments describing the trailing edge as "exactly at the boundary" were wrong about which character the boundary applies to.
+- **"A version skew" was the wrong phrase for the `bundle*` fields**, whose values are arrays: equal membership with unequal content is an order or duplicate difference, and the message sent readers hunting for a version that did not exist.
+- **The narrative guard bounded a LINE while its comment and failure message both said PARAGRAPH.** They coincide only because SKILL.md's status block is one ~4000-character line, so hard-wrapping it would have turned the guard red pointing at formatting rather than drift. Now split on a blank line.
+
+### Not fixed, deliberately
+
+- The two `bundle*` spellings are still compared independently, so declaring `bundledDependencies` in one manifest and `bundleDependencies` in the other fails even though npm normalizes them to the same thing. That is a false red on config that is correct in effect. Folding the alias before comparing would fix it, but it also widens what the guard reasons about, and this release is a correction pass rather than a feature pass. Fail-closed is the right default in the meantime.
+
+### Notes
+
+- 785 tests. This is the fourth consecutive round to find defects only in the guards. The bugs are getting smaller each time (a wrong noun, a bound off by a token length) but they are still the same class, so this release deliberately adds no new guard family: every change is a correction to something already shipped.
+
 ## [0.18.6] - 2026-08-12
 
 Tag: `fqe-v0.18.6`. A third review round on the guards, and the honest headline is that v0.18.5 shipped with the defect it was written to fix.
