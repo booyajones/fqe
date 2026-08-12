@@ -2,6 +2,24 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.8] - 2026-08-12
+
+Tag: `fqe-v0.18.8`. The documented production hardening did not work, and two of v0.18.7's own claims were wrong.
+
+### Security
+
+- **SHA-pinning, this repo's recommended production hardening, broke the gate instead of hardening it.** `SECURITY.md` said to replace `--branch fqe-v…` with `--branch <40-char SHA>`, and the scaffolded workflow cloned with `--branch "$FQE_TAG"`. `git clone --branch` accepts a ref NAME only: passing a commit SHA fails with `Remote branch <sha> not found in upstream origin`. Verified against the live repo. An adopter following the security guidance got a workflow that could not install fqe at all. The scaffolded step now sets `FQE_REF` and uses `git fetch --depth=1 origin "$FQE_REF"` plus `git checkout --detach FETCH_HEAD`, which is verified working for **both** a tag and a raw 40-char SHA.
+
+### Fixed
+
+- **v0.18.7's headline second finding was false: the window is not asymmetric.** For a token of length L at gap g, trailing admits it iff `matchEnd + g + L <= matchEnd + proximity` and leading iff `matchStart - proximity <= matchStart - g - L`. Both reduce to `g <= proximity - L`. Confirmed by running it: at proximity 50 with a 9-character verb, both sides flip between g=41 and g=42. What actually put SECURITY.md's pin out of reach at 80 is that the token's LENGTH eats into the allowance, which is true on either side.
+- **v0.18.7's upper-bound control was a tautology, and the entry claimed it as proof.** The fixture was `'x'.repeat(PIN_PROXIMITY + 50)`, so the gap grew in lockstep with the window and the assertion held for every possible value. The changelog said the constant was "pinned in both directions (verified: 80 too small, 5000 too large)"; the 5000 run went red for an unrelated reason, which was misread as confirmation. The fixture is now a fixed 1000 characters, and the two bounds are verified to fire independently: 80 trips the lower bound, 1200 trips the upper, 160 is green.
+- The array-vs-object wording branch now keys off the same predicate that decides the field's type, rather than off `Array.isArray` of a value that only defaults to an array.
+
+### Notes
+
+- 785 tests. `fqe init` output re-generated and checked: the step is valid YAML and the fetch form resolves both ref kinds.
+
 ## [0.18.7] - 2026-08-12
 
 Tag: `fqe-v0.18.7`. Corrections to v0.18.6, including a false claim in its own changelog entry.

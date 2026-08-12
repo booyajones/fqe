@@ -20,13 +20,13 @@ fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when 
 
 **Goal:** inject arbitrary code into the gate's runtime via Node, yq, gh CLI, LibreOffice, etc.
 
-**Mitigation:** every binary download verifies a SHA256 pin. The `fqe-v0.18.7` tag in `booyajones/fqe` is the only thing workflows clone, and the workflow uses `git clone --branch fqe-v0.18.7` (not HEAD).
+**Mitigation:** every binary download verifies a SHA256 pin. The `FQE_REF` in `booyajones/fqe` is the only thing workflows fetch, and the workflow fetches that exact ref with `git fetch --depth=1 origin "$FQE_REF"` followed by `git checkout --detach FETCH_HEAD` (never HEAD of a branch).
 
 ### Actor 3: Compromised maintainer or stolen GitHub token
 
 **Goal:** push a malicious patch under the release tag that gated repos clone, and have it executed automatically by every one of them.
 
-**Mitigation:** tags can be force-moved, which is the supply-chain risk here. Defences: (1) signed commits on the public repo, (2) branch protection on `main` requiring review, (3) the workflow can be re-pinned to a SHA instead of a tag for higher assurance (`--branch fqe-v0.18.7` becomes `--branch <40-char SHA>`).
+**Mitigation:** tags can be force-moved, which is the supply-chain risk here. Defences: (1) signed commits on the public repo, (2) branch protection on `main` requiring review, (3) the workflow can be re-pinned to a SHA instead of a tag for higher assurance: set `FQE_REF` to the 40-char commit SHA. The scaffolded step fetches that ref rather than cloning it, because `git clone --branch` accepts a ref NAME only and fails on a raw SHA with "Remote branch &lt;sha&gt; not found in upstream origin". Until v0.18.8 this page told you to pass the SHA to `--branch`, which broke the gate instead of hardening it.
 
 ## Architectural invariants
 
@@ -38,7 +38,7 @@ Three commitments the codebase enforces. If you find code that violates one, tha
 
 ## Supply chain
 
-- **The pinned release tag** is the only reference workflows clone. To pin tighter, replace the tag with a 40-char SHA in `.github/workflows/fqe-quality.yml`.
+- **The pinned release ref** is the only thing workflows fetch. To pin tighter, set `FQE_REF` in `.github/workflows/fqe-quality.yml` to a 40-char commit SHA; the fetch form accepts either a tag or a SHA.
 - **Node, yq, gh CLI**: SHA256-pinned in the workflow's install step. Failed verification means the workflow fails closed.
 - **LibreOffice**: installed from the Ubuntu apt repository inside the GitHub-hosted runner (no third-party mirror).
 - **No `curl | bash`**. All downloads are checksum-verified.
@@ -72,7 +72,7 @@ For Finexio production repos:
 
 1. **Required status checks** on the protected branch: `fqe/pass` and `fqe/second-reviewer-required`.
 2. **Enforce admins** ON in branch protection. No admin-merge override.
-3. **Pin `fqe-v0.18.7` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.18.7`).
+3. **Pin `fqe-v0.18.8` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.18.8`).
 4. **Restrict who is on `.github/fqe-bypass-allowlist.yml`.** The workflow reads it at the default-branch HEAD, so a PR cannot add itself and a removal takes effect immediately on in-flight PRs.
 5. **Enable Dependabot** on your gated repo for the GitHub Actions used in `fqe-quality.yml`.
 6. **Audit `.github/fqe-state/bypass-tally.jsonl`** weekly. Rolling rate above 10% triggers the second-reviewer requirement automatically.

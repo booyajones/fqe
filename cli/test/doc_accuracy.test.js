@@ -316,13 +316,15 @@ test('every source-size claim in the docs is within 15% of the real file', () =>
  * characters away, and nothing went red because the dropped pin happened to be
  * correct.
  *
- * THE WINDOW IS ASYMMETRIC, and none of the earlier comments here said so.
- * `pinContextNear` slices `[matchStart - proximity, matchEnd + proximity)`, so a
- * token BEFORE the tag need only START within `proximity`, while a token AFTER it
- * must END inside the window. The allowed gap is therefore a full `proximity`
- * leading but only `proximity - token.length` trailing. That asymmetry is exactly
- * why SECURITY.md's pin fell out at 80: `git clone` began 85 past the tag and had
- * to finish by 80.
+ * THE WINDOW IS SYMMETRIC IN GAP TERMS, and v0.18.7 claimed the opposite.
+ * `pinContextNear` slices `[matchStart - proximity, matchEnd + proximity)`. For a
+ * token of length L at gap g from the tag, both sides admit it iff
+ * `g <= proximity - L`: trailing needs `matchEnd + g + L <= matchEnd + proximity`,
+ * leading needs `matchStart - proximity <= matchStart - g - L`. Same inequality.
+ * Verified by running it: at proximity 50 with a 9-char verb, both sides flip
+ * between g=41 and g=42. The v0.18.7 entry called that an asymmetry, which was
+ * wrong; the token's LENGTH eats into the allowance on either side, and that is
+ * what put SECURITY.md's `git clone` out of reach at 80 when it began 85 away.
  *
  * Two kinds of control below, because they answer different questions:
  *   - the PROX-parameterised pair pins the RULE, independent of the constant
@@ -356,10 +358,10 @@ test('pin proximity: a trailing token one character further does not count', () 
   );
 });
 
-test('pin proximity: a leading token starting exactly at the edge counts', () => {
+test('pin proximity: a leading token at the same gap counts, symmetrically', () => {
   const tag = 'fqe-v1.2.3';
   const verb = 'git clone';
-  // Leading side is the asymmetric one: the token only has to START in the window.
+  // Same gap as the trailing case above, and it must give the same answer.
   const line = `${verb}${'x'.repeat(PROX - verb.length)}${tag}`;
   assert.strictEqual(pinContextNear(line, line.indexOf(tag), tag.length, PROX), true);
 });
@@ -390,15 +392,28 @@ test('PIN_PROXIMITY is large enough for the real SECURITY.md-shaped pin', () => 
   );
 });
 
+/**
+ * The gap here is a FIXED constant, deliberately not derived from PIN_PROXIMITY.
+ *
+ * v0.18.7 wrote this as `'x'.repeat(PIN_PROXIMITY + 50)`, so the fixture grew in
+ * lockstep with the window it was meant to bound and returned false for every
+ * possible value. It was a tautology, not an upper bound, and the v0.18.7 changelog
+ * claimed on its strength that the constant was "pinned in both directions". The
+ * test run that supposedly confirmed it went red for an unrelated reason, which I
+ * misread as confirmation. A control whose fixture scales with the thing under test
+ * cannot bound it.
+ */
+const MAX_SANE_PROXIMITY = 1000;
+
 test('PIN_PROXIMITY is small enough that distant prose cannot claim a tag', () => {
   const tag = 'fqe-v1.2.3';
-  const line = `${tag}${'x'.repeat(PIN_PROXIMITY + 50)}git clone`;
+  const line = `${tag}${'x'.repeat(MAX_SANE_PROXIMITY)}git clone`;
   assert.strictEqual(
     pinContextNear(line, 0, tag.length),
     false,
-    `PIN_PROXIMITY (${PIN_PROXIMITY}) is too large: an unrelated command far away ` +
-      'would claim this tag, which is how one incidental "npx" in a 4000-character ' +
-      'paragraph marked every version token in it as an executable pin'
+    `PIN_PROXIMITY (${PIN_PROXIMITY}) is at or above ${MAX_SANE_PROXIMITY}: a command ` +
+      'that far from a tag would claim it, which is how one incidental "npx" in a ' +
+      '4000-character paragraph marked every version token in it as an executable pin'
   );
 });
 
@@ -616,8 +631,12 @@ test('root and cli package.json dependency fields agree', () => {
       // The bundle* fields are ARRAYS, so equal membership with unequal content
       // means order or a duplicate, not a version skew. Saying "version skew" there
       // sends the reader hunting for a version that does not exist.
+      // Keyed off the SAME predicate that decides the field's type on line above,
+      // not off Array.isArray of a value that merely defaults to an array. They
+      // agree today only by that default; a root `bundleDependencies: {}` against
+      // an array in cli/ would otherwise print "version skew" for a type mismatch.
       !extraInCli.length && !extraInRoot.length
-        ? Array.isArray(rootVal)
+        ? field.startsWith('bundle')
           ? 'same entries on both sides, so the order or a duplicate differs'
           : 'same keys on both sides, so the values differ (a version skew)'
         : '',
