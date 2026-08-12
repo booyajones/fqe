@@ -394,3 +394,9 @@ test('README status badge matches the current package.json version', () => {
     `README status badge says v${m[1]} but package.json says v${PKG.version}`
   );
 });
+
+// TEMPORARY: deliberately failing test to prove the `test` aggregator goes red
+// when a matrix leg fails. Reverted immediately after observation.
+test('DELIBERATE FAILURE to prove the required check fails closed', () => {
+  assert.strictEqual(1, 2, 'this failure is intentional');
+});
