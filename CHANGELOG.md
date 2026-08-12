@@ -15,9 +15,14 @@ Tag: `fqe-v0.18.5`. Acting on the review of v0.18.4. Every finding was a defect 
 - **`SKILL.md`'s number was correct while the paragraph under it was two releases stale**, describing v0.18.2 in the present tense with no mention of v0.18.3 or v0.18.4, so a reader landed on a page labelled v0.18.4 and found the never-worked-install fix missing from the release story. Guarding the number cannot see that the prose it labels is out of date.
 - **The `persist-credentials` blocks were written by a regex that doubled every newline**, leaving a blank line between each line of the `with:` block, and the same rationale copy-pasted into jobs where it did not apply. Collapsed, and each job now states its own reason.
 
+- **The proximity fix silently shrank pin coverage by five characters.** At `PIN_PROXIMITY = 80` the guard stopped inspecting SECURITY.md's supply-chain pin, whose `git clone` sits 85 characters past the tag: 25 pins became 24 and nothing went red, because the dropped one happened to be correct. Widened to 160, and the rule is now a pure `pinContextNear()` with boundary tests, for the same reason `attributeSizeClaim` was extracted: a window that is only ever exercised against today's files is untested by construction.
+- **`bundledDependencies` (with the d) is a real npm alias** that `normalize-package-data` folds into `bundleDependencies` at install time. This guard reads raw JSON and never sees that, so declaring the alias in `cli/package.json` alone would pass green while npm honored a bundle the adopter never got. Five spellings compared now, not four.
+- **The dependency message was directional while the assertion is symmetric**, so a key present only in the root manifest produced a failure telling you to edit the file that was already correct.
+- **SKILL.md restarted the drift it had just fixed.** v0.18.4 corrected a two-release gap between the status label and the narrative under it; v0.18.5 reopened it at one release in the same commit. Guarding the number cannot see the prose, so the narrative lead is now checked too.
+
 ### Notes
 
-- 778 tests. All nine positive-control scenarios still catch, verified after the proximity change loosened the pin guard, since loosening is exactly when a guard quietly stops catching.
+- 782 tests. All nine positive-control scenarios still catch, verified after the proximity change loosened the pin guard, since loosening is exactly when a guard quietly stops catching.
 
 ## [0.18.4] - 2026-08-12
 
