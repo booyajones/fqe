@@ -181,7 +181,7 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.18.2.** 773 tests passing (1 Windows-symlink skip), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.18.2.** 773 tests passing on Linux and Windows across Node 20 and 22 (one symlink test self-skips on a Windows box without developer mode, since it cannot create the symlink), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 
 **Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
