@@ -20,13 +20,13 @@ fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when 
 
 **Goal:** inject arbitrary code into the gate's runtime via Node, yq, gh CLI, LibreOffice, etc.
 
-**Mitigation:** every binary download verifies a SHA256 pin. The `fqe-v0.18.5` tag in `booyajones/fqe` is the only thing workflows clone, and the workflow uses `git clone --branch fqe-v0.18.5` (not HEAD).
+**Mitigation:** every binary download verifies a SHA256 pin. The `fqe-v0.18.6` tag in `booyajones/fqe` is the only thing workflows clone, and the workflow uses `git clone --branch fqe-v0.18.6` (not HEAD).
 
 ### Actor 3: Compromised maintainer or stolen GitHub token
 
 **Goal:** push a malicious patch under the release tag that gated repos clone, and have it executed automatically by every one of them.
 
-**Mitigation:** tags can be force-moved, which is the supply-chain risk here. Defences: (1) signed commits on the public repo, (2) branch protection on `main` requiring review, (3) the workflow can be re-pinned to a SHA instead of a tag for higher assurance (`--branch fqe-v0.18.5` becomes `--branch <40-char SHA>`).
+**Mitigation:** tags can be force-moved, which is the supply-chain risk here. Defences: (1) signed commits on the public repo, (2) branch protection on `main` requiring review, (3) the workflow can be re-pinned to a SHA instead of a tag for higher assurance (`--branch fqe-v0.18.6` becomes `--branch <40-char SHA>`).
 
 ## Architectural invariants
 
@@ -72,7 +72,7 @@ For Finexio production repos:
 
 1. **Required status checks** on the protected branch: `fqe/pass` and `fqe/second-reviewer-required`.
 2. **Enforce admins** ON in branch protection. No admin-merge override.
-3. **Pin `fqe-v0.18.5` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.18.5`).
+3. **Pin `fqe-v0.18.6` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.18.6`).
 4. **Restrict who is on `.github/fqe-bypass-allowlist.yml`.** The workflow reads it at the default-branch HEAD, so a PR cannot add itself and a removal takes effect immediately on in-flight PRs.
 5. **Enable Dependabot** on your gated repo for the GitHub Actions used in `fqe-quality.yml`.
 6. **Audit `.github/fqe-state/bypass-tally.jsonl`** weekly. Rolling rate above 10% triggers the second-reviewer requirement automatically.

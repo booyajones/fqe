@@ -2,6 +2,23 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.6] - 2026-08-12
+
+Tag: `fqe-v0.18.6`. A third review round on the guards, and the honest headline is that v0.18.5 shipped with the defect it was written to fix.
+
+### Fixed
+
+- **The misattached docblock returned, in the commit that fixed it.** v0.18.5 moved the `dependencies` test out from between the `bin` test and its docblock, then inserted the new pin-proximity block between the attribution docblock and the attribution tests. So the first proximity test carried two stacked comments and the attribution tests carried none. Third occurrence of one mistake in one file, which is a fact about how easily a comment detaches from its subject when tests are inserted by anchor rather than by position. Each docblock now sits directly above the tests it names.
+- **The proximity controls bracketed the boundary instead of pinning it.** They ran against the default constant with the negative case 240 characters past the edge, so they only asserted that the window was somewhere between 161 and 399. `PIN_PROXIMITY` could have drifted to almost any value and stayed green. They now pass `proximity` explicitly and check both edges at exactly the boundary and exactly one character past it.
+- **The dependency-mismatch message named the wrong file in the case it exists for.** It inferred "which side has the extra key" from whether the root side was empty, which is right for two of four shapes and wrong for the two that matter: `{a}` vs `{a,b}` is precisely the drift of a dependency added to `cli/`, and it blamed the root; `{a:^1}` vs `{a:^2}` has no extra key at all, and it also blamed the root. Now computed from the actual key sets, with a distinct message for a version skew.
+- **The dependency docblock said "ALL FOUR" while the code compared five.** The `bundledDependencies` alias added in v0.18.5 was never added to the prose beside it, so a reader auditing coverage from the comment would conclude the alias was unguarded. That is this release line's own defect, sitting inside the guard for it.
+- **The SKILL.md narrative guard searched to end of file.** A gutted status paragraph could be satisfied by any version token further down, and every other doc in the repo carries an install pin. Bounded to the paragraph it names.
+
+### Notes
+
+- 783 tests. Nine positive-control scenarios still catch.
+- Three consecutive rounds have now found defects only in the guards, twice reintroducing a defect in the commit fixing it. That is a signal about this file's density rather than about any one bug: it is 650 lines of judgment rules whose subject is their own accuracy. Future changes here should move one rule at a time and re-read the docblock boundaries afterward.
+
 ## [0.18.5] - 2026-08-12
 
 Tag: `fqe-v0.18.5`. Acting on the review of v0.18.4. Every finding was a defect in the guards themselves, which is the honest state of a release line about self-inspection: the guards are now the thing most likely to be wrong.
