@@ -29,7 +29,7 @@ jobs:
   oracle-guard:
     runs-on: ubuntu-latest
     env:
-      FQE_TAG: "fqe-v0.18.9"
+      FQE_TAG: "fqe-v0.18.10"
       # Set to "--include-tests" to also require a second reviewer when a test
       # file changes alongside the source it grades. Leave empty to guard only
       # ground truth and grading rules (lower friction).

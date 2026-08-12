@@ -2,6 +2,25 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.10] - 2026-08-12
+
+Tag: `fqe-v0.18.10`. Supply-chain follow-ups to v0.18.9, all found by review of it.
+
+### Security
+
+- **The scaffolded step staged fetched code at a predictable path in world-writable `/tmp`, then executed it.** `/tmp` is sticky (1777) and persists across jobs on self-hosted runners, so a fixed `/tmp/fqe-src` was a writable staging area another UID on the box could prepare first. The `rm -rf` added in v0.18.9 addressed the re-run symptom rather than the class, and could itself fail closed under `set -e` when the directory belonged to someone else. The step now stages in a fresh `mktemp -d` under `RUNNER_TEMP`. Verified: the exact generated sequence runs twice cleanly and resolves a raw SHA. The CircleCI recipe carried the same shape.
+- **Two shipped workflow templates pulled a container image from the wrong org**, `ghcr.io/finexio/fqe` rather than `ghcr.io/booyajones/fqe`. The v0.17.0 changelog claimed the Docker org had been made consistent. It had not, in the two files an adopter actually copies.
+- **`SECURITY.md` described two install mechanisms when three ship.** The templates install a container image on a MUTABLE tag carrying an unresolved pin-by-digest note, which is the weakest of the three. All three are now tabulated with their pin strength stated plainly, and the page says so rather than implying the strongest one covers everything.
+
+### Fixed
+
+- The upper-bound control flipped at 309 while its message said 300, because a trailing token must END inside the window. The gap now subtracts the token length so the stated number is the real one. Verified: green at 299, red at 300, green at 94, red at 93.
+- `SKILL.md` had lost the subject of a sentence, leaving a stray parenthetical where `git clone --branch` belonged. It is the file an agent loads to decide whether to fire fqe.
+
+### Notes
+
+- 785 tests. The `mktemp` change first shipped broken: backticks and a `${...}` shell default inside a JS template literal terminated the string and made `init.js` unparseable, taking 34 tests red. Caught by running the suite, fixed, re-verified. Worth recording because that file is a template that GENERATES shell, so shell idioms and JS string syntax collide silently in it.
+
 ## [0.18.9] - 2026-08-12
 
 Tag: `fqe-v0.18.9`. Follow-ups to v0.18.8, all found by review of it.

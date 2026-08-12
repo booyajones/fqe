@@ -25,14 +25,21 @@ jobs:
             set -euo pipefail
             # FQE_REF takes a tag OR a 40-char commit SHA. Fetch, do not
             # `clone --branch`: that flag takes a ref name only and fails on a SHA.
-            FQE_REF="fqe-v0.18.9"
-            # rm -rf so a re-run cannot trip over an existing repo in /tmp.
-            rm -rf /tmp/fqe-src && mkdir -p /tmp/fqe-src
-            git -C /tmp/fqe-src init -q .
-            git -C /tmp/fqe-src fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
-            git -C /tmp/fqe-src checkout -q --detach FETCH_HEAD
-            (cd /tmp/fqe-src/cli && npm install --omit=dev)
-            echo 'fqe(){ node /tmp/fqe-src/cli/bin/fqe.js "$@"; }' >> "$BASH_ENV"
+            FQE_REF="fqe-v0.18.10"
+            # A fresh dir per build, not a fixed path under /tmp. Machine
+            # executors and self-hosted runners share /tmp across builds, so a
+            # predictable path is both a re-run hazard and a writable staging
+            # area for code this step then executes. `rm -rf` does not fix that:
+            # it fails under `set -e` if a prior build left it owned elsewhere.
+            FQE_SRC="$(mktemp -d)"
+            git -C "$FQE_SRC" init -q .
+            git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
+            git -C "$FQE_SRC" checkout -q --detach FETCH_HEAD
+            (cd "$FQE_SRC/cli" && npm install --omit=dev)
+            # Double quotes so $FQE_SRC is resolved NOW and baked into the
+            # function; \$@ stays literal so it expands at call time. Later
+            # steps get their own shell, so the path must be concrete here.
+            echo "fqe(){ node $FQE_SRC/cli/bin/fqe.js \"\$@\"; }" >> "$BASH_ENV"
       - run:
           name: Validate .fqe.yml (fail closed on a typo)
           command: fqe validate
@@ -71,6 +78,6 @@ CircleCI reports each job to GitHub as a status check. In your GitHub branch-pro
 
 ## Notes
 
-- **Pin the ref, not HEAD.** The `FQE_REF` fetch is the supply-chain boundary. For higher assurance set it to a commit SHA (`git rev-parse fqe-v0.18.9`); the fetch form accepts a tag or a SHA, which `git clone --branch` does not.
+- **Pin the ref, not HEAD.** The `FQE_REF` fetch is the supply-chain boundary. For higher assurance set it to a commit SHA (`git rev-parse fqe-v0.18.10`); the fetch form accepts a tag or a SHA, which `git clone --branch` does not.
 - **Cache `node_modules` if install time bothers you.** Use CircleCI's `restore_cache`/`save_cache` around `npm ci`. The fqe install is small and rarely the bottleneck.
 - **The receipt is portable.** `fqe run` writes the same `QA-RESULT.{yml,md}` on CircleCI. Persist it with `store_artifacts` so the tamper-evident record survives the build.

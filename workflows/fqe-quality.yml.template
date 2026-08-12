@@ -31,7 +31,7 @@ jobs:
     container:
       # VERIFY in Phase 1.2: image is cosign-signed; pin by digest before
       # going to production. Tag pin shown here for readability.
-      image: ghcr.io/finexio/fqe:0.1
+      image: ghcr.io/booyajones/fqe:0.1
 
     outputs:
       verdict: ${{ steps.run-fqe.outputs.verdict }}

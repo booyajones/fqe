@@ -199,16 +199,25 @@ jobs:
           # it to a SHA (which SECURITY.md and getting-started.md both recommend
           # for production) failed with "Remote branch <sha> not found in upstream
           # origin", so the documented hardening path broke the gate outright.
-          FQE_REF="fqe-v0.18.9"
-          # rm -rf, not mkdir -p: /tmp persists across jobs on a self-hosted
-          # runner, and a re-run would otherwise hit "remote origin already
-          # exists". Fetching the URL directly needs no remote at all, and -C
-          # leaves this step's cwd alone for the lines below.
-          rm -rf /tmp/fqe-src && mkdir -p /tmp/fqe-src
-          git -C /tmp/fqe-src init -q .
-          git -C /tmp/fqe-src fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
-          git -C /tmp/fqe-src checkout -q --detach FETCH_HEAD
-          cd /tmp/fqe-src/cli
+          FQE_REF="fqe-v0.18.10"
+          # A FRESH directory per job, never a fixed path under /tmp.
+          #
+          # This step fetches code and then executes it, so where it stages that
+          # code matters. /tmp is world-writable and sticky (1777) and persists
+          # across jobs on self-hosted runners, so a predictable /tmp/fqe-src was
+          # both a re-run hazard (remote origin already exists) and a staging
+          # area another UID on the box could have prepared first. Deleting it
+          # first fixed neither: rm -rf returns non-zero when the directory
+          # belongs to someone else, which under set -e is the same red gate it
+          # was meant to remove. RUNNER_TEMP is per-job and runner-owned, and
+          # mktemp -d gives a fresh unique name under it on every run.
+          FQE_TMPDIR="$RUNNER_TEMP"
+          [ -n "$FQE_TMPDIR" ] || FQE_TMPDIR=/tmp
+          FQE_SRC="$(mktemp -d "$FQE_TMPDIR/fqe-src.XXXXXX")"
+          git -C "$FQE_SRC" init -q .
+          git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
+          git -C "$FQE_SRC" checkout -q --detach FETCH_HEAD
+          cd "$FQE_SRC/cli"
           npm install --omit=dev
           chmod +x bin/fqe.js
           sudo ln -sf "$PWD/bin/fqe.js" /usr/local/bin/fqe
