@@ -90,7 +90,13 @@ jobs:
           echo "fqe reported: $out"
           # Must be the version this commit declares, not merely any version: a
           # stale cached install would otherwise pass silently.
-          expected="$(node -p "require('$GITHUB_WORKSPACE/package.json').version")"
+          #
+          # Read it via a RELATIVE path from the workspace. Interpolating an
+          # absolute Windows path into a JS string literal makes node read the
+          # backslashes as escapes: D:\a\fqe\fqe became D:aqeqe (\a bell, \f
+          # formfeed) and the require failed. The install was fine; the check
+          # was broken. Caught by the windows leg on its very first run.
+          expected="$(cd "$GITHUB_WORKSPACE" && node -p "require('./package.json').version")"
           case "$out" in
             *"$expected"*) echo "matches package.json ($expected)" ;;
             *) echo "::error::expected version $expected, got: $out"; exit 1 ;;
