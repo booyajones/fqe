@@ -1,0 +1,16 @@
+{
+  "name": "fqe",
+  "version": "0.18.3",
+  "description": "Finexio Quality Engine - deterministic CI gate",
+  "bin": {
+    "fqe": "cli/bin/fqe.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/booyajones/fqe.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

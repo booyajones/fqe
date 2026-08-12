@@ -7,7 +7,7 @@
 In any git repo with a `main` or `master` branch:
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.18.2 cli/bin/fqe.js init
+npx --yes -p github:booyajones/fqe#fqe-v0.18.3 fqe init
 ```
 
 This creates:
@@ -59,11 +59,11 @@ First, install the CLI so you have an `fqe` binary on your PATH. Two options:
 ```bash
 # Option A: clone and link (recommended for iteration)
 git clone https://github.com/booyajones/fqe.git ~/.local/share/fqe
-cd ~/.local/share/fqe && git checkout fqe-v0.18.2
+cd ~/.local/share/fqe && git checkout fqe-v0.18.3
 npm link --prefix ~/.local/share/fqe/cli   # adds `fqe` to PATH
 
 # Option B: one-off via npx (no install, slower)
-alias fqe='npx --yes github:booyajones/fqe#fqe-v0.18.2 cli/bin/fqe.js'
+alias fqe='npx --yes -p github:booyajones/fqe#fqe-v0.18.3 fqe'
 ```
 
 Then, from any repo with a `.fqe.yml`:
@@ -115,7 +115,7 @@ Empty `.fqe.yml` (or a `.fqe.yml` with all suggestions still commented out) mean
 For JS/TS repos that want the modern AI quality stack (Stryker mutation testing wired as a fqe runner, with Wilson-CI-bounded survival rate as the verdict), add the `--with-mutation` flag:
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.18.2 cli/bin/fqe.js init --with-mutation
+npx --yes -p github:booyajones/fqe#fqe-v0.18.3 fqe init --with-mutation
 npm install --save-dev @stryker-mutator/core
 ```
 
@@ -130,7 +130,7 @@ For production, pin to a commit SHA instead. Find the SHA for the release you wa
 ```bash
 # Replace SHA with the 40-char commit hash for the release you want
 SHA=074eeb434215d5588088690a2dfde33e97356536
-npx --yes "github:booyajones/fqe#${SHA}" cli/bin/fqe.js init
+npx --yes -p "github:booyajones/fqe#${SHA}" fqe init
 ```
 
 The generated workflow YAML will also pin its `git clone` step to that SHA. To re-pin to a new release later, re-run `init` with the new SHA, or hand-edit `.github/workflows/fqe-quality.yml`.

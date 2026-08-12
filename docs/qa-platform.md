@@ -76,7 +76,7 @@ jobs:
       # 2. Mutation gate on the changed files: reject weak/AI tests
       - run: npx stryker run --reporters json --mutate "$(git diff --name-only origin/main... | tr '\n' ',')"
       - run: |
-          npx --yes github:booyajones/fqe#fqe-v0.18.2 cli/bin/fqe.js mutation-gate \
+          npx --yes -p github:booyajones/fqe#fqe-v0.18.3 fqe mutation-gate \
             --report reports/mutation/mutation.json --threshold 70 \
             --changed "$(git diff --name-only origin/main... | tr '\n' ',')"
 ```
