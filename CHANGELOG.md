@@ -2,6 +2,23 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.4] - 2026-08-12
+
+Tag: `fqe-v0.18.4`. Acting on the CodeRabbit and Claude reviews of v0.18.3. Two of the three findings are the same defect class this release line exists to close: the path that gets tested differing from the path that ships.
+
+### Security
+
+- **`actions/checkout@v5` persisted credentials into every job.** It defaults `persist-credentials: true`, leaving a `GITHUB_TOKEN` in `.git/config` while the new install job executes repository code through `npx`. No step needs authenticated git, so all three checkouts now set `persist-credentials: false`.
+
+### Fixed
+
+- **The two manifests could diverge on `dependencies`, and only the root one is installed.** A runtime dependency added to `cli/package.json` (the natural place) would never be installed for an adopter, and the install job would stay green because `version` / `init` / `validate` do not exercise a dependency used by, say, `reconcile.js`. Green CI, `MODULE_NOT_FOUND` in the adopter's gate. Now asserted equal. Both are empty today, so this fails on the commit that introduces the divergence rather than on the bug report months later.
+- **The prose release label was stale while the badge was correct.** v0.18.3 guarded the shields.io badge and not the sentence underneath it, so README's Status paragraph and SKILL.md's `**Status:**` line both still read v0.18.2 on a green build. The badge is decoration; the paragraph is the claim. Both are now guarded.
+
+### Notes
+
+- 778 tests. Both new guards negative-controlled: a runtime dep in only the root manifest, and a stale prose label, each planted alone and each caught.
+
 ## [0.18.3] - 2026-08-12
 
 Tag: `fqe-v0.18.3`. **The documented install had never worked.** v0.18.2 shipped guards that proved every install pin named the current version. Running one revealed that none of those commands ran at all.
