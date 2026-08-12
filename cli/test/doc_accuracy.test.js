@@ -74,8 +74,18 @@ const EXCLUDE_FILES = new Set([
   path.join(REPO, 'cli', 'test', 'doc_accuracy.test.js'),
 ]);
 
-/** Lines on which a version tag is EXECUTABLE (a real pin), not prose. */
-const PIN_CONTEXT = /npx\s|git\s+clone|git\s+checkout|FQE_TAG|--branch|github:booyajones\/fqe#|git\s+rev-parse/;
+/**
+ * Lines on which a version tag is EXECUTABLE (a real pin), not prose.
+ *
+ * `git fetch` and `FQE_REF` joined this list in v0.18.8, when the scaffold moved
+ * off `git clone --branch` (which cannot take a SHA). Without them that refactor
+ * dropped those pins out of the guard's view and coverage fell 25 -> 19. The
+ * MIN_PIN_CLAIMS floor caught it loudly, which is the same silent-shrink class that
+ * went unnoticed at PIN_PROXIMITY 80 before the floor existed. If you change how
+ * fqe is installed, teach this regex about it in the same commit.
+ */
+const PIN_CONTEXT =
+  /npx\s|git\s+clone|git\s+checkout|git\s+fetch|FQE_TAG|FQE_REF|--branch|github:booyajones\/fqe#|git\s+rev-parse/;
 
 /** Any fqe release tag. */
 const TAG_RE = /fqe-v(\d+\.\d+\.\d+)/g;
