@@ -24,6 +24,30 @@ const { BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 // is the root cause of version drift. Derive it so it can never go stale again.
 const FQE_VERSION = require('../package.json').version;
 
+/**
+ * Same single-source-of-truth rule, applied to the size claim.
+ *
+ * `fqe explain` used to hardcode verdict.js at ~160 in one sentence and at 140 in
+ * the very next one. Both were written when the file really was that size;
+ * it is now well past 500 (3 verdict passes grew to 12 across v0.9 -> v0.18) and
+ * neither string followed. That made the CLI recite a false number at the exact
+ * moment an engineer is auditing whether to trust it, which is the worst possible
+ * place to be wrong. Read the real file instead.
+ *
+ * Falls back to a size-free phrasing rather than throwing: `fqe explain` must not
+ * crash because a doc-flavored nicety could not be computed.
+ */
+function verdictSize() {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'verdict.js'), 'utf8');
+    const lines = src.split('\n');
+    if (lines[lines.length - 1] === '') lines.pop(); // trailing newline is not a line
+    return `${lines.length} lines`;
+  } catch {
+    return 'a few hundred lines';
+  }
+}
+
 const INVARIANTS = [
   {
     n: 1,
@@ -43,12 +67,12 @@ const INVARIANTS = [
     name: 'No LLM in the verdict path',
     plain_english:
       'The verdict (PASS / FLAG / FAIL) is computed by a deterministic Node function ' +
-      '(cli/lib/verdict.js, ~160 lines, fully unit-tested). Same inputs always produce ' +
+      `(cli/lib/verdict.js, ${verdictSize()}, fully unit-tested). Same inputs always produce ` +
       'the same output. No language model is ever asked "is this PR good?" — that would ' +
       'introduce non-determinism and an evaluator with its own failure mode.',
     why_it_matters:
       'This means the gate is auditable, reproducible, and Claude-skill-version-independent. ' +
-      'You can read 140 lines of pure JavaScript and know exactly when the gate blocks.',
+      `You can read ${verdictSize()} of pure JavaScript and know exactly when the gate blocks.`,
   },
   {
     n: 3,

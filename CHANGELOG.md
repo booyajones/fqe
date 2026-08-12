@@ -2,6 +2,28 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.2] - 2026-08-12
+
+Tag: `fqe-v0.18.2`. Doc-accuracy release. A cold re-read of the repo found that the claims fqe makes about ITSELF had rotted, in the exact places a skeptical engineer checks first. Nothing in the verdict core was wrong; everything describing it was. The fix is guards, not another hand-pass, because v0.17.0 already did a hand-pass and it did not hold for one release.
+
+### Fixed
+
+- **`npm test` was broken and CI could not see it.** The package script was `node --test test/`, which fails with MODULE_NOT_FOUND on Node 22 (both with and without the trailing slash). CI stayed green the whole time because `tests.yml` ran its own `node --test test/*.test.js` instead. The script is now bare `node --test`, which relies on Node's own test discovery and therefore needs no shell glob expansion on any platform, and **CI now runs `npm test`** so the documented command is the one CI proves. A command CI never runs is a command nobody has tested.
+- **`fqe explain` recited a false number at runtime.** It hardcoded verdict.js at "~160 lines" in one sentence and "140 lines" in the very next, to the engineer running the 5-minute audit. It now reads the real file and reports its actual size, so it cannot drift again. Same single-source-of-truth fix v0.17.0 applied to the version string.
+- **26 stale executable install pins.** Every `npx` / `git clone` / `FQE_TAG` pin across 15 files still read `fqe-v0.17.0` at v0.18.1, so anyone copy-pasting the documented install got a release behind on the v0.18.1 security-relevant scaffold fix.
+- **Source-size claims were off by 3x.** Ten places put verdict.js at 160 lines; it is 516, having grown from 3 verdict passes to 12 across v0.9 -> v0.18. SKILL.md put bin/fqe.js at ~400 LOC; it is 1069.
+- **`docs/architecture.md` documented a vulnerability as current behavior.** Its verdict pseudocode showed `if ci_95[1] > threshold`, that is, trusting the runner's own confidence interval. That is precisely the CRITICAL fail-open closed in v0.14.0, where a fabricated tight interval on a real 50/100 attack run sailed past the 0.01 money bar. It also showed 3 of the 12 passes and reported every CI breach as an advisory FLAG, omitting that a money/state breach is a hard FAIL. Rewritten to match the code.
+- **README self-contradiction:** receipt signing was listed under "Planned next" while limitation #3 on the same page said it shipped in v0.16.0. Stale status block (v0.17.0 / 749 tests), stale "as of 0.13.0" caption, and a changelog description stopping at 0.13.0 are all corrected.
+
+### Added
+
+- **`cli/test/doc_accuracy.test.js`**: three guards that make all of the above self-enforcing. (1) Every executable install pin must equal `package.json`'s version. (2) Every source-size claim in the docs must be within 15% of the real file, attributed to its subject by keyword within a 6-line window. (3) The README status badge must match `package.json`. Each guard also fails when it finds NOTHING to inspect, so a reword cannot turn it into a hollow green. Scope is documented in the file header: prose version mentions and CHANGELOG history are deliberately out of scope, since they are correct as history.
+
+### Notes
+
+- 765 tests (764 pass, 1 Windows-symlink skip). Each guard was verified by planting its regression one at a time and confirming the right guard went red with the right message, including the two hollow-pass paths. A guard that has only ever passed is not evidence.
+- Unchanged and still the real adoption blockers: no live production money-path proof, bus factor 1, HMAC rather than Sigstore by default, mutation gate advisory by default.
+
 ## [0.18.1] - 2026-06-02
 
 Tag: `fqe-v0.18.1`. Acting on an external multi-LLM review (council + gauntlet, GPT/DeepSeek/Gemini) of the finished v0.18.0 package. The verdict is recorded honestly: internal dev-team use SHIP-WITH-CONDITIONS (~63/100), required money-path gate NOT-YET (~25/100), overall RECONSIDER (66/100), capped by what only people and data can fix (no live-money-path proof, bus factor 1, HMAC-not-Sigstore-by-default). This patch closes the two findings that were solo-fixable and were the structural blind spots a Claude-only review had missed.

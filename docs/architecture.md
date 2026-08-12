@@ -47,7 +47,7 @@ The verdict (PASS, FLAG, FAIL) is computed by `cli/lib/verdict.js`. It is:
 3. **An evaluator with its own failure mode.** Prompt-injection in PR content could fool the verdict.
 4. **Auditability collapse.** You can't read a model and know when it blocks.
 
-You can read 160 lines of `verdict.js` and know exactly when fqe blocks. That readability is the design.
+You can read about 500 lines of `verdict.js` and know exactly when fqe blocks. That readability is the design.
 
 **Code that enforces this:** the verdict path is `bin/fqe.js` → `lib/orchestrator.js` → `lib/verdict.js`. No `require` of any LLM SDK. The only places fqe talks to an LLM are in user-configured runners (e.g., a Promptfoo runner the user adds to `.fqe.yml`). Those runners feed deterministic numbers back to `verdict.js`.
 
@@ -69,29 +69,52 @@ Every output fqe needs at decision time persists in at least one of these server
 
 ## What the verdict logic actually does
 
+`computeVerdict` runs a fixed sequence of passes over its input. Each pass may only
+ADD a FLAG or a FAIL. No pass can ever clear one, which is why the order does not
+matter to the outcome and why a new pass cannot weaken an existing guarantee. That
+property is not a convention: `test/source_hygiene.test.js` fails the build if either
+accumulator is ever assigned anything but the literal `true`.
+
 ```
-For each runner:
-  if runner.required === true AND runner.ran !== true:
-    -> hasFail = true, reason "required runner X did not run"
-
-  if runner.ran === true:
-    if exit_code is NOT a number OR is NaN:
-      -> hasFail = true, reason "runner X ran but exit_code is not a number"
-    elif exit_code !== 0:
-      -> hasFail = true, reason "runner X exited N"
-
-For each adversarial_stat:
-  if blast_radius is missing or unknown:
-    -> hasFail = true, reason "unknown blast_radius"
-  if ci_95[1] > BLAST_RADIUS_THRESHOLDS[blast_radius]:
-    -> hasFlag = true, reason "Wilson CI upper X exceeds canonical threshold Y"
+Pass 1   required runner declared but did not run            -> FAIL
+Pass 2   runner ran: exit_code non-numeric / NaN / non-zero  -> FAIL
+           (an ACTIVE quarantine downgrades it to FLAG; an
+            EXPIRED quarantine does not shield it)
+           passed only after a retry                         -> FLAG
+Pass 3   adversarial stats: Wilson 95% upper bound is
+           RECOMPUTED here from raw (successes, n). Any
+           runner-supplied ci_95 is IGNORED.
+           bound > canonical threshold for blast_radius      -> FLAG
+           ...same breach on mcp-write-or-financial          -> FAIL
+           missing / unknown blast_radius                    -> FAIL
+Pass 4   a runner owing adversarial stats emitted none       -> FAIL
+Pass 5   a required test class has no runner that passed     -> FAIL
+Pass 6   coverage-liveness: declared report missing, stale
+           or unparseable / too few non-skipped tests ran /
+           inventory reconciliation impossible               -> FAIL
+           ran fewer tests than were collected               -> FLAG (FAIL if strict)
+Pass 7   a test suite exists that no runner targets          -> FLAG (FAIL if strict)
+Pass 8   require_money_idempotency on, but no passing runner
+           PROVED the idempotency invariant with coverage    -> FAIL
+Pass 9   mutation judge: surviving mutants on the diff       -> FLAG (FAIL if blocking)
+Pass 10  money-looking code changed, no money policy set     -> FLAG (FAIL if strict)
+Pass 11  a policy require_for glob matches no file           -> FLAG (FAIL if strict)
+Pass 12  require_nonempty_gate on, but the gate has no teeth -> FAIL
 
 if hasFail: verdict = FAIL (exit 2)
 elif hasFlag: verdict = FLAG (exit 3)
 else: verdict = PASS (exit 0)
 ```
 
-That's it. 160 lines. No LLM. Same inputs always produce the same output.
+That is the whole decision surface: about 500 lines, no LLM, no clock, no I/O, no
+randomness. Same inputs always produce the same output.
+
+The recompute in Pass 3 is worth dwelling on, because the earlier version of this
+document described the opposite behavior. Until v0.14.0 the gate trusted the
+interval a runner reported. A runner could then report a real 50-out-of-100
+attack run alongside a fabricated interval of [0, 0.0001] and sail past the 0.01
+money bar. The statistical method is policy, so it now lives in the deterministic
+core: a runner supplies raw counts and nothing else.
 
 ## What fqe deliberately does NOT do
 
@@ -118,4 +141,4 @@ Bounded scope is a trust signal. fqe does not:
 - [docs/writing-a-runner.md](writing-a-runner.md), how to add a runner to your `.fqe.yml`.
 - [docs/troubleshooting.md](troubleshooting.md), exact-error to exact-fix lookup.
 - [SECURITY.md](../SECURITY.md), threat model and reporting.
-- The actual verdict source: `cli/lib/verdict.js` (it's 160 lines, read it).
+- The actual verdict source: `cli/lib/verdict.js` (about 500 lines, read it).
