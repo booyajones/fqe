@@ -2,6 +2,21 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.9] - 2026-08-12
+
+Tag: `fqe-v0.18.9`. Follow-ups to v0.18.8, all found by review of it.
+
+### Fixed
+
+- **The scaffolded install was not re-runnable.** It used mkdir -p plus git remote add origin, and /tmp persists across jobs on a self-hosted runner, so a second run died on `fatal: remote origin already exists`. It failed closed, so no stale code could execute, but it was a red gate for no reason. Now rm -rf first, fetch the URL directly (no remote needed), and use git -C so the step cwd is untouched. Verified by running the generated sequence twice in a row and with a raw SHA. The CircleCI recipe carried the same shape and is fixed too.
+- **docs/faq.md told upgraders to edit a variable the scaffold no longer writes.** The v0.18.8 rename to `FQE_REF` left the documented upgrade path pointing at `FQE_TAG=`, which an adopter would search for and not find. Invisible to the doc guard, which matches version tokens and not the variable name around them.
+- **SECURITY.md made a universal claim about a mechanism only one of two workflows uses.** `fqe-oracle-guard.yml` installs via npx, where npm commit-ish accepts a tag or a SHA, so it was never affected by the --branch bug. Both are now named.
+- **The v0.18.8 upper bound was loose while its entry read as tight.** A fixed 1000-character gap only went red once PIN_PROXIMITY reached ~1009, pinning the constant to roughly [94, 1008]: 900 stayed green, deep inside the failure the constant exists to prevent. Tightened to 300, verified red at 400 and at 80, green at 160.
+
+### Notes
+
+- 785 tests. This is the last correction round of the session. What remains from review is genuinely cosmetic, and the changelog for v0.18.5 through v0.18.9 is an honest record of a guard file that needed five passes to stop being wrong about itself.
+
 ## [0.18.8] - 2026-08-12
 
 Tag: `fqe-v0.18.8`. The documented production hardening did not work, and two of v0.18.7's own claims were wrong.

@@ -8,9 +8,9 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Where it appears:** the "Install fqe CLI" step of `fqe-quality.yml`.
 
-**Root cause:** the workflow tried to clone `booyajones/fqe` at a tag, but the repo URL was for a PRIVATE repo and the workflow's `GITHUB_TOKEN` doesn't have access to other private repos.
+**Root cause:** the workflow tried to fetch `booyajones/fqe` at a ref, but the repo URL was for a PRIVATE repo and the workflow's `GITHUB_TOKEN` doesn't have access to other private repos.
 
-**Fix:** the public source for fqe is `https://github.com/booyajones/fqe` (public). Your workflow YAML may be pointing at the wrong URL. Check `.github/workflows/fqe-quality.yml` for the `git clone` line. It should be `https://github.com/booyajones/fqe.git`, not `booyajones/finexio-skills` or anything else private.
+**Fix:** the public source for fqe is `https://github.com/booyajones/fqe` (public). Your workflow YAML may be pointing at the wrong URL. Check `.github/workflows/fqe-quality.yml` for the `git fetch` line. It should be `https://github.com/booyajones/fqe.git`, not `booyajones/finexio-skills` or anything else private.
 
 ### `fqe: error: (opts.output-text || "").slice is not a function`
 
@@ -18,7 +18,7 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Root cause:** an old version of the `parseFlags` helper treated `--output-text "$BODY"` as a boolean true when `$BODY` started with `--` (e.g., a YAML frontmatter delimiter `---`).
 
-**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Re-pin the workflow's `FQE_REF` to `fqe-v0.18.8` (the current tag) to pick it up. If you've pinned an older SHA, bump it.
+**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Re-pin the workflow's `FQE_REF` to `fqe-v0.18.9` (the current tag) to pick it up. If you've pinned an older SHA, bump it.
 
 ### `fqe: error: 'gh' CLI not found on PATH`
 
