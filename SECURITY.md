@@ -22,13 +22,15 @@ fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when 
 
 **Mitigation:** every binary download verifies a SHA256 pin. **Three** install mechanisms ship in this repo, and they are not equally strong:
 
-| Where | Mechanism | Pin strength |
-|---|---|---|
-| The workflow `fqe init` scaffolds | `FQE_REF` + `git fetch --depth=1 <url> "$FQE_REF"` then `git checkout --detach FETCH_HEAD` | Strongest. Takes a tag or a 40-char SHA; a SHA is immutable. Staged in a fresh `mktemp -d` under `RUNNER_TEMP`, never a fixed path in world-writable `/tmp`, because the step executes what it fetches. |
-| `fqe-oracle-guard.yml` | `FQE_TAG` + `npx -p github:booyajones/fqe#${FQE_TAG}` | Equivalent. npm's commit-ish accepts a tag or a SHA. Never affected by the `--branch` bug. |
-| `workflows/*.yml.template` | `container: ghcr.io/booyajones/fqe:0.1` | **Weakest, and not production-ready.** A mutable tag: the digest behind `:0.1` can change under you. The templates carry an unresolved "pin by digest before going to production" note. Until that image is published and pinned by digest, prefer one of the ref-based paths above. |
+**As shipped, all three are mutable pins.** The column below is the *ceiling* each mechanism can reach if you harden it, not what you get by default. Read both columns together.
 
-Do not read the first row as covering all three. The templates are checked in and copy to the same destination filename, so an auditor comparing this page against the repo will find the container form.
+| Where | Mechanism | As shipped | Ceiling if hardened |
+|---|---|---|---|
+| `fqe-quality.yml`, written by `fqe init` | `FQE_REF` + `git fetch --depth=1 <url> "$FQE_REF"` then `git checkout --detach FETCH_HEAD` | `fqe-v0.18.11`, a **mutable** git tag (force-pushable unless tag protection is on) | **Immutable.** Set `FQE_REF` to a 40-char SHA. Staged in a fresh `mktemp -d` under `RUNNER_TEMP`, never a fixed path in world-writable `/tmp`, because the step executes what it fetches. |
+| `fqe-oracle-guard.yml` | `FQE_TAG` + `npx -p github:booyajones/fqe#${FQE_TAG}` | `fqe-v0.18.11`, same mutable tag | **Immutable.** npm's commit-ish accepts a SHA. Never affected by the `--branch` bug. |
+| `fqe-second-approve.yml`, **also written by `fqe init`**, and `workflows/*.yml.template` | `container: ghcr.io/booyajones/fqe:0.1` | `:0.1`, a **mutable** image tag whose digest can change under you | Immutable only once the image is published and pinned by digest. The templates carry an unresolved "pin by digest before going to production" note, so treat this as not production-ready today. |
+
+Two things this table is careful about, because earlier versions of it were wrong. `fqe init` generates **both** the fetch form and the container form, so "what init scaffolds" is not a synonym for the first row. And the container form is not confined to files you copy by hand: it is generated.
 
 ### Actor 3: Compromised maintainer or stolen GitHub token
 
@@ -80,7 +82,7 @@ For Finexio production repos:
 
 1. **Required status checks** on the protected branch: `fqe/pass` and `fqe/second-reviewer-required`.
 2. **Enforce admins** ON in branch protection. No admin-merge override.
-3. **Pin `fqe-v0.18.10` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.18.10`).
+3. **Pin `fqe-v0.18.11` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.18.11`).
 4. **Restrict who is on `.github/fqe-bypass-allowlist.yml`.** The workflow reads it at the default-branch HEAD, so a PR cannot add itself and a removal takes effect immediately on in-flight PRs.
 5. **Enable Dependabot** on your gated repo for the GitHub Actions used in `fqe-quality.yml`.
 6. **Audit `.github/fqe-state/bypass-tally.jsonl`** weekly. Rolling rate above 10% triggers the second-reviewer requirement automatically.

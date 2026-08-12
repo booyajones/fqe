@@ -86,7 +86,7 @@ Then remove `fqe/pass` and `fqe/second-reviewer-required` from your branch prote
 
 ## What's the upgrade path?
 
-Tags follow semver: `fqe-v<major>.<minor>.<patch>`. To upgrade, find the new tag in github.com/booyajones/fqe, then update the `FQE_REF="fqe-v0.18.10"` line in `.github/workflows/fqe-quality.yml` (it takes a tag or a 40-char SHA). Breaking changes are called out per release in `CHANGELOG.md`.
+Tags follow semver: `fqe-v<major>.<minor>.<patch>`. To upgrade, find the new tag in github.com/booyajones/fqe, then update the `FQE_REF="fqe-v0.18.11"` line in `.github/workflows/fqe-quality.yml` (it takes a tag or a 40-char SHA). Breaking changes are called out per release in `CHANGELOG.md`.
 
 ## Who maintains it?
 

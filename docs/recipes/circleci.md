@@ -25,7 +25,7 @@ jobs:
             set -euo pipefail
             # FQE_REF takes a tag OR a 40-char commit SHA. Fetch, do not
             # `clone --branch`: that flag takes a ref name only and fails on a SHA.
-            FQE_REF="fqe-v0.18.10"
+            FQE_REF="fqe-v0.18.11"
             # A fresh dir per build, not a fixed path under /tmp. Machine
             # executors and self-hosted runners share /tmp across builds, so a
             # predictable path is both a re-run hazard and a writable staging
@@ -39,7 +39,10 @@ jobs:
             # Double quotes so $FQE_SRC is resolved NOW and baked into the
             # function; \$@ stays literal so it expands at call time. Later
             # steps get their own shell, so the path must be concrete here.
-            echo "fqe(){ node $FQE_SRC/cli/bin/fqe.js \"\$@\"; }" >> "$BASH_ENV"
+            # The baked path is quoted too: mktemp -d honours TMPDIR, so on an
+            # executor whose TMPDIR contains a space an unquoted path would split
+            # and every later fqe call would die with "Cannot find module".
+            echo "fqe(){ node \"$FQE_SRC/cli/bin/fqe.js\" \"\$@\"; }" >> "$BASH_ENV"
       - run:
           name: Validate .fqe.yml (fail closed on a typo)
           command: fqe validate
@@ -78,6 +81,6 @@ CircleCI reports each job to GitHub as a status check. In your GitHub branch-pro
 
 ## Notes
 
-- **Pin the ref, not HEAD.** The `FQE_REF` fetch is the supply-chain boundary. For higher assurance set it to a commit SHA (`git rev-parse fqe-v0.18.10`); the fetch form accepts a tag or a SHA, which `git clone --branch` does not.
+- **Pin the ref, not HEAD.** The `FQE_REF` fetch is the supply-chain boundary. For higher assurance set it to a commit SHA (`git rev-parse fqe-v0.18.11`); the fetch form accepts a tag or a SHA, which `git clone --branch` does not.
 - **Cache `node_modules` if install time bothers you.** Use CircleCI's `restore_cache`/`save_cache` around `npm ci`. The fqe install is small and rarely the bottleneck.
 - **The receipt is portable.** `fqe run` writes the same `QA-RESULT.{yml,md}` on CircleCI. Persist it with `store_artifacts` so the tamper-evident record survives the build.
