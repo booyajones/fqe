@@ -307,6 +307,57 @@ test('every source-size claim in the docs is within 15% of the real file', () =>
 });
 
 /**
+ * Control tests for the pin-proximity rule.
+ *
+ * Same argument as the attribution tests below: the whole-repo scan only ever sees
+ * today's docs, so a window that is too small, too large, or one-directional still
+ * passes as long as the current files fall on the forgiving side of it. At 80 this
+ * rule silently stopped inspecting a real SECURITY.md pin whose `git clone` sat 85
+ * characters away, and nothing went red because the dropped pin happened to be
+ * correct.
+ *
+ * These pass `proximity` EXPLICITLY rather than leaning on the constant, and pin
+ * both edges at exactly the boundary. An earlier version used the default and put
+ * the negative case 240 characters past it, which only asserted "the window is
+ * somewhere between 161 and 399" and would have stayed green for almost any value.
+ * A control that brackets a boundary does not pin it.
+ */
+const PROX = 50; // small, explicit, and independent of PIN_PROXIMITY
+
+test('pin proximity: a context token exactly at the trailing edge counts', () => {
+  const tag = 'fqe-v1.2.3';
+  // `git clone` must START within `proximity` chars past the end of the tag.
+  const line = `${tag}${'x'.repeat(PROX - 'git clone'.length)}git clone`;
+  assert.strictEqual(pinContextNear(line, 0, tag.length, PROX), true);
+});
+
+test('pin proximity: one character past the trailing edge does not count', () => {
+  const tag = 'fqe-v1.2.3';
+  const line = `${tag}${'x'.repeat(PROX - 'git clone'.length + 1)}git clone`;
+  assert.strictEqual(
+    pinContextNear(line, 0, tag.length, PROX),
+    false,
+    'one character past the window must flip the result, or the boundary is not ' +
+      'where the constant says it is and the window can drift silently'
+  );
+});
+
+test('pin proximity: a context token exactly at the leading edge counts', () => {
+  const tag = 'fqe-v1.2.3';
+  const verb = 'git clone';
+  // Real commands put the verb BEFORE the tag, so the window must look behind.
+  const line = `${verb}${'x'.repeat(PROX - verb.length)}${tag}`;
+  assert.strictEqual(pinContextNear(line, line.indexOf(tag), tag.length, PROX), true);
+});
+
+test('pin proximity: one character past the leading edge does not count', () => {
+  const tag = 'fqe-v1.2.3';
+  const verb = 'git clone';
+  const line = `${verb}${'x'.repeat(PROX - verb.length + 1)}${tag}`;
+  assert.strictEqual(pinContextNear(line, line.indexOf(tag), tag.length, PROX), false);
+});
+
+/**
  * Direct tests for the attribution rule, with synthetic fixtures.
  *
  * These exist because the whole-repo scan above CANNOT catch an attribution bug:
@@ -315,45 +366,6 @@ test('every source-size claim in the docs is within 15% of the real file', () =>
  * how the array-order bug survived: SKILL.md listed bin/ above lib/, so the wrong
  * answer and the right answer coincided. Feed it the ordering that separates them.
  */
-/**
- * Control tests for the pin-proximity rule.
- *
- * Same argument as the attribution tests below: the whole-repo scan only ever sees
- * today's docs, so a window that is too small, too large, or one-directional still
- * passes as long as the current files fall on the forgiving side of it. At 80 this
- * rule silently stopped inspecting a real SECURITY.md pin whose `git clone` sat 85
- * characters away, and nothing went red because the dropped pin happened to be
- * correct. These pin the behavior at the boundary instead.
- */
-test('pin proximity: a context token just inside the window counts', () => {
-  const tag = 'fqe-v1.2.3';
-  const line = `${tag}${'x'.repeat(150)} git clone`;
-  assert.strictEqual(pinContextNear(line, 0, tag.length), true);
-});
-
-test('pin proximity: a context token beyond the window does not count', () => {
-  const tag = 'fqe-v1.2.3';
-  const line = `${tag}${'x'.repeat(400)} git clone`;
-  assert.strictEqual(
-    pinContextNear(line, 0, tag.length),
-    false,
-    'an unrelated command 400 characters away must not claim this tag, or one stray ' +
-      'word in a long paragraph marks every version token in it as an executable pin'
-  );
-});
-
-test('pin proximity: the window looks BEHIND the tag as well as ahead', () => {
-  const tag = 'fqe-v1.2.3';
-  const prefix = 'npx --yes -p github:example ';
-  const line = `${prefix}${tag}`;
-  assert.strictEqual(
-    pinContextNear(line, prefix.length, tag.length),
-    true,
-    'real commands put the verb before the tag, so a leading-only window would miss ' +
-      'every actual install pin in the repo'
-  );
-});
-
 test('attribution: nearest named file wins, not array order', () => {
   // The real regression. SKILL.md's tree, sorted lib/ before bin/, which is the
   // plausible alphabetical ordering. The claim is about bin/fqe.js on its own line.
@@ -508,12 +520,15 @@ test('root package.json bin points at a CLI entry point that exists', () => {
  * the adopter's gate — the tested path differing from the shipped path, which is
  * exactly how the install stayed broken for eighteen releases.
  *
- * ALL FOUR install-bearing fields are compared, not just `dependencies`.
- * `optionalDependencies`, `peerDependencies` (npm 7+ installs these automatically)
- * and `bundleDependencies` each satisfy the same "declared here, never installed
- * there" shape. Guarding one spelling of the defect is not guarding the defect.
+ * ALL FIVE install-bearing spellings are compared, not just `dependencies`.
+ * `optionalDependencies`, `peerDependencies` (npm 7+ installs these automatically),
+ * `bundleDependencies` and its real npm alias `bundledDependencies` each satisfy the
+ * same "declared here, never installed there" shape. Guarding one spelling of the
+ * defect is not guarding the defect, which is why the alias is here: npm folds it
+ * into `bundleDependencies` at install time, and this guard reads raw JSON, so it
+ * would never see the normalization.
  *
- * All four are empty today, so this is preventive. That is the point: it fails on
+ * All five are empty today, so this is preventive. That is the point: it fails on
  * the commit that introduces the divergence, not on the bug report months later.
  */
 test('root and cli package.json dependency fields agree', () => {
@@ -535,17 +550,35 @@ test('root and cli package.json dependency fields agree', () => {
     const empty = field.startsWith('bundle') ? [] : {};
     const rootVal = root[field] || empty;
     const cliVal = PKG[field] || empty;
-    // Symmetric message for a symmetric assertion. deepStrictEqual fires in both
-    // directions, so a message that always blames cli/package.json would, for a key
-    // present only in the root, send you to edit the file that is already correct.
-    const onlyIn = JSON.stringify(rootVal) === JSON.stringify(empty) ? 'cli/package.json' : 'the root package.json';
+    // Symmetric message for a symmetric assertion, computed from the ACTUAL key
+    // sets rather than inferred from "is the root side empty".
+    //
+    // The previous version asked only whether rootVal was empty and then asserted a
+    // conclusion about which side held the extra key. That is right in two of four
+    // shapes and wrong in the two that matter: {a} vs {a,b} is the exact drift this
+    // guard exists for (a dep added to cli/) and it reported the root; {a:^1} vs
+    // {a:^2} is a version skew with no extra key on either side and it also reported
+    // the root. A failure message that names the wrong file sends you to edit the
+    // one that was already correct, which is the rot class in the docblock above.
+    const keysOf = (v) => (Array.isArray(v) ? v.slice() : Object.keys(v));
+    const rootKeys = keysOf(rootVal);
+    const cliKeys = keysOf(cliVal);
+    const extraInRoot = rootKeys.filter((k) => !cliKeys.includes(k));
+    const extraInCli = cliKeys.filter((k) => !rootKeys.includes(k));
+    const where = [
+      extraInCli.length ? `only in cli/package.json: ${extraInCli.join(', ')}` : '',
+      extraInRoot.length ? `only in the root package.json: ${extraInRoot.join(', ')}` : '',
+      !extraInCli.length && !extraInRoot.length ? 'same keys on both sides, so the values differ (a version skew)' : '',
+    ]
+      .filter(Boolean)
+      .join('; ');
     assert.deepStrictEqual(
       rootVal,
       cliVal,
-      `${field} differs between the manifests (the extra key is in ${onlyIn}). npm installs ` +
-        `the ROOT manifest, so anything declared only in cli/package.json never reaches an ` +
-        `adopter, and anything declared only in the root is invisible to the CLI's own tests. ` +
-        `Declare it in both.`
+      `${field} differs between the manifests (${where}). npm installs the ROOT manifest, ` +
+        `so anything declared only in cli/package.json never reaches an adopter, and anything ` +
+        `declared only in the root is invisible to the CLI's own tests. Declare it in both, ` +
+        `with the same value.`
     );
   }
 });
@@ -607,9 +640,20 @@ test("SKILL.md's status narrative leads with the release its number claims", () 
   assert.ok(label, 'SKILL.md has no **Status:** vX.Y.Z label');
   assert.strictEqual(label[1], PKG.version, `SKILL.md status label is v${label[1]}, expected v${PKG.version}`);
 
-  const after = text.slice(label.index + label[0].length);
+  // Bounded to the status PARAGRAPH, not the rest of the file.
+  //
+  // Slicing to EOF meant a gutted status paragraph could be satisfied by any version
+  // token further down SKILL.md. That is latent rather than theoretical: every other
+  // doc in this repo carries an install pin, and adding one below the status block
+  // would hand this guard a `v0.18.x` that has nothing to do with the narrative. It
+  // fails closed on the paragraph it actually names.
+  const after = text.slice(label.index + label[0].length).split('\n')[0];
   const firstVersion = after.match(/v(\d+\.\d+\.\d+)/);
-  assert.ok(firstVersion, 'no release is described after the status label');
+  assert.ok(
+    firstVersion,
+    'the status paragraph names no release after its label, so the guard cannot tell ' +
+      'whether the narrative leads with the current version'
+  );
   assert.strictEqual(
     firstVersion[1],
     PKG.version,
