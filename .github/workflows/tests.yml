@@ -36,15 +36,9 @@ jobs:
     name: suite (${{ matrix.os }}, node ${{ matrix.node }})
     steps:
       - uses: actions/checkout@v5
-
         with:
-
-          # No later step needs authenticated git, and the install job runs
-
-          # repository code through npx. Do not leave a token in .git/config
-
-          # while executing packed repo code.
-
+          # Nothing downstream needs authenticated git, so do not leave a
+          # token in .git/config for the rest of the job.
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
@@ -60,15 +54,9 @@ jobs:
     name: doc test-count claims
     steps:
       - uses: actions/checkout@v5
-
         with:
-
-          # No later step needs authenticated git, and the install job runs
-
-          # repository code through npx. Do not leave a token in .git/config
-
-          # while executing packed repo code.
-
+          # Nothing downstream needs authenticated git, so do not leave a
+          # token in .git/config for the rest of the job.
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
@@ -107,15 +95,9 @@ jobs:
     name: documented install (${{ matrix.os }})
     steps:
       - uses: actions/checkout@v5
-
         with:
-
-          # No later step needs authenticated git, and the install job runs
-
-          # repository code through npx. Do not leave a token in .git/config
-
-          # while executing packed repo code.
-
+          # This job executes repository code through npx. A persisted
+          # token would be readable by whatever that code does.
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:

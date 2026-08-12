@@ -80,6 +80,14 @@ const PIN_CONTEXT = /npx\s|git\s+clone|git\s+checkout|FQE_TAG|--branch|github:bo
 /** Any fqe release tag. */
 const TAG_RE = /fqe-v(\d+\.\d+\.\d+)/g;
 
+/**
+ * How close a PIN_CONTEXT token must sit to a version tag for that tag to count as
+ * an executable pin. Wide enough to span a real command
+ * (`npx --yes -p github:booyajones/fqe#fqe-v0.0.0 fqe init`), narrow enough that
+ * unrelated prose elsewhere in a long paragraph cannot claim it.
+ */
+const PIN_PROXIMITY = 80;
+
 /** A source-size claim: "160 lines", "1,069 LOC", "~400 LOC". */
 const SIZE_RE = /([\d,]+)\s*(?:lines|LOC)\b/gi;
 
@@ -186,8 +194,20 @@ test('every executable install pin matches the current package.json version', ()
   for (const file of FILES) {
     const lines = fs.readFileSync(file, 'utf8').split('\n');
     lines.forEach((line, i) => {
-      if (!PIN_CONTEXT.test(line)) return;
       for (const m of line.matchAll(TAG_RE)) {
+        // PROXIMITY, not whole-line. A "line" in SKILL.md's status block is a
+        // 4000-character paragraph, so testing the whole line meant one incidental
+        // "npx" in prose marked every version token in the paragraph as an
+        // executable pin, including correct historical mentions like "was
+        // fqe-v0.16.0, missing the v0.17 security fixes". That is a false red on
+        // accurate text, and a guard that cries wolf gets deleted.
+        //
+        // Third time this exact shape appeared: the size guard attributed by array
+        // order over a window, the test-count guard excluded by whole line, and
+        // this one matched by whole line. Scope the context to the CLAIM, never to
+        // whatever container it happens to sit in.
+        const near = line.slice(Math.max(0, m.index - PIN_PROXIMITY), m.index + m[0].length + PIN_PROXIMITY);
+        if (!PIN_CONTEXT.test(near)) continue;
         checked++;
         if (m[0] !== EXPECTED_TAG) {
           stale.push(`${path.relative(REPO, file)}:${i + 1} pins ${m[0]}, expected ${EXPECTED_TAG}`);
@@ -410,8 +430,15 @@ test('root and cli package.json versions agree', () => {
  * resolves the `fqe` bin and nothing else. A typo here reintroduces exactly the
  * bug this file was extended to close, and it would not show up in any doc scan.
  */
+test('root package.json bin points at a CLI entry point that exists', () => {
+  const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
+  assert.ok(root.bin && root.bin.fqe, 'root package.json must declare a `fqe` bin');
+  const target = path.join(REPO, root.bin.fqe);
+  assert.ok(fs.existsSync(target), `root package.json bin.fqe points at ${root.bin.fqe}, which does not exist`);
+});
+
 /**
- * The ROOT manifest is what npm installs, so its `dependencies` are what an
+ * The ROOT manifest is what npm installs, so ITS dependency fields are what an
  * adopter actually gets. This is the same shape as the bug this release fixed.
  *
  * `cli/lib/*` gaining a runtime dependency would naturally be added to
@@ -421,25 +448,26 @@ test('root and cli package.json versions agree', () => {
  * the adopter's gate — the tested path differing from the shipped path, which is
  * exactly how the install stayed broken for eighteen releases.
  *
- * Both are empty today, so this is preventive. That is the point: it fails on the
- * commit that introduces the divergence, not on the bug report months later.
+ * ALL FOUR install-bearing fields are compared, not just `dependencies`.
+ * `optionalDependencies`, `peerDependencies` (npm 7+ installs these automatically)
+ * and `bundleDependencies` each satisfy the same "declared here, never installed
+ * there" shape. Guarding one spelling of the defect is not guarding the defect.
+ *
+ * All four are empty today, so this is preventive. That is the point: it fails on
+ * the commit that introduces the divergence, not on the bug report months later.
  */
-test('root and cli package.json dependencies agree', () => {
+test('root and cli package.json dependency fields agree', () => {
   const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
-  assert.deepStrictEqual(
-    root.dependencies || {},
-    PKG.dependencies || {},
-    'the ROOT manifest is what npm installs, so a runtime dependency declared only ' +
-      'in cli/package.json is never installed for an adopter. Declare it in both, or ' +
-      'the documented install ships code that cannot resolve its own requires.'
-  );
-});
-
-test('root package.json bin points at a CLI entry point that exists', () => {
-  const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
-  assert.ok(root.bin && root.bin.fqe, 'root package.json must declare a `fqe` bin');
-  const target = path.join(REPO, root.bin.fqe);
-  assert.ok(fs.existsSync(target), `root package.json bin.fqe points at ${root.bin.fqe}, which does not exist`);
+  const FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies', 'bundleDependencies'];
+  for (const field of FIELDS) {
+    assert.deepStrictEqual(
+      root[field] || (field === 'bundleDependencies' ? [] : {}),
+      PKG[field] || (field === 'bundleDependencies' ? [] : {}),
+      `${field} differs between the manifests. The ROOT manifest is what npm installs, ` +
+        `so anything declared only in cli/package.json is never installed for an adopter. ` +
+        `Declare it in both, or the documented install ships code that cannot resolve its own requires.`
+    );
+  }
 });
 
 /**
@@ -500,19 +528,28 @@ test('README status badge matches the current package.json version', () => {
  * the wrong target: the badge is decoration, the paragraph is the claim.
  */
 test('prose "current release" labels match the package.json version', () => {
+  // PER-PATTERN floors, not one shared total.
+  //
+  // A single `checked > 0` lets either pattern rot to zero matches while the
+  // other keeps the count non-zero. There is exactly one match of each in the
+  // repo today, so rewording README's opener to `**v0.19.0** —` (dropping the
+  // trailing period, a perfectly plausible edit) would make that pattern match
+  // nothing, the assertion still pass on SKILL.md's single hit, and README's
+  // prose label rot silently forever. That is the v0.18.3 bug verbatim: green
+  // guard, stale sentence. Each pattern now has to find its own subject.
   const PATTERNS = [
-    /\*\*Status:\*\*\s*v(\d+\.\d+\.\d+)/g, // SKILL.md
-    /^\*\*v(\d+\.\d+\.\d+)\.\*\*/gm, // README's Status paragraph opener
+    { name: 'SKILL.md `**Status:** vX.Y.Z`', re: /\*\*Status:\*\*\s*v(\d+\.\d+\.\d+)/g, min: 1 },
+    { name: "README's Status paragraph opener `**vX.Y.Z.**`", re: /^\*\*v(\d+\.\d+\.\d+)\.\*\*/gm, min: 1 },
   ];
   const wrong = [];
-  let checked = 0;
+  const counts = new Map(PATTERNS.map((p) => [p.name, 0]));
 
   for (const file of FILES) {
     if (path.extname(file) !== '.md') continue;
     const text = fs.readFileSync(file, 'utf8');
-    for (const re of PATTERNS) {
-      for (const m of text.matchAll(re)) {
-        checked++;
+    for (const p of PATTERNS) {
+      for (const m of text.matchAll(p.re)) {
+        counts.set(p.name, counts.get(p.name) + 1);
         if (m[1] !== PKG.version) {
           wrong.push(`${path.relative(REPO, file)} labels the current release v${m[1]}, expected v${PKG.version}`);
         }
@@ -520,6 +557,13 @@ test('prose "current release" labels match the package.json version', () => {
     }
   }
 
-  assert.ok(checked > 0, 'found no prose release label to check; the format changed and this guard is now vacuous');
+  for (const p of PATTERNS) {
+    assert.ok(
+      counts.get(p.name) >= p.min,
+      `found ${counts.get(p.name)} match(es) for ${p.name}, expected at least ${p.min}. ` +
+        'That label was reworded out of this guard\'s reach, so it can now rot unnoticed ' +
+        'while the other pattern keeps this test green.'
+    );
+  }
   assert.deepStrictEqual(wrong, [], `stale current-release label(s):\n  ${wrong.join('\n  ')}`);
 });

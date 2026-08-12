@@ -2,6 +2,23 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.5] - 2026-08-12
+
+Tag: `fqe-v0.18.5`. Acting on the review of v0.18.4. Every finding was a defect in the guards themselves, which is the honest state of a release line about self-inspection: the guards are now the thing most likely to be wrong.
+
+### Fixed
+
+- **A docblock was attached to the wrong test.** The new `dependencies` assertion was inserted between the `bin` test and the docblock describing it, so one test carried two stacked comments (the first describing a different assertion) and the other carried none. In this file, whose entire thesis is that a comment describing something other than reality is the defect, that is the rot class it exists to catch.
+- **Only `dependencies` was compared between the two manifests.** `optionalDependencies`, `peerDependencies` (npm 7+ installs these automatically) and `bundleDependencies` all satisfy the same "declared in `cli/`, never installed for the adopter" shape and all slipped through. Guarding one spelling of a defect is not guarding the defect. All four are compared now.
+- **The prose-label guard used one shared `checked > 0` floor across two patterns.** There is exactly one match of each in the repo, so one pattern rotting to zero matches was masked by the other. Rewording README's opener to drop its trailing period would have made that pattern match nothing while the assertion stayed green and the label rotted forever, which is the v0.18.3 bug verbatim. Each pattern now has its own floor.
+- **The pin guard matched PIN_CONTEXT against the whole line.** A "line" in SKILL.md's status block is a 4000-character paragraph, so one incidental "npx" in prose marked every version token in it as an executable pin, including correct historical mentions. Now scoped by proximity to the tag. This is the third appearance of one shape: the size guard attributed by array order over a window, the test-count guard excluded by whole line, this one matched by whole line. **Scope the context to the claim, never to whatever container it sits in.**
+- **`SKILL.md`'s number was correct while the paragraph under it was two releases stale**, describing v0.18.2 in the present tense with no mention of v0.18.3 or v0.18.4, so a reader landed on a page labelled v0.18.4 and found the never-worked-install fix missing from the release story. Guarding the number cannot see that the prose it labels is out of date.
+- **The `persist-credentials` blocks were written by a regex that doubled every newline**, leaving a blank line between each line of the `with:` block, and the same rationale copy-pasted into jobs where it did not apply. Collapsed, and each job now states its own reason.
+
+### Notes
+
+- 778 tests. All nine positive-control scenarios still catch, verified after the proximity change loosened the pin guard, since loosening is exactly when a guard quietly stops catching.
+
 ## [0.18.4] - 2026-08-12
 
 Tag: `fqe-v0.18.4`. Acting on the CodeRabbit and Claude reviews of v0.18.3. Two of the three findings are the same defect class this release line exists to close: the path that gets tested differing from the path that ships.
