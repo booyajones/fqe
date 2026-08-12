@@ -427,10 +427,17 @@ test('root package.json bin points at a CLI entry point that exists', () => {
  * while none of them ran. Checking that a claim is CURRENT is not checking that it
  * is TRUE.
  */
-test('no doc uses the npx form that passes a path as the subcommand', () => {
+test('nothing uses the npx form that passes a path as the subcommand', () => {
   const broken = [];
   for (const file of FILES) {
-    if (path.extname(file) !== '.md') continue;
+    // Every scanned extension, NOT just .md. The first version of this test
+    // narrowed to Markdown and therefore missed the one occurrence that actually
+    // mattered: workflows/fqe-oracle-guard.yml.template, which adopters COPY into
+    // their own .github/workflows/ rather than read. There, the broken command
+    // makes fqe exit "unknown subcommand", which the template scores as ERROR and
+    // fails closed, so every PR in that repo demands a second reviewer while the
+    // guard never once reads the diff. The narrower scope excluded precisely the
+    // files that get EXECUTED instead of read.
     fs.readFileSync(file, 'utf8')
       .split('\n')
       .forEach((line, i) => {
