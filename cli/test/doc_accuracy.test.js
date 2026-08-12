@@ -413,7 +413,13 @@ test('PIN_PROXIMITY is large enough for the real SECURITY.md-shaped pin', () => 
  * misread as confirmation. A control whose fixture scales with the thing under test
  * cannot bound it.
  */
-const MAX_SANE_PROXIMITY = 1000;
+// 300, not 1000. At 1000 the assertion only went red once PIN_PROXIMITY reached
+// ~1009, so the constant was pinned to roughly [94, 1008] and 900 stayed green,
+// which is deep inside the failure this constant exists to prevent (one incidental
+// "npx" claiming every tag in a 4000-character paragraph). Strictly better than the
+// tautology it replaced, but the v0.18.8 entry read as though it were tight. The
+// real ceiling wanted here is "a couple of commands' worth of text", not a kilobyte.
+const MAX_SANE_PROXIMITY = 300;
 
 test('PIN_PROXIMITY is small enough that distant prose cannot claim a tag', () => {
   const tag = 'fqe-v1.2.3';
