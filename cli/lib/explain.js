@@ -24,6 +24,44 @@ const { BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 // is the root cause of version drift. Derive it so it can never go stale again.
 const FQE_VERSION = require('../package.json').version;
 
+/**
+ * Same single-source-of-truth rule, applied to the size claim.
+ *
+ * `fqe explain` used to hardcode verdict.js at ~160 in one sentence and at 140 in
+ * the very next one. Both were written when the file really was that size;
+ * it is now well past 500 (3 verdict passes grew to 12 across v0.9 -> v0.18) and
+ * neither string followed. That made the CLI recite a false number at the exact
+ * moment an engineer is auditing whether to trust it, which is the worst possible
+ * place to be wrong. Read the real file instead.
+ *
+ * The catch covers a read that fails on a file that IS resolvable (permissions, a
+ * bad mount, transient I/O). It does NOT cover verdict.js being absent: this module
+ * already requires ./verdict at load time for the thresholds, so a missing file is
+ * fatal several lines above and never reaches here. Stated precisely because a
+ * comment that overclaims its own guard is the defect this release exists to fix.
+ */
+function verdictSize() {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'verdict.js'), 'utf8');
+    const lines = src.split('\n');
+    if (lines[lines.length - 1] === '') lines.pop(); // trailing newline is not a line
+    return `${lines.length} lines`;
+  } catch {
+    return 'a few hundred lines';
+  }
+}
+
+/**
+ * Computed ONCE. Two reasons, both learned from the bug being fixed:
+ *
+ *  - The original defect was two sentences printing different numbers (160 and
+ *    140). A single constant makes that structurally impossible rather than
+ *    merely unlikely.
+ *  - Every `require('./explain')` would otherwise re-read verdict.js once per
+ *    interpolation site, on a module that bin/fqe.js loads for ordinary commands.
+ */
+const VERDICT_SIZE = verdictSize();
+
 const INVARIANTS = [
   {
     n: 1,
@@ -43,12 +81,12 @@ const INVARIANTS = [
     name: 'No LLM in the verdict path',
     plain_english:
       'The verdict (PASS / FLAG / FAIL) is computed by a deterministic Node function ' +
-      '(cli/lib/verdict.js, ~160 lines, fully unit-tested). Same inputs always produce ' +
+      `(cli/lib/verdict.js, ${VERDICT_SIZE}, fully unit-tested). Same inputs always produce ` +
       'the same output. No language model is ever asked "is this PR good?" — that would ' +
       'introduce non-determinism and an evaluator with its own failure mode.',
     why_it_matters:
       'This means the gate is auditable, reproducible, and Claude-skill-version-independent. ' +
-      'You can read 140 lines of pure JavaScript and know exactly when the gate blocks.',
+      `You can read ${VERDICT_SIZE} of pure JavaScript and know exactly when the gate blocks.`,
   },
   {
     n: 3,

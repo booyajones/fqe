@@ -2,6 +2,42 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.2] - 2026-08-12
+
+Tag: `fqe-v0.18.2`. Doc-accuracy release. A cold re-read of the repo found that the claims fqe makes about ITSELF had rotted, in the exact places a skeptical engineer checks first. Nothing in the verdict core was wrong; everything describing it was. The fix is guards, not another hand-pass, because v0.17.0 already did a hand-pass and it did not hold for one release.
+
+### Fixed
+
+- **`npm test` was broken and CI could not see it.** The package script was `node --test test/`, which fails with MODULE_NOT_FOUND on Node 22 (both with and without the trailing slash). CI stayed green the whole time because `tests.yml` ran its own `node --test test/*.test.js` instead. The script is now bare `node --test`, which relies on Node's own test discovery and therefore needs no shell glob expansion on any platform, and **CI now runs `npm test`** so the documented command is the one CI proves. A command CI never runs is a command nobody has tested.
+- **`fqe explain` recited a false number at runtime.** It hardcoded verdict.js at "~160 lines" in one sentence and "140 lines" in the very next, to the engineer running the 5-minute audit. It now reads the real file and reports its actual size, so it cannot drift again. Same single-source-of-truth fix v0.17.0 applied to the version string.
+- **26 stale executable install pins.** Every `npx` / `git clone` / `FQE_TAG` pin across 15 files still read `fqe-v0.17.0` at v0.18.1, so anyone copy-pasting the documented install got a release behind on the v0.18.1 security-relevant scaffold fix.
+- **Source-size claims were off by 3x.** Ten places put verdict.js at 160 lines; it is 516, having grown from 3 verdict passes to 12 across v0.9 -> v0.18. SKILL.md put bin/fqe.js at ~400 LOC; it is 1069.
+- **`docs/architecture.md` documented a vulnerability as current behavior.** Its verdict pseudocode showed `if ci_95[1] > threshold`, that is, trusting the runner's own confidence interval. That is precisely the CRITICAL fail-open closed in v0.14.0, where a fabricated tight interval on a real 50/100 attack run sailed past the 0.01 money bar. It also showed 3 of the 12 passes and reported every CI breach as an advisory FLAG, omitting that a money/state breach is a hard FAIL. Rewritten to match the code.
+- **README self-contradiction:** receipt signing was listed under "Planned next" while limitation #3 on the same page said it shipped in v0.16.0. Stale status block (v0.17.0 / 749 tests), stale "as of 0.13.0" caption, and a changelog description stopping at 0.13.0 are all corrected.
+
+### Fixed (second pass, from PR review)
+
+- **The new guard's attribution picked by ARRAY ORDER, not proximity.** `TARGETS.find(t => t.keyword.test(window))` returns the first entry listed, so `verdict` beat `bin/fqe.js` whenever both appeared in the 6-line window. SKILL.md passed only by luck of line ordering: sort that file tree alphabetically and the guard reports "claims 1070 for verdict.js, actual 516 (107% off)" — red, for the wrong file, on a doc that was correct. A guard that cries wolf gets deleted, which is the failure it exists to prevent. Now nearest mention wins, two files on the same nearest line report ambiguity rather than guessing, and the rule is a pure `attributeSizeClaim()` tested directly with synthetic fixtures (the whole-repo scan cannot catch this class: it only sees today's files, where the right and wrong answers coincided).
+- **`return` instead of `continue`** inside the per-line match loop exited the callback for the entire line, so a second size claim on a line was skipped whenever the first was unattributable.
+- **Three test-count claims were stale in files this release had already edited** (749 in `SECURITY.md`, `CONTRIBUTING.md`, `SKILL.md`), including the count backing the "no LLM in the verdict path" invariant in the threat model. `CONTRIBUTING.md` also told contributors to run `node --test test/` — the exact broken command this release fixes.
+- **Three version mentions asserted the CURRENT pin but dodged the pin guard** (`SECURITY.md` x2, `docs/getting-started.md`), so at the next release they would have contradicted the guarded command ten lines above them in the same file. Reworded to name no version at all: an unrottable claim beats a guarded one.
+- **Two overclaims this release itself introduced** in `docs/architecture.md`: "fails the build if either accumulator is *ever* assigned anything but `true`" promised AST-level coverage that a regex-over-source guard does not have (it misses aliasing and destructuring), and "the order does not matter to the outcome" was wrong for the `reasons` list, since a throw in Pass 3 means Passes 4-12 never contribute theirs. Both narrowed to what is actually true.
+- **`fqe explain` read `verdict.js` twice per load** via two call sites in the module-scope array. Hoisted to one `VERDICT_SIZE` constant, which also makes it structurally impossible for the two sentences to disagree again — the original bug.
+
+### Added
+
+- **`cli/scripts/check_test_count.js`**: verifies every documented test count against the real suite. It runs as a separate CI job rather than a test, because a suite cannot count itself without spawning itself forever. Counts next to a third-party repo name (the more-itertools and semver proof forks) are excluded by proximity to the number, not by whole line — the first version excluded any line naming a third-party repo and silently swallowed SKILL.md's own count, which sits in a long paragraph that mentions the proof repos much later.
+- **CI matrix**: ubuntu + windows, Node 20 and 22. `engines` declares `>=20` and a floor nothing runs is a claim rather than a fact; the repo also asserts cross-platform behavior ("1 Windows-symlink skip") that only Windows can observe.
+- **A guard that `cli/test/` holds only `*.test.js`.** Bare `node --test` uses Node's default discovery, which executes ANY `.js` under a `test/` directory. Verified on Node 22.16 by dropping a `.js` into `test/fixtures/` and watching it run as a test, so `fixtures/` is deliberately scanned rather than skipped: that is exactly where a contributor would put one. Also verified Node does NOT descend into dot-directories, so a crashed Stryker run leaving `.stryker-tmp/sandbox-*/test/*.test.js` is not picked up.
+- **A real floor on the pin guard.** It asserted only `checked > 0`. Since this release exists because 26 stale pins went unnoticed, a future PR consolidating 25 pin mentions down to 1 would have passed while watching 96% less. Now `MIN_PIN_CLAIMS`.
+
+- **`cli/test/doc_accuracy.test.js`**: three guards that make all of the above self-enforcing. (1) Every executable install pin must equal `package.json`'s version. (2) Every source-size claim in the docs must be within 15% of the real file, attributed to its subject by keyword within a 6-line window. (3) The README status badge must match `package.json`. Each guard also fails when it finds NOTHING to inspect, so a reword cannot turn it into a hollow green. Scope is documented in the file header: prose version mentions and CHANGELOG history are deliberately out of scope, since they are correct as history.
+
+### Notes
+
+- 765 tests (764 pass, 1 Windows-symlink skip). Each guard was verified by planting its regression one at a time and confirming the right guard went red with the right message, including the two hollow-pass paths. A guard that has only ever passed is not evidence.
+- Unchanged and still the real adoption blockers: no live production money-path proof, bus factor 1, HMAC rather than Sigstore by default, mutation gate advisory by default.
+
 ## [0.18.1] - 2026-06-02
 
 Tag: `fqe-v0.18.1`. Acting on an external multi-LLM review (council + gauntlet, GPT/DeepSeek/Gemini) of the finished v0.18.0 package. The verdict is recorded honestly: internal dev-team use SHIP-WITH-CONDITIONS (~63/100), required money-path gate NOT-YET (~25/100), overall RECONSIDER (66/100), capped by what only people and data can fix (no live-money-path proof, bus factor 1, HMAC-not-Sigstore-by-default). This patch closes the two findings that were solo-fixable and were the structural blind spots a Claude-only review had missed.

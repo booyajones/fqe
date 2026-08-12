@@ -1,6 +1,19 @@
 # fqe runs its own test suite on every push and PR. A QA tool with no CI on
-# itself is not credible. The job is named `test` so it can be required in
-# branch protection. node --test needs no install (the suite is pure node:test).
+# itself is not credible.
+#
+# This runs `npm test`, NOT a hand-written node invocation, on purpose. When CI
+# used its own command, the package.json script was free to rot unnoticed: it sat
+# broken at `node --test test/` (MODULE_NOT_FOUND on Node 22) while CI stayed
+# green on a different command. Running the documented command is what proves the
+# documented command.
+#
+# The matrix exists for the same reason. package.json declares engines
+# node >= 20, and a floor nothing runs is a claim, not a fact. Windows is here
+# because the repo asserts cross-platform behavior, and an untested self-claim is
+# the exact defect v0.18.2 closes. (It earned its keep immediately: it showed the
+# long-standing "1 Windows-symlink skip" line is true only on a Windows box
+# without developer mode. GitHub's windows runners create symlinks fine and run
+# all 773.)
 name: tests
 
 on:
@@ -13,13 +26,62 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  suite:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '22']
+    name: suite (${{ matrix.os }}, node ${{ matrix.node }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - name: unit + integration tests
+        working-directory: cli
+        run: npm test
+
+  # Separate job: a suite cannot count itself without spawning itself forever,
+  # so the doc test-count claims are verified here, once, after the suite.
+  doc-counts:
     runs-on: ubuntu-latest
+    name: doc test-count claims
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - name: unit + integration tests
+      - name: every documented test count matches reality
         working-directory: cli
-        run: node --test test/*.test.js
+        run: node scripts/check_test_count.js
+
+  # This job exists to keep the branch-protection contract stable.
+  #
+  # `test` is the context required by branch protection on main. Turning the old
+  # single job into a matrix renamed it to `suite (ubuntu-latest, node 20)` and
+  # friends, which would have left the required `test` context permanently absent:
+  # GitHub waits forever for a check that no longer reports, so nothing could
+  # merge, and loosening protection to unblock it would have quietly removed the
+  # gate. A fixed-name aggregator keeps the required context stable no matter how
+  # the matrix is reshaped later.
+  #
+  # `if: always()` plus an explicit result check, NOT the default. Without it this
+  # job would be SKIPPED when a matrix leg fails, and a skipped required check is
+  # treated as success by branch protection: the gate would go green precisely
+  # when the tests went red.
+  test:
+    needs: [suite, doc-counts]
+    if: always()
+    runs-on: ubuntu-latest
+    name: test
+    steps:
+      - name: every matrix leg and the doc-count check passed
+        run: |
+          echo "suite:      ${{ needs.suite.result }}"
+          echo "doc-counts: ${{ needs.doc-counts.result }}"
+          if [ "${{ needs.suite.result }}" != "success" ] || [ "${{ needs.doc-counts.result }}" != "success" ]; then
+            echo "::error::a required check did not succeed"
+            exit 1
+          fi

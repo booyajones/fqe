@@ -2,14 +2,14 @@
 
 **A CI gate that runs the checks you already have, refuses to let humans skip them, and emits a tamper-evident receipt of what was checked.**
 
-[![tests](https://img.shields.io/badge/tests-749%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.17.0-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-773%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.18.2-blue)](CHANGELOG.md)
 
-fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in 160 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
+fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in about 500 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
 ```bash
-npx --yes github:booyajones/fqe#fqe-v0.17.0 cli/bin/fqe.js init
+npx --yes github:booyajones/fqe#fqe-v0.18.2 cli/bin/fqe.js init
 git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
@@ -50,7 +50,7 @@ fqe makes those checks unskippable.
        │   + tally     │   runners         │
        │               │   ↓               │
        │               │   verdict.js      │  ← no LLM in path
-       │               │   (deterministic) │     pure JS, 160 LOC
+       │               │   (deterministic) │     pure JS, ~500 LOC
        └───────────────┴───────────────────┘
                        │
                        ▼
@@ -86,7 +86,7 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 
 fqe uses Claude in two places, both **around** the gate: it reviews every PR (advisory comments) and it can write tests for you (the optional auto-author, gated by the mutation bouncer). What it never does is let an LLM **decide the merge**.
 
-- **No LLM decides PASS/FAIL.** The verdict is `verdict.js`, about 160 lines of pure deterministic code, no AI, no dependencies. This is the point: a merge gate must be deterministic (same PR, same answer), auditable (you can show exactly what blocked it), and immune to prompt injection (a PR cannot talk its way to green). Claude advises and authors; the gate decides.
+- **No LLM decides PASS/FAIL.** The verdict is `verdict.js`, about 500 lines of pure deterministic code, no AI, no dependencies. This is the point: a merge gate must be deterministic (same PR, same answer), auditable (you can show exactly what blocked it), and immune to prompt injection (a PR cannot talk its way to green). Claude advises and authors; the gate decides.
 - **It does not run your runners.** You configure runners (your tests, linters, dependency audits). fqe orchestrates them and reads their exit codes. It does not bring its own test/lint/audit tools.
 - **It does not punish bypass.** It audits bypass. If your team is consistently bypassing, the gate is wrong, not your team.
 - **It does not replace your CI.** It runs alongside your existing workflows as an additional required check.
@@ -104,7 +104,7 @@ fqe uses Claude in two places, both **around** the gate: it reviews every PR (ad
 | [FAQ](docs/faq.md) | Pre-empts the 10 questions every engineer asks. |
 | [Security](SECURITY.md) | Threat model. What fqe protects against and what it does not. |
 | [Contributing](CONTRIBUTING.md) | PR process and ground rules. |
-| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.13.0). |
+| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.18.2). |
 
 ## Recipes
 
@@ -165,7 +165,7 @@ fqe reads exit codes and emits one of five outcomes:
 | 3 | FLAG: adversarial CI bound exceeded | Informational only, does not block |
 | 4 | INFRA: transient (GitHub API timeout, missing binary) | Neutral Check Run, does not block |
 
-You can read the full taxonomy in [`cli/lib/verdict.js`](cli/lib/verdict.js). It's 160 lines.
+You can read the full taxonomy in [`cli/lib/verdict.js`](cli/lib/verdict.js). It's about 500 lines, a large share of them comments recording why each check exists and which review caught the gap it closes.
 
 ## Statistical guard rails
 
@@ -181,15 +181,15 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.17.0.** 749 tests passing (1 Windows-symlink skip), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.18.2.** 773 tests passing on Linux and Windows across Node 20 and 22 (one symlink test self-skips on a Windows box without developer mode, since it cannot create the symlink), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 
 **Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
-What each release added: coverage-liveness (v0.9.0, no green over an empty/mis-scoped suite), inter-suite discovery + flaky/quarantine + human-review telemetry (v0.10.0), a mandatory money-idempotency invariant (v0.11.0), contract baseline from an OpenAPI spec (v0.12.0), and an advisory-first mutation-on-diff judge (v0.13.0). See the [Changelog](CHANGELOG.md).
+What each release added: coverage-liveness (v0.9.0, no green over an empty/mis-scoped suite), inter-suite discovery + flaky/quarantine + human-review telemetry (v0.10.0), a mandatory money-idempotency invariant (v0.11.0), contract baseline from an OpenAPI spec (v0.12.0), an advisory-first mutation-on-diff judge (v0.13.0), adversarial-stat integrity hardening (v0.14.0), the money-strict profile and foot-gun caps (v0.15.0), receipt signing (v0.16.0), a full-codebase adversary sweep (v0.17.0), the shadow-trial scorecard (v0.18.0), and doc-accuracy guards (v0.18.2). See the [Changelog](CHANGELOG.md).
 
 ## Known limitations (read this before adopting on a critical path)
 
-These are the honest gaps as of 0.13.0. The architectural invariants are real and the earlier bypass/retention limitations are now fixed (head-SHA-bound TTL bypass in 0.4.0, allowlist read at default-branch HEAD and 365-day receipt retention in 0.6.0).
+These are the honest gaps as of 0.18.2. The architectural invariants are real and the earlier bypass/retention limitations are now fixed (head-SHA-bound TTL bypass in 0.4.0, allowlist read at default-branch HEAD and 365-day receipt retention in 0.6.0).
 
 1. **Proven on third-party OSS and earlier on an internal repo, not yet on a live production service.** The cold-plug proofs run on real third-party repos and the gate caught real bugs on an internal TypeScript service earlier, but the v0.9.0+ capabilities have not yet run against a live production money path. That proof needs a sandbox environment.
 
@@ -201,16 +201,20 @@ These are the honest gaps as of 0.13.0. The architectural invariants are real an
 
 5. **The runtime layer (synthetic canaries, shadow replay) ships as recipes, not running code.** Wiring it needs a sandbox endpoint and credentials.
 
-**Planned next:** receipt signing, the runtime/canary layer once a sandbox is available, and ratcheting the mutation gate to blocking after the false-red rate is measured on a real repo.
-- `fqe doctor` subcommand to diagnose environment issues
-- More recipes (Go, Rust, monorepo)
+**Planned next** (receipt signing shipped in v0.16.0 and is no longer on this list):
+
+- The runtime/canary layer, once a sandbox endpoint and credentials exist.
+- Ratcheting the mutation gate to blocking, after the false-red rate is measured on a real repo.
+- Sigstore keyless signing as the default rather than a documented recipe.
+- `fqe doctor` subcommand to diagnose environment issues.
+- More recipes (Go, monorepo).
 
 ## Compared to alternatives
 
 | | fqe | husky / lefthook | danger.js | a custom workflow |
 |---|---|---|---|---|
 | Runs server-side | Yes | No (local-only) | Yes | Yes |
-| Deterministic verdict | Yes (160 LOC, readable) | N/A | No (opinionated) | Depends on your code |
+| Deterministic verdict | Yes (~500 LOC, readable) | N/A | No (opinionated) | Depends on your code |
 | Tamper-evident receipt | Yes (SHA-bound) | No | No | Depends |
 | Server-authoritative bypass | Yes (Events API) | No | No | No (file-based) |
 | Statistical bounds on AI evals | Yes (Wilson CI) | No | No | No |
