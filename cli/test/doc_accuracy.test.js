@@ -895,35 +895,85 @@ test('no generated workflow depends on an unpublished container image', () => {
  * The invariant is positional and hard to fake: the fetch target must be a temp
  * path, never a directory on PATH. Verify there, then `install` it across.
  */
-test('no generated workflow downloads a binary directly onto PATH', () => {
+test('nothing lands on PATH before its checksum is verified', () => {
   const { init } = require('../lib/init');
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fqe-dl-'));
   fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
   init({ dir });
 
-  const PATH_DIRS = /\/usr\/local\/bin|\/usr\/bin|\/usr\/local\/sbin|\/opt\/bin/;
+  // Any bin/sbin directory, not an enumerated few. On ubuntu-latest /bin is a
+  // symlink to /usr/bin, so naming one and not the other guards nothing.
+  const PATH_DIR = /(^|[\s"'=>|])(\/usr\/local\/s?bin|\/usr\/s?bin|\/s?bin|\$HOME\/\.local\/bin|~\/\.local\/bin)\//;
+
+  // Every idiom that makes a file appear in a PATH directory, not just `wget -O`.
+  // The v0.18.15 guard matched only `\s-[Oo]\s+<path>` on a wget/curl line, which
+  // is one spelling out of many and — worse — skipped `sudo install` entirely,
+  // so merely SWAPPING the install and verify lines reproduced the identical
+  // vulnerability with the guard still green.
+  const LANDS_ON_PATH = [
+    /\b(wget|curl)\b.*(-O|-o|--output(-document)?[= ])\s*\S*\//,
+    /\b(install|mv|cp|ln)\b.*\s\S*\//,
+    /\|\s*(sudo\s+)?tee\s+\S*\//,
+    />\s*\S*\//,
+  ];
+  const VERIFIES = /sha256sum\s+-c|shasum\s+-a\s+256\s+-c|cosign\s+verify/;
+
   const offenders = [];
+  let checked = 0;
   const wfDir = path.join(dir, '.github', 'workflows');
+
   for (const name of fs.readdirSync(wfDir)) {
-    fs.readFileSync(path.join(wfDir, name), 'utf8')
+    const all = fs
+      .readFileSync(path.join(wfDir, name), 'utf8')
       .split('\n')
-      .forEach((line, i) => {
-        if (/^\s*#/.test(line)) return; // comments explain the rule, they do not break it
-        if (!/\b(wget|curl)\b/.test(line)) return;
-        // -O <target> for wget, -o <target> for curl
-        const m = line.match(/\s-[Oo]\s+(\S+)/);
-        if (m && PATH_DIRS.test(m[1])) {
-          offenders.push(`${name}:${i + 1} downloads straight to ${m[1]}`);
+      .map((l) => (/^\s*#/.test(l) ? '' : l)); // comments describe the rule, they do not break it
+
+    // Scope to a STEP, and only to steps that actually download something.
+    //
+    // The rule is about FETCHED artifacts: a checksum is the only thing standing
+    // between a downloaded binary and arbitrary code execution. The fqe CLI
+    // reaches PATH via `ln -sf` from a git-fetched, ref-pinned checkout, which
+    // has no checksum to wait for — a whole-file scan flagged that as a
+    // violation, which is the cry-wolf failure this file elsewhere calls its own
+    // worst outcome.
+    const stepStarts = all
+      .map((l, i) => (/^\s*-\s+(name|uses|run):/.test(l) ? i : -1))
+      .filter((i) => i >= 0);
+    const bounds = stepStarts.map((s, k) => [s, stepStarts[k + 1] ?? all.length]);
+
+    for (const [from, to] of bounds) {
+      const step = all.slice(from, to);
+      if (!step.some((l) => /\b(wget|curl)\b/.test(l))) continue; // nothing fetched here
+
+      const verifyIdx = step.findIndex((l) => VERIFIES.test(l));
+      step.forEach((line, j) => {
+        if (!PATH_DIR.test(line)) return;
+        if (!LANDS_ON_PATH.some((re) => re.test(line))) return;
+        if (VERIFIES.test(line)) return; // the verification line itself may name the path
+        checked++;
+        if (verifyIdx === -1 || j < verifyIdx) {
+          offenders.push(
+            `${name}:${from + j + 1} puts a fetched file on PATH before any checksum: ${line.trim().slice(0, 66)}`
+          );
         }
       });
+    }
   }
 
+  // Floor, like every other whole-file scan in this file. Without it, reshaping
+  // the install to an idiom none of the patterns match leaves this green while
+  // inspecting nothing.
+  assert.ok(
+    checked > 0,
+    'found no line that places a file on PATH. Either the install was reshaped out ' +
+      'of this guard\'s reach or it was removed; both mean this test is now vacuous.'
+  );
   assert.deepStrictEqual(
     offenders,
     [],
-    'a generated workflow fetches a binary directly into a PATH directory, so it is ' +
-      'executable before its checksum is verified. Download to a temp path, verify ' +
-      `there, then install it across:\n  ${offenders.join('\n  ')}`
+    'a generated workflow makes a binary executable on PATH before verifying its ' +
+      'checksum. Stage to a temp path, verify there, then install it across:\n  ' +
+      offenders.join('\n  ')
   );
 });
 
