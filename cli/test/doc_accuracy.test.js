@@ -896,19 +896,50 @@ test('every binary a generated workflow calls is installed in that workflow', ()
   fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
   init({ dir });
 
-  // tool -> how that workflow proves it is available
+  // tool -> the line that ACTUALLY installs it.
+  //
+  // These deliberately match the install mechanism, not a call and not a step
+  // name. The first version accepted `fqe version` as proof that fqe was
+  // installed, and `install .*yq` matched the step's own `name:` line, so a
+  // workflow that only ever CALLED the binary satisfied the guard. That is the
+  // exact bug class this test exists for, and half of it could not see it.
   const TOOLS = [
-    { bin: 'yq', installed: /yq_linux_amd64|install .*yq/i },
-    { bin: 'fqe', installed: /ln -sf .*bin\/fqe\.js|fqe version/ },
+    { bin: 'yq', install: /yq_linux_amd64/ },
+    { bin: 'fqe', install: /ln -sf .*bin\/fqe\.js/ },
   ];
   const missing = [];
   const wfDir = path.join(dir, '.github', 'workflows');
   for (const name of fs.readdirSync(wfDir)) {
-    const text = fs.readFileSync(path.join(wfDir, name), 'utf8');
+    const rawLines = fs.readFileSync(path.join(wfDir, name), 'utf8').split('\n');
+    // Comments and `- name:` labels mention these tools constantly and execute
+    // nothing. Scanning them made the guard both noisy and, worse, its call
+    // regex was so narrow trying to avoid them that it matched NOTHING, not even
+    // `yq --version`, which left the yq half silently checking zero lines.
+    const lines = rawLines.map((l) =>
+      /^\s*#/.test(l) || /^\s*-?\s*name:\s/.test(l) ? '' : l
+    );
     for (const t of TOOLS) {
-      const calls = new RegExp(`(^|[|;&\\s(])${t.bin}\\s`, 'm').test(text);
-      if (calls && !t.installed.test(text)) {
-        missing.push(`${name} calls \`${t.bin}\` but never installs it`);
+      // The binary appearing as a command word: start of line, or after a pipe,
+      // semicolon, ampersand, paren, or `!` negation, which is how the real
+      // allowlist check invokes it (`if ! yq '.allowed_actors[]' ...`).
+      const callRe = new RegExp(`(^|[|;&(!]\\s*|\\s)${t.bin}(\\s|$)`);
+      const installIdx = lines.findIndex((l) => t.install.test(l));
+      const callIdxs = lines.map((l, i) => (callRe.test(l) ? i : -1)).filter((i) => i >= 0);
+      if (callIdxs.length === 0) continue;
+
+      if (installIdx === -1) {
+        missing.push(`${name} calls \`${t.bin}\` (line ${callIdxs[0] + 1}) but never installs it`);
+        continue;
+      }
+      // ORDER matters, and the whole-file test could not see it: steps in these
+      // jobs are hand-ordered, and the yq fix was a step INSERTION. Moving that
+      // step below the one that uses yq would leave an unordered check green
+      // while the workflow dies on "command not found" at runtime.
+      const early = callIdxs.filter((i) => i < installIdx);
+      if (early.length > 0) {
+        missing.push(
+          `${name} calls \`${t.bin}\` at line ${early[0] + 1} but does not install it until line ${installIdx + 1}`
+        );
       }
     }
   }
@@ -916,8 +947,9 @@ test('every binary a generated workflow calls is installed in that workflow', ()
   assert.deepStrictEqual(
     missing,
     [],
-    'a generated workflow depends on a binary it does not install. The adopter gets ' +
-      `a job that dies partway through with "command not found":\n  ${missing.join('\n  ')}`
+    'a generated workflow depends on a binary it does not install, or installs it ' +
+      'too late. The adopter gets a job that dies partway through with ' +
+      `"command not found":\n  ${missing.join('\n  ')}`
   );
 });
 
