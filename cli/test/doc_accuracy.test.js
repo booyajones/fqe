@@ -878,6 +878,56 @@ test('no generated workflow depends on an unpublished container image', () => {
 });
 
 /**
+ * No generated workflow may download a binary DIRECTLY onto PATH.
+ *
+ * This is the one defect in this repo with a demonstrated recurrence rate: the
+ * inverted order (`wget -O /usr/local/bin/yq` then `sha256sum -c`) shipped in
+ * v0.18.12 and again in v0.18.13. It puts an unverified binary on PATH in the
+ * window between the two commands. It fails closed under `set -e`, so it has
+ * never been exploitable here, but a checksum pin only means something if
+ * nothing executable lands ahead of it.
+ *
+ * The v0.18.14 guard could NOT see this: it matched `yq_linux_amd64`, the
+ * download URL, which is present in the safe and the vulnerable form alike.
+ * Verified by reverting to the vulnerable form and watching the suite stay green
+ * — a guard written in response to a defect that cannot detect that defect.
+ *
+ * The invariant is positional and hard to fake: the fetch target must be a temp
+ * path, never a directory on PATH. Verify there, then `install` it across.
+ */
+test('no generated workflow downloads a binary directly onto PATH', () => {
+  const { init } = require('../lib/init');
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fqe-dl-'));
+  fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
+  init({ dir });
+
+  const PATH_DIRS = /\/usr\/local\/bin|\/usr\/bin|\/usr\/local\/sbin|\/opt\/bin/;
+  const offenders = [];
+  const wfDir = path.join(dir, '.github', 'workflows');
+  for (const name of fs.readdirSync(wfDir)) {
+    fs.readFileSync(path.join(wfDir, name), 'utf8')
+      .split('\n')
+      .forEach((line, i) => {
+        if (/^\s*#/.test(line)) return; // comments explain the rule, they do not break it
+        if (!/\b(wget|curl)\b/.test(line)) return;
+        // -O <target> for wget, -o <target> for curl
+        const m = line.match(/\s-[Oo]\s+(\S+)/);
+        if (m && PATH_DIRS.test(m[1])) {
+          offenders.push(`${name}:${i + 1} downloads straight to ${m[1]}`);
+        }
+      });
+  }
+
+  assert.deepStrictEqual(
+    offenders,
+    [],
+    'a generated workflow fetches a binary directly into a PATH directory, so it is ' +
+      'executable before its checksum is verified. Download to a temp path, verify ' +
+      `there, then install it across:\n  ${offenders.join('\n  ')}`
+  );
+});
+
+/**
  * Every external binary a generated workflow CALLS must also be INSTALLED in it.
  *
  * This is the class behind the container removal, and it bit immediately. The

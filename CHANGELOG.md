@@ -2,6 +2,19 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.15] - 2026-08-14
+
+Tag: `fqe-v0.18.15`. The v0.18.14 guard could not see the defect it was written for.
+
+### Fixed
+
+- **The download-onto-PATH guard matched the download URL, which is identical in the safe and the vulnerable form.** `/yq_linux_amd64/` appears in both `wget … -O "$YQ_TMP"` and `wget … -O /usr/local/bin/yq`, so reverting to the inverted order left the suite green. Proven by doing exactly that and watching it pass. This matters more than most: the inversion is the one defect here with a demonstrated recurrence rate, having shipped in v0.18.12 and again in v0.18.13. A guard written in response to a recurring defect, which cannot detect that defect, is worse than no guard, because it is cited as protection. The invariant is now positional and hard to fake: **no generated workflow may fetch a binary into a PATH directory.** Verified by reverting to the vulnerable form and watching it go red.
+- **The yq staging path ignored the rule the same file argues for.** `mktemp` with no argument resolves to `/tmp` on GitHub-hosted runners, which do not set `TMPDIR` — the world-writable, sticky, job-persistent directory the fqe source staging deliberately avoids a few steps above. Now staged under `RUNNER_TEMP` like everything else.
+
+### Notes
+
+- 790 tests. Known and deliberately left: the binary guard scans per FILE rather than per JOB, and `findIndex` takes the first install site. Latent today because `init` emits two files with one job and one install each, so deleting either copy is caught by the other file's scan. It would go blind if a second job or a matrix leg were added inside one file. Recorded rather than fixed, because the fix is a real restructure and this release is a correction.
+
 ## [0.18.14] - 2026-08-14
 
 Tag: `fqe-v0.18.14`. Hardens the yq step from v0.18.13 and the guard that was supposed to protect it.
