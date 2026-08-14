@@ -2,6 +2,22 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.16] - 2026-08-14
+
+Tag: `fqe-v0.18.16`. The v0.18.15 guard caught one spelling of the defect. There are at least five.
+
+### Fixed
+
+- **Swapping two lines reproduced the identical vulnerability with the guard green.** v0.18.15 asserted that no workflow downloads into a PATH directory, keyed on a `wget`/`curl` line. But `sudo install -m 0755 "$YQ_TMP" /usr/local/bin/yq` placed *before* the `sha256sum -c` is the same unverified-binary-on-PATH window, and that line contains neither `wget` nor `curl`, so the scanner skipped it entirely. Its changelog called the invariant "positional and hard to fake"; it was neither.
+- The rule is now an **ordering** one and scoped per step: within any step that fetches something, nothing may land on a PATH directory before a checksum verification in that same step. Tested against five spellings of one defect: `wget -O` straight to `/usr/local/bin`, install-before-verify, `--output-document=`, a `curl` redirect into `/bin`, and a pipe into `sudo tee`. All five caught; previous versions caught one or two.
+- `PATH_DIR` no longer enumerates a handful of directories. On `ubuntu-latest` `/bin` is a symlink to `/usr/bin`, so naming one and not the other guarded nothing; `/sbin`, `/usr/sbin` and `$HOME/.local/bin` were also absent.
+- **Step scoping also removed a false positive the whole-file version introduced.** The fqe CLI reaches PATH by `ln -sf` from a git-fetched, ref-pinned checkout, which has no checksum to wait for. A file-wide ordering rule flagged it, which is the cry-wolf failure this file elsewhere calls its own worst outcome.
+- A hollow-pass floor, matching every other whole-file scan here. Reshaping the install to an unmatched idiom would otherwise leave the guard green while inspecting zero lines.
+
+### Notes
+
+- 790 tests. The lesson across v0.18.14 → v0.18.16, worth more than the fix: each guard was written against the exact form of the bug just repaired, so each one caught that form and missed the property. Enumerate several spellings of a defect and test the guard against all of them **before** claiming it holds.
+
 ## [0.18.15] - 2026-08-14
 
 Tag: `fqe-v0.18.15`. The v0.18.14 guard could not see the defect it was written for.
