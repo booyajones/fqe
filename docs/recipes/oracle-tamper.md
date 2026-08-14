@@ -36,7 +36,7 @@ Copy `workflows/fqe-oracle-guard.yml.template` to `.github/workflows/fqe-oracle-
         id: guard
         run: |
           set +e
-          npx --yes -p github:booyajones/fqe#fqe-v0.18.11 fqe \
+          npx --yes -p github:booyajones/fqe#fqe-v0.18.12 fqe \
             oracle-guard --base "$BASE_SHA" --head "$HEAD_SHA"
           GUARD_EXIT=$?; set -e
           # The exit code is the signal, not parsed text (a parse fallback can
