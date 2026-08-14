@@ -2,6 +2,28 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.12] - 2026-08-14
+
+Tag: `fqe-v0.18.12`. Cleanup of the v0.18.11 handoff list, which turned up a workflow that could never have run.
+
+### Fixed
+
+- **`fqe init` generated a second-approve workflow that could not start.** It declared `container: ghcr.io/booyajones/fqe:0.1` and then called a bare `fqe`. That image has never been published: the authenticated GitHub Packages API returns 404 for the package and the owner has **zero** container packages. A job declaring it fails on image pull before its first step, so every adopter who ran `fqe init` received a broken bypass-rate unblock, which is precisely the path you need working on a bad day. It now installs the CLI the same ref-pinned `git fetch` + `npm ci` way the gate does. Both reference templates in `workflows/` had the same declaration and are now comments explaining why it was removed.
+- Earlier releases described this image as a "mutable tag whose digest can change under you". That presumed a published tag. `SECURITY.md` now states the resolved fact: it does not exist, and nothing ships that depends on it.
+- **`cli/package-lock.json` root `version` had drifted to `0.1.0`** against `0.18.12` in the manifest. `npm ci` validates the dependency tree rather than that field and the CLI has zero runtime deps, so it never failed, but the scaffold now runs `npm ci`, which makes the lockfile load-bearing.
+- `docs/recipes/circleci.md` still used `npm install --omit=dev` while the Actions scaffold moved to `npm ci` in v0.18.11, an inconsistency that release introduced.
+- **Both documented ways to resolve a tag to a SHA only worked with the tag already local.** A bare `git rev-parse fqe-v…` fails without a fetch, and on an annotated tag it can resolve to the tag object rather than the commit. Replaced with `git ls-remote <url> 'refs/tags/<tag>^{}' | cut -f1`, verified to return the same commit `git rev-parse` does.
+
+### Added
+
+- **A guard that no generated workflow declares a container.** Runs `init` into a temp dir and scans the output, so it checks what an adopter actually receives rather than the template source. If the image is ever published and pinned by digest, delete this test deliberately rather than working around it.
+- **A hollow-pass floor on the container-org guard**, matching `MIN_PIN_CLAIMS` and `MIN_SIZE_CLAIMS`. Without it, removing every reference left it green while checking nothing.
+- **A guard that all three manifests agree on the version** (root, `cli/`, and the lockfile, including the lockfile's own root package entry). Two were pinned to each other since v0.18.4; the lockfile was the unguarded third and was the one that had rotted.
+
+### Notes
+
+- 788 tests. All three new guards negative-controlled: re-introducing the container into the generated workflow, drifting the lockfile version, and blinding the org guard each turn the right test red. Generated workflows re-checked for container declarations and YAML validity.
+
 ## [0.18.11] - 2026-08-12
 
 Tag: `fqe-v0.18.11`. Follow-ups to v0.18.10, and the last release of this session.

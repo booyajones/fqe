@@ -192,14 +192,15 @@ jobs:
           set -euo pipefail
           # Supply-chain hardening: clone is pinned to a specific tag, not HEAD.
           # To update fqe, push a new tag in finexio-skills and re-run fqe init.
-          # When ghcr.io/booyajones/fqe:0.1 is published with cosign verify,
-          # this entire step can be replaced with: container: ghcr.io/booyajones/fqe:0.1
+          # A container image would replace this whole step, but ghcr.io/booyajones/fqe
+          # is NOT published today (Packages API 404, owner has no container packages),
+          # so do not switch to it until it exists and is pinned by digest.
           # FQE_REF accepts a tag OR a 40-char commit SHA. It is fetched rather
           # than cloned --branch, because --branch takes a ref name only: setting
           # it to a SHA (which SECURITY.md and getting-started.md both recommend
           # for production) failed with "Remote branch <sha> not found in upstream
           # origin", so the documented hardening path broke the gate outright.
-          FQE_REF="fqe-v0.18.11"
+          FQE_REF="fqe-v0.18.12"
           # A FRESH directory per job, never a fixed path under /tmp.
           #
           # This step fetches code and then executes it, so where it stages that
@@ -419,12 +420,38 @@ jobs:
   approve:
     if: github.event.label.name == 'fqe-second-approved'
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/booyajones/fqe:0.1
     steps:
       - uses: actions/checkout@v5
         with:
           ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      # Installed the same proven way fqe-quality.yml does.
+      #
+      # This job used to run inside \`container: ghcr.io/booyajones/fqe:0.1\` and
+      # call a bare \`fqe\`. That image has never been published (the GitHub
+      # Packages API returns 404 and the owner has no container packages), so the
+      # job could not start at all: every adopter who ran \`fqe init\` got a
+      # second-approve workflow that failed on image pull before step one. The
+      # bypass-rate unblock is exactly the path you need working on a bad day.
+      - name: Install fqe CLI (ref-pinned)
+        run: |
+          set -euo pipefail
+          FQE_REF="fqe-v0.18.12"
+          FQE_SRC="$(mktemp -d "\${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
+          git -C "$FQE_SRC" init -q .
+          git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
+          git -C "$FQE_SRC" checkout -q --detach FETCH_HEAD
+          cd "$FQE_SRC/cli"
+          npm ci --omit=dev
+          chmod +x bin/fqe.js
+          sudo ln -sf "$PWD/bin/fqe.js" /usr/local/bin/fqe
+          fqe version
 
       - name: Identify both actors via Events API
         id: actors

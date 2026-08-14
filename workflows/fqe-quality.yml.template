@@ -28,10 +28,16 @@ permissions:
 jobs:
   fqe:
     runs-on: ubuntu-latest
-    container:
-      # VERIFY in Phase 1.2: image is cosign-signed; pin by digest before
-      # going to production. Tag pin shown here for readability.
-      image: ghcr.io/booyajones/fqe:0.1
+    # NOTE: this template predates `fqe init` and is kept for reference only.
+    #
+    # It used to declare `container: ghcr.io/booyajones/fqe:0.1`. That image has
+    # never been published: the GitHub Packages API returns 404 and the owner has
+    # no container packages at all, so any job declaring it fails on image pull
+    # before the first step. Removed rather than left as an aspirational pin.
+    #
+    # Use `fqe init` to generate a working workflow. It installs the CLI with a
+    # ref-pinned `git fetch` + `npm ci`, which is exercised on every PR by this
+    # repo's own "documented install" CI job.
 
     outputs:
       verdict: ${{ steps.run-fqe.outputs.verdict }}

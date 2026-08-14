@@ -26,11 +26,13 @@ fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when 
 
 | Where | Mechanism | As shipped | Ceiling if hardened |
 |---|---|---|---|
-| `fqe-quality.yml`, written by `fqe init` | `FQE_REF` + `git fetch --depth=1 <url> "$FQE_REF"` then `git checkout --detach FETCH_HEAD` | `fqe-v0.18.11`, a **mutable** git tag (force-pushable unless tag protection is on) | **Immutable.** Set `FQE_REF` to a 40-char SHA. Staged in a fresh `mktemp -d` under `RUNNER_TEMP`, never a fixed path in world-writable `/tmp`, because the step executes what it fetches. |
-| `fqe-oracle-guard.yml` | `FQE_TAG` + `npx -p github:booyajones/fqe#${FQE_TAG}` | `fqe-v0.18.11`, same mutable tag | **Immutable.** npm's commit-ish accepts a SHA. Never affected by the `--branch` bug. |
-| `fqe-second-approve.yml`, **also written by `fqe init`**, and `workflows/*.yml.template` | `container: ghcr.io/booyajones/fqe:0.1` | `:0.1`, a **mutable** image tag whose digest can change under you | Immutable only once the image is published and pinned by digest. The templates carry an unresolved "pin by digest before going to production" note, so treat this as not production-ready today. |
+| `fqe-quality.yml`, written by `fqe init` | `FQE_REF` + `git fetch --depth=1 <url> "$FQE_REF"` then `git checkout --detach FETCH_HEAD` | `fqe-v0.18.12`, a **mutable** git tag (force-pushable unless tag protection is on) | **Immutable.** Set `FQE_REF` to a 40-char SHA. Staged in a fresh `mktemp -d` under `RUNNER_TEMP`, never a fixed path in world-writable `/tmp`, because the step executes what it fetches. |
+| `fqe-oracle-guard.yml` | `FQE_TAG` + `npx -p github:booyajones/fqe#${FQE_TAG}` | `fqe-v0.18.12`, same mutable tag | **Immutable.** npm's commit-ish accepts a SHA. Never affected by the `--branch` bug. |
+There is no third mechanism. **The container image does not exist**, so nothing ships that depends on it.
 
-Two things this table is careful about, because earlier versions of it were wrong. `fqe init` generates **both** the fetch form and the container form, so "what init scaffolds" is not a synonym for the first row. And the container form is not confined to files you copy by hand: it is generated.
+Until v0.18.12 both `workflows/*.yml.template` and the `fqe-second-approve.yml` that `fqe init` *generates* declared `container: ghcr.io/booyajones/fqe:0.1`. That image has never been published: the authenticated GitHub Packages API returns 404 for it, and the owner has zero container packages. A job declaring it fails on image pull before its first step, so every adopter who ran `fqe init` received a second-approve workflow that could not start. That is the bypass-rate unblock, which is precisely the path you need working on a bad day.
+
+Both now install the CLI the same ref-pinned way as the gate, and a test asserts that no generated workflow declares a container at all. If the image is ever published and pinned by digest, that test should be deleted deliberately rather than worked around.
 
 ### Actor 3: Compromised maintainer or stolen GitHub token
 
@@ -82,7 +84,11 @@ For Finexio production repos:
 
 1. **Required status checks** on the protected branch: `fqe/pass` and `fqe/second-reviewer-required`.
 2. **Enforce admins** ON in branch protection. No admin-merge override.
-3. **Pin `fqe-v0.18.11` to a SHA** in your workflow (look up via `git rev-parse fqe-v0.18.11`).
+3. **Pin `fqe-v0.18.12` to a SHA** in your workflow. Resolve it without needing a local clone (a bare `git rev-parse` only works if the tag is already fetched, and on an annotated tag it can resolve to the tag object rather than the commit):
+
+   ```bash
+   git ls-remote https://github.com/booyajones/fqe.git 'refs/tags/fqe-v0.18.12^{}' | cut -f1
+   ```
 4. **Restrict who is on `.github/fqe-bypass-allowlist.yml`.** The workflow reads it at the default-branch HEAD, so a PR cannot add itself and a removal takes effect immediately on in-flight PRs.
 5. **Enable Dependabot** on your gated repo for the GitHub Actions used in `fqe-quality.yml`.
 6. **Audit `.github/fqe-state/bypass-tally.jsonl`** weekly. Rolling rate above 10% triggers the second-reviewer requirement automatically.

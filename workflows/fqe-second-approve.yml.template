@@ -22,8 +22,12 @@ jobs:
   approve:
     if: github.event.label.name == 'fqe-second-approved'
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/booyajones/fqe:0.1
+    # NOTE: kept for reference only; `fqe init` generates the working version.
+    #
+    # This declared `container: ghcr.io/booyajones/fqe:0.1`, an image that has
+    # never been published (Packages API 404, owner has no container packages),
+    # so the job failed on image pull before step one. Removed rather than left
+    # as an aspirational pin.
     steps:
       - uses: actions/checkout@v5
         with:

@@ -585,6 +585,27 @@ test('root and cli package.json versions agree', () => {
  * resolves the `fqe` bin and nothing else. A typo here reintroduces exactly the
  * bug this file was extended to close, and it would not show up in any doc scan.
  */
+/**
+ * THREE manifests carry a version, not two, and the lockfile is the one that rots
+ * silently: its root `version` sat at 0.1.0 while the package was 0.18.11. `npm ci`
+ * validates the dependency TREE rather than that field, and the CLI has zero
+ * runtime deps, so nothing ever failed. It is still a shipped file stating a wrong
+ * version, and the scaffold now runs `npm ci`, which makes the lockfile load-bearing.
+ */
+test('all three manifests agree on the version', () => {
+  const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(REPO, 'cli', 'package-lock.json'), 'utf8'));
+  assert.strictEqual(lock.version, PKG.version, `cli/package-lock.json is ${lock.version}, cli/package.json is ${PKG.version}`);
+  assert.strictEqual(root.version, PKG.version, `root package.json is ${root.version}, cli/package.json is ${PKG.version}`);
+  if (lock.packages && lock.packages['']) {
+    assert.strictEqual(
+      lock.packages[''].version,
+      PKG.version,
+      `the lockfile's own root package entry is ${lock.packages[''].version}, not ${PKG.version}`
+    );
+  }
+});
+
 test('root package.json bin points at a CLI entry point that exists', () => {
   const root = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
   assert.ok(root.bin && root.bin.fqe, 'root package.json must declare a `fqe` bin');
@@ -773,22 +794,77 @@ test("SKILL.md's status narrative leads with the release its number claims", () 
  */
 test('every container reference names the booyajones org', () => {
   const wrong = [];
+  let checked = 0;
   for (const file of FILES) {
     fs.readFileSync(file, 'utf8')
       .split('\n')
       .forEach((line, i) => {
         const m = line.match(/ghcr\.io\/([a-z0-9_.-]+)\//i);
-        if (m && m[1] !== 'booyajones') {
+        if (!m) return;
+        checked++;
+        if (m[1] !== 'booyajones') {
           wrong.push(`${path.relative(REPO, file)}:${i + 1} references ghcr.io/${m[1]}/`);
         }
       });
   }
+  // Floor, like MIN_PIN_CLAIMS and MIN_SIZE_CLAIMS. Without it, removing every
+  // ghcr reference would leave this test green while checking nothing, which is
+  // the hollow pass its two siblings exist to prevent. The count is low on
+  // purpose: references SHOULD be rare while the image is unpublished.
+  assert.ok(
+    checked > 0,
+    'no ghcr.io reference found at all. If they were removed deliberately, delete ' +
+      'this test in the same commit rather than leaving it green and vacuous.'
+  );
   assert.deepStrictEqual(
     wrong,
     [],
     'container image(s) under the wrong org. These ship to adopters, who copy or ' +
       `generate them, so a wrong org is a pull that fails or resolves somewhere ` +
       `unintended:\n  ${wrong.join('\n  ')}`
+  );
+});
+
+/**
+ * No workflow fqe GENERATES may declare a `container:`.
+ *
+ * `ghcr.io/booyajones/fqe:0.1` has never been published. Verified against the
+ * authenticated GitHub Packages API: 404 for the package, and the owner has zero
+ * container packages. A job declaring it fails on image pull before its first
+ * step, so `fqe init` was scaffolding a second-approve workflow that could not
+ * start. That is the bypass-rate unblock, the path you need working on a bad day.
+ *
+ * This guards the GENERATED output specifically, not the repo's prose: docs may
+ * discuss the image as a future direction, and the reference templates keep it in
+ * a comment explaining why it was removed. What must never happen again is
+ * shipping an adopter a workflow that depends on an image that does not exist.
+ * If the image is ever published and pinned by digest, delete this test
+ * deliberately rather than working around it.
+ */
+test('no generated workflow depends on an unpublished container image', () => {
+  const { init } = require('../lib/init');
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fqe-container-'));
+  fs.mkdirSync(path.join(dir, '.git'), { recursive: true }); // init requires a git repo
+  init({ dir });
+
+  const offenders = [];
+  const wfDir = path.join(dir, '.github', 'workflows');
+  for (const name of fs.readdirSync(wfDir)) {
+    fs.readFileSync(path.join(wfDir, name), 'utf8')
+      .split('\n')
+      .forEach((line, i) => {
+        if (/^\s*container:\s*$/.test(line) || /^\s*image:\s*\S/.test(line)) {
+          offenders.push(`${name}:${i + 1} ${line.trim()}`);
+        }
+      });
+  }
+
+  assert.deepStrictEqual(
+    offenders,
+    [],
+    'a generated workflow declares a container image. ghcr.io/booyajones/fqe is ' +
+      'not published, so the job fails on image pull before its first step and the ' +
+      `adopter gets a workflow that never runs:\n  ${offenders.join('\n  ')}`
   );
 });
 
