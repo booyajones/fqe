@@ -878,45 +878,73 @@ test('no generated workflow depends on an unpublished container image', () => {
 });
 
 /**
- * No generated workflow may download a binary DIRECTLY onto PATH.
+ * NOTHING MAY LAND ON PATH BEFORE ITS CHECKSUM IS VERIFIED.
  *
- * This is the one defect in this repo with a demonstrated recurrence rate: the
- * inverted order (`wget -O /usr/local/bin/yq` then `sha256sum -c`) shipped in
- * v0.18.12 and again in v0.18.13. It puts an unverified binary on PATH in the
- * window between the two commands. It fails closed under `set -e`, so it has
- * never been exploitable here, but a checksum pin only means something if
- * nothing executable lands ahead of it.
+ * An ORDERING rule, scoped per step. Earlier versions of this docblock described
+ * a positional one ("never fetch into a PATH directory") and were left in place
+ * after the assertion changed underneath them — a comment describing something
+ * other than the code, in the file whose entire subject is that defect.
  *
- * The v0.18.14 guard could NOT see this: it matched `yq_linux_amd64`, the
- * download URL, which is present in the safe and the vulnerable form alike.
- * Verified by reverting to the vulnerable form and watching the suite stay green
- * — a guard written in response to a defect that cannot detect that defect.
+ * This is the one defect here with a demonstrated recurrence rate: an unverified
+ * binary executable on PATH shipped in v0.18.12 and again in v0.18.13. It fails
+ * closed under `set -e`, so it has never been exploitable, but a checksum pin
+ * only means something if nothing executable lands ahead of it.
  *
- * The invariant is positional and hard to fake: the fetch target must be a temp
- * path, never a directory on PATH. Verify there, then `install` it across.
+ * Two earlier guards failed against it, both for the same reason: each was
+ * written against the exact FORM of the bug just repaired. v0.18.14 matched
+ * `yq_linux_amd64`, the download URL, identical in the safe and vulnerable
+ * forms. v0.18.15 matched a `wget`/`curl` line, so simply swapping the install
+ * and verify lines evaded it, `sudo install` containing neither.
+ *
+ * `pathLandingsBeforeVerify` below is therefore a pure function with its own
+ * table of counter-examples, so the claim "it catches N spellings" is carried by
+ * the suite rather than by a scratch script that was thrown away.
  */
+/**
+ * Pure core of the rule: given the lines of ONE step, return the lines that put
+ * something on PATH before a checksum ran in that step.
+ *
+ * Extracted so the spellings below are real tests. The "catches five spellings"
+ * claim in v0.18.16 rested on a scratch probe that hand-mutated init.js and was
+ * then deleted, so nothing in the suite carried the evidence.
+ */
+// Any bin/sbin directory, with or without a trailing path segment. On
+// ubuntu-latest /bin is a symlink to /usr/bin, so enumerating one and not the
+// other guards nothing. The trailing `/` was previously REQUIRED, which made a
+// bare directory target invisible: `sudo install "$TMP" /usr/local/bin` is the
+// identical defect and matched nothing.
+const PATH_DIR = /(^|[\s"'=>|])(\/usr\/local\/s?bin|\/usr\/s?bin|\/s?bin|\$HOME\/\.local\/bin|~\/\.local\/bin)(\/|\s|$|["'])/;
+
+// Every idiom that makes a file appear in a PATH directory, not just `wget -O`.
+// v0.18.15 matched only `-[Oo] <path>` on a wget/curl line, so merely swapping
+// the install and verify lines reproduced the vulnerability with the guard green.
+const LANDS_ON_PATH = [
+  /\b(wget|curl)\b.*(-O|-o|--output(-document)?[= ])\s*\S+/,
+  /\b(install|mv|cp|ln)\b\s+.*\s\S+/,
+  /\|\s*(sudo\s+)?tee\s+\S+/,
+  />\s*\S+/,
+];
+const VERIFIES = /sha256sum\s+-c|shasum\s+-a\s+256\s+-c|cosign\s+verify/;
+
+function pathLandingsBeforeVerify(stepLines) {
+  const src = stepLines.map((l) => (/^\s*#/.test(l) ? '' : l));
+  if (!src.some((l) => /\b(wget|curl)\b/.test(l))) return []; // nothing fetched here
+  const verifyIdx = src.findIndex((l) => VERIFIES.test(l));
+  const out = [];
+  src.forEach((line, i) => {
+    if (!PATH_DIR.test(line)) return;
+    if (!LANDS_ON_PATH.some((re) => re.test(line))) return;
+    if (VERIFIES.test(line)) return;
+    if (verifyIdx === -1 || i < verifyIdx) out.push({ i, line });
+  });
+  return out;
+}
+
 test('nothing lands on PATH before its checksum is verified', () => {
   const { init } = require('../lib/init');
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fqe-dl-'));
   fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
   init({ dir });
-
-  // Any bin/sbin directory, not an enumerated few. On ubuntu-latest /bin is a
-  // symlink to /usr/bin, so naming one and not the other guards nothing.
-  const PATH_DIR = /(^|[\s"'=>|])(\/usr\/local\/s?bin|\/usr\/s?bin|\/s?bin|\$HOME\/\.local\/bin|~\/\.local\/bin)\//;
-
-  // Every idiom that makes a file appear in a PATH directory, not just `wget -O`.
-  // The v0.18.15 guard matched only `\s-[Oo]\s+<path>` on a wget/curl line, which
-  // is one spelling out of many and — worse — skipped `sudo install` entirely,
-  // so merely SWAPPING the install and verify lines reproduced the identical
-  // vulnerability with the guard still green.
-  const LANDS_ON_PATH = [
-    /\b(wget|curl)\b.*(-O|-o|--output(-document)?[= ])\s*\S*\//,
-    /\b(install|mv|cp|ln)\b.*\s\S*\//,
-    /\|\s*(sudo\s+)?tee\s+\S*\//,
-    />\s*\S*\//,
-  ];
-  const VERIFIES = /sha256sum\s+-c|shasum\s+-a\s+256\s+-c|cosign\s+verify/;
 
   const offenders = [];
   let checked = 0;
@@ -944,19 +972,12 @@ test('nothing lands on PATH before its checksum is verified', () => {
     for (const [from, to] of bounds) {
       const step = all.slice(from, to);
       if (!step.some((l) => /\b(wget|curl)\b/.test(l))) continue; // nothing fetched here
-
-      const verifyIdx = step.findIndex((l) => VERIFIES.test(l));
-      step.forEach((line, j) => {
-        if (!PATH_DIR.test(line)) return;
-        if (!LANDS_ON_PATH.some((re) => re.test(line))) return;
-        if (VERIFIES.test(line)) return; // the verification line itself may name the path
-        checked++;
-        if (verifyIdx === -1 || j < verifyIdx) {
-          offenders.push(
-            `${name}:${from + j + 1} puts a fetched file on PATH before any checksum: ${line.trim().slice(0, 66)}`
-          );
-        }
-      });
+      checked++;
+      for (const hit of pathLandingsBeforeVerify(step)) {
+        offenders.push(
+          `${name}:${from + hit.i + 1} puts a fetched file on PATH before any checksum: ${hit.line.trim().slice(0, 66)}`
+        );
+      }
     }
   }
 
@@ -975,6 +996,76 @@ test('nothing lands on PATH before its checksum is verified', () => {
       'checksum. Stage to a temp path, verify there, then install it across:\n  ' +
       offenders.join('\n  ')
   );
+});
+
+/**
+ * The spellings, as committed tests.
+ *
+ * v0.18.16 claimed "catches five spellings" on the strength of a scratch script
+ * that hand-mutated init.js and was then thrown away, so the suite carried none
+ * of that evidence. Each row below is one way to write the same defect: a fetched
+ * binary reachable on PATH before its checksum ran. Two of them defeated earlier
+ * versions of this guard, and the sixth defeated v0.18.16.
+ */
+const VULNERABLE_STEPS = [
+  ['wget -O straight into /usr/local/bin', [
+    'sudo wget -q "https://example/yq" -O /usr/local/bin/yq',
+    'echo "$SHA  /usr/local/bin/yq" | sha256sum -c -',
+  ]],
+  ['install BEFORE verify (no wget on the landing line)', [
+    'wget -q "https://example/yq" -O "$TMP"',
+    'sudo install -m 0755 "$TMP" /usr/local/bin/yq',
+    'echo "$SHA  $TMP" | sha256sum -c -',
+  ]],
+  ['--output-document= long flag', [
+    'sudo wget -q "https://example/yq" --output-document=/usr/local/bin/yq',
+    'echo "$SHA  /usr/local/bin/yq" | sha256sum -c -',
+  ]],
+  ['curl redirect into /bin (a symlink to /usr/bin)', [
+    'curl -sL "https://example/yq" > /bin/yq',
+    'echo "$SHA  /bin/yq" | sha256sum -c -',
+  ]],
+  ['pipe into sudo tee', [
+    'curl -sL "https://example/yq" | sudo tee /usr/local/bin/yq > /dev/null',
+    'echo "$SHA  /usr/local/bin/yq" | sha256sum -c -',
+  ]],
+  ['bare directory target, no trailing filename', [
+    'wget -q "https://example/yq" -O "$TMP"',
+    'sudo install -m 0755 "$TMP" /usr/local/bin',
+    'echo "$SHA  $TMP" | sha256sum -c -',
+  ]],
+];
+
+for (const [label, step] of VULNERABLE_STEPS) {
+  test(`unverified-on-PATH is caught when written as: ${label}`, () => {
+    const hits = pathLandingsBeforeVerify(step);
+    assert.ok(
+      hits.length > 0,
+      `this step puts a fetched binary on PATH before its checksum and was not ` +
+        `flagged, so the guard catches only some spellings of the defect:\n  ${step.join('\n  ')}`
+    );
+  });
+}
+
+test('the safe ordering is NOT flagged (no false positive)', () => {
+  const safe = [
+    'YQ_TMP="$(mktemp "${RUNNER_TEMP:-/tmp}/yq.XXXXXX")"',
+    'wget -q "https://example/yq_linux_amd64" -O "$YQ_TMP"',
+    'echo "$SHA  $YQ_TMP" | sha256sum -c -',
+    'sudo install -m 0755 "$YQ_TMP" /usr/local/bin/yq',
+  ];
+  assert.deepStrictEqual(pathLandingsBeforeVerify(safe), []);
+});
+
+test('a step that fetches nothing is out of scope', () => {
+  // fqe itself reaches PATH from a git-fetched, ref-pinned checkout. There is no
+  // checksum to wait for, and flagging it is the cry-wolf failure this file
+  // elsewhere calls its own worst outcome.
+  const gitInstall = [
+    'git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"',
+    'sudo ln -sf "$PWD/bin/fqe.js" /usr/local/bin/fqe',
+  ];
+  assert.deepStrictEqual(pathLandingsBeforeVerify(gitInstall), []);
 });
 
 /**
