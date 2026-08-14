@@ -853,7 +853,16 @@ test('no generated workflow depends on an unpublished container image', () => {
     fs.readFileSync(path.join(wfDir, name), 'utf8')
       .split('\n')
       .forEach((line, i) => {
-        if (/^\s*container:\s*$/.test(line) || /^\s*image:\s*\S/.test(line)) {
+        // Three forms, not one. GitHub Actions accepts the block form
+        // (`container:` then `image:`) AND the string shorthand
+        // (`container: ghcr.io/...`). Matching only the block form meant the
+        // shorthand someone would naturally reach for slipped straight past,
+        // so the guard was narrower than its own name.
+        if (
+          /^\s*container:\s*$/.test(line) ||
+          /^\s*container:\s*\S/.test(line) ||
+          /^\s*image:\s*\S/.test(line)
+        ) {
           offenders.push(`${name}:${i + 1} ${line.trim()}`);
         }
       });
@@ -865,6 +874,50 @@ test('no generated workflow depends on an unpublished container image', () => {
     'a generated workflow declares a container image. ghcr.io/booyajones/fqe is ' +
       'not published, so the job fails on image pull before its first step and the ' +
       `adopter gets a workflow that never runs:\n  ${offenders.join('\n  ')}`
+  );
+});
+
+/**
+ * Every external binary a generated workflow CALLS must also be INSTALLED in it.
+ *
+ * This is the class behind the container removal, and it bit immediately. The
+ * image supplied `yq` as well as `fqe`; dropping `container:` without adding the
+ * yq install traded "fails at image pull" for "yq: command not found three steps
+ * later". Still a workflow that cannot complete, just failing further in, which is
+ * arguably worse because it fails after doing work.
+ *
+ * Scope is deliberately the tools fqe itself introduces. `git`, `node`, `npm`,
+ * `sudo`, `wget` and `gh` are present on GitHub-hosted runners by default and are
+ * not fqe's to install.
+ */
+test('every binary a generated workflow calls is installed in that workflow', () => {
+  const { init } = require('../lib/init');
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fqe-bin-'));
+  fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
+  init({ dir });
+
+  // tool -> how that workflow proves it is available
+  const TOOLS = [
+    { bin: 'yq', installed: /yq_linux_amd64|install .*yq/i },
+    { bin: 'fqe', installed: /ln -sf .*bin\/fqe\.js|fqe version/ },
+  ];
+  const missing = [];
+  const wfDir = path.join(dir, '.github', 'workflows');
+  for (const name of fs.readdirSync(wfDir)) {
+    const text = fs.readFileSync(path.join(wfDir, name), 'utf8');
+    for (const t of TOOLS) {
+      const calls = new RegExp(`(^|[|;&\\s(])${t.bin}\\s`, 'm').test(text);
+      if (calls && !t.installed.test(text)) {
+        missing.push(`${name} calls \`${t.bin}\` but never installs it`);
+      }
+    }
+  }
+
+  assert.deepStrictEqual(
+    missing,
+    [],
+    'a generated workflow depends on a binary it does not install. The adopter gets ' +
+      `a job that dies partway through with "command not found":\n  ${missing.join('\n  ')}`
   );
 });
 

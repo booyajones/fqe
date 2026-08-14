@@ -1,6 +1,6 @@
 {
   "name": "fqe",
-  "version": "0.18.12",
+  "version": "0.18.13",
   "description": "Finexio Quality Engine - deterministic CI gate",
   "_comment": "This manifest exists so `npx github:booyajones/fqe#<tag>` resolves: npm reads the ROOT manifest when installing from git, and fqe's real one lives in cli/. cli/package.json stays authoritative for the CLI's own version; doc_accuracy.test.js pins this file to match it. private:true because publishing is not intended from here and the bare name `fqe` is not ours to claim on the registry.",
   "private": true,
