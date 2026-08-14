@@ -200,7 +200,7 @@ jobs:
           # it to a SHA (which SECURITY.md and getting-started.md both recommend
           # for production) failed with "Remote branch <sha> not found in upstream
           # origin", so the documented hardening path broke the gate outright.
-          FQE_REF="fqe-v0.18.12"
+          FQE_REF="fqe-v0.18.13"
           # A FRESH directory per job, never a fixed path under /tmp.
           #
           # This step fetches code and then executes it, so where it stages that
@@ -442,7 +442,7 @@ jobs:
       - name: Install fqe CLI (ref-pinned)
         run: |
           set -euo pipefail
-          FQE_REF="fqe-v0.18.12"
+          FQE_REF="fqe-v0.18.13"
           FQE_SRC="$(mktemp -d "\${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
           git -C "$FQE_SRC" init -q .
           git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
@@ -452,6 +452,20 @@ jobs:
           chmod +x bin/fqe.js
           sudo ln -sf "$PWD/bin/fqe.js" /usr/local/bin/fqe
           fqe version
+
+      # yq came from the container image too, and a later step in this job parses
+      # the second-reviewer allowlist with it. Dropping \`container:\` without this
+      # would trade a failure at image pull for "yq: command not found" three steps
+      # later: still a workflow that cannot complete, just failing further in.
+      # Same SHA256-verified install the gate workflow uses.
+      - name: Install yq (Mike Farah v4) with SHA256 verification
+        run: |
+          set -euo pipefail
+          YQ_SHA256=654d2943ca1d3be2024089eb4f270f4070f491a0610481d128509b2834870049
+          sudo wget -q "https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64" -O /usr/local/bin/yq
+          echo "$YQ_SHA256  /usr/local/bin/yq" | sha256sum -c -
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
 
       - name: Identify both actors via Events API
         id: actors

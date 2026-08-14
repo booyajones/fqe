@@ -2,6 +2,24 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.13] - 2026-08-14
+
+Tag: `fqe-v0.18.13`. Finishes the v0.18.12 fix, which moved a failure rather than removing it.
+
+### Fixed
+
+- **The container also supplied `yq`, and v0.18.12 did not replace it.** The generated `fqe-second-approve.yml` parses the second-reviewer allowlist with `yq`, which came from `ghcr.io/booyajones/fqe:0.1` (built with a SHA256-verified yq). Dropping `container:` without adding the install traded "fails at image pull" for `yq: command not found` three steps later. Still a workflow that cannot complete, and arguably worse because it now fails *after* doing work. It installs yq with the same SHA256-verified step the gate uses.
+- **The container guard missed the string shorthand.** GitHub Actions accepts `container: ghcr.io/...` on one line as well as the block form, and the guard only matched the block. So the negative control held for the exact form just removed and not for the one a person would naturally write next.
+- **`SECURITY.md` contradicted itself and rendered wrong.** It still said "**Three** install mechanisms ship" and "all three are mutable" directly above a paragraph saying there is no third, and that paragraph sat flush against the table with no blank line, so GFM consumed it as another table row.
+
+### Added
+
+- **A guard that every binary a generated workflow calls is installed in it.** This is the class behind the yq regression, not just the instance. Scope is the tools fqe introduces (`yq`, `fqe`); `git`, `node`, `npm`, `sudo`, `wget` and `gh` ship on GitHub-hosted runners and are not fqe's to install. Negative-controlled by deleting the yq step and confirming the guard names it.
+
+### Notes
+
+- 789 tests. The pattern worth recording: v0.18.12 removed a dependency without asking what else that dependency provided. The fix for a missing thing is not always deletion, and "it no longer fails the way it used to" is not the same as "it works".
+
 ## [0.18.12] - 2026-08-14
 
 Tag: `fqe-v0.18.12`. Cleanup of the v0.18.11 handoff list, which turned up a workflow that could never have run.
