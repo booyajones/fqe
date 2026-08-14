@@ -200,7 +200,7 @@ jobs:
           # it to a SHA (which SECURITY.md and getting-started.md both recommend
           # for production) failed with "Remote branch <sha> not found in upstream
           # origin", so the documented hardening path broke the gate outright.
-          FQE_REF="fqe-v0.18.13"
+          FQE_REF="fqe-v0.18.14"
           # A FRESH directory per job, never a fixed path under /tmp.
           #
           # This step fetches code and then executes it, so where it stages that
@@ -241,9 +241,16 @@ jobs:
           # Supply-chain hardening: SHA256-verified download. If GitHub releases
           # ever served a tampered binary, sha256sum -c would fail closed.
           YQ_SHA256=654d2943ca1d3be2024089eb4f270f4070f491a0610481d128509b2834870049
-          sudo wget -q "https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64" -O /usr/local/bin/yq
-          echo "$YQ_SHA256  /usr/local/bin/yq" | sha256sum -c -
-          sudo chmod +x /usr/local/bin/yq
+          # Download to a temp path, VERIFY, then install onto PATH. Writing
+          # straight to /usr/local/bin/yq puts an unverified binary on PATH
+          # before the checksum runs. It fails closed as written (set -e aborts
+          # before chmod), but a pin only means something if nothing lands on
+          # PATH ahead of it. Same order this repo's own Dockerfile uses.
+          YQ_TMP="$(mktemp)"
+          wget -q "https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64" -O "$YQ_TMP"
+          echo "$YQ_SHA256  $YQ_TMP" | sha256sum -c -
+          sudo install -m 0755 "$YQ_TMP" /usr/local/bin/yq
+          rm -f "$YQ_TMP"
           yq --version
 
       - name: Check bypass eligibility (SHA-bound comment, server-authoritative)
@@ -442,7 +449,7 @@ jobs:
       - name: Install fqe CLI (ref-pinned)
         run: |
           set -euo pipefail
-          FQE_REF="fqe-v0.18.13"
+          FQE_REF="fqe-v0.18.14"
           FQE_SRC="$(mktemp -d "\${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
           git -C "$FQE_SRC" init -q .
           git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
@@ -462,9 +469,16 @@ jobs:
         run: |
           set -euo pipefail
           YQ_SHA256=654d2943ca1d3be2024089eb4f270f4070f491a0610481d128509b2834870049
-          sudo wget -q "https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64" -O /usr/local/bin/yq
-          echo "$YQ_SHA256  /usr/local/bin/yq" | sha256sum -c -
-          sudo chmod +x /usr/local/bin/yq
+          # Download to a temp path, VERIFY, then install onto PATH. Writing
+          # straight to /usr/local/bin/yq puts an unverified binary on PATH
+          # before the checksum runs. It fails closed as written (set -e aborts
+          # before chmod), but a pin only means something if nothing lands on
+          # PATH ahead of it. Same order this repo's own Dockerfile uses.
+          YQ_TMP="$(mktemp)"
+          wget -q "https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64" -O "$YQ_TMP"
+          echo "$YQ_SHA256  $YQ_TMP" | sha256sum -c -
+          sudo install -m 0755 "$YQ_TMP" /usr/local/bin/yq
+          rm -f "$YQ_TMP"
           yq --version
 
       - name: Identify both actors via Events API

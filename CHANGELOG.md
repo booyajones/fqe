@@ -2,6 +2,24 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.14] - 2026-08-14
+
+Tag: `fqe-v0.18.14`. Hardens the yq step from v0.18.13 and the guard that was supposed to protect it.
+
+### Security
+
+- **The SHA256-pinned download landed on `PATH` before it was verified.** `wget -O /usr/local/bin/yq` writes first and `sha256sum -c` runs second, so an unverified binary sat on `PATH` in between. It fails closed as written (`set -e` aborts before `chmod +x`, and runner VMs are fresh), so this was not exploitable, but a pin only means something if nothing executable lands ahead of it — and v0.18.13 shipped a second copy of the inverted order. Both steps now download to `mktemp`, verify, then `install -m 0755` onto `PATH`. That is the order this repo's own `Dockerfile` already used.
+
+### Fixed
+
+- **The binary guard accepted a CALL as proof of an install.** Its `fqe` predicate alternated on `fqe version`, which is itself a call, so a workflow that only ever invoked fqe satisfied it. Its `yq` predicate matched `install .*yq`, which hit the step's own `name:` label. Both now match the actual install mechanism (`ln -sf …bin/fqe.js`, the `yq_linux_amd64` download).
+- **The guard was order-blind**, testing "calls it" and "installs it" against the whole file independently. Moving the yq step below the step that uses it left the guard green while the workflow died at runtime — reachable by pure reordering, in a job whose steps are hand-ordered and where the fix had been a step insertion. It now requires every call to come after the install line.
+- **Its call regex matched nothing at all.** Written narrowly to avoid comments, it failed to match even `yq --version`, let alone the real `if ! yq '.allowed_actors[]' …` invocation, so the yq half was silently inspecting zero lines. Comments and `name:` labels are now blanked before scanning, and the pattern recognises a `!`-negated call.
+
+### Notes
+
+- 789 tests. Three evasions negative-controlled: deleting the install step, replacing it with a bare call, and pure reordering. The reordering control initially reported a false MISS — the probe anchored on a filename that also appears in `init.js`'s doc comment, so it relocated the *other* workflow's step and produced a duplicate rather than a move. The guard was right and the harness was wrong, which is worth recording: a control that fails to reproduce its own scenario looks exactly like a guard that does not work.
+
 ## [0.18.13] - 2026-08-14
 
 Tag: `fqe-v0.18.13`. Finishes the v0.18.12 fix, which moved a failure rather than removing it.
