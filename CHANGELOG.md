@@ -2,6 +2,21 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.17] - 2026-08-14
+
+Tag: `fqe-v0.18.17`. Moves the proof into the suite, and fixes two pieces of text that had gone stale under their own code.
+
+### Fixed
+
+- **The "catches five spellings" claim had no committed evidence.** v0.18.16 proved it with a scratch script that hand-mutated `init.js` and was then deleted, so the suite carried none of it. The rule is now a pure `pathLandingsBeforeVerify()` with **six** committed counter-examples, plus one asserting the safe ordering is not flagged and one asserting a git-fetched install is out of scope. A claim about what a guard catches belongs in the guard's own tests, not in a changelog.
+- **A sixth spelling, found while writing those tests.** `PATH_DIR` required a trailing `/`, so a bare directory target was invisible: `sudo install -m 0755 "$TMP" /usr/local/bin` is the identical defect and matched nothing. Now matched whether or not a filename follows.
+- **The docblock still described the invariant this line of releases retired** — "never fetch into a PATH directory" — while the code below it had become an ordering rule. A comment describing something other than the code, in the file whose entire subject is that defect.
+- **A dropped subject in `SKILL.md`.** A previous edit left "it keyed on wget/curl, and&nbsp;&nbsp;has neither", with the `sudo install` that "has neither" removed. That is the file an agent loads to decide whether to fire fqe.
+
+### Notes
+
+- 798 tests. Two gaps stay open and are recorded rather than fixed: the hollow-pass floor for this guard is shared across both generated workflows rather than per-file, and the ordering check binds to "some checksum ran earlier in this step" rather than to the specific artifact being installed. Both are latent while `init` emits two files with one fetch each. They are restructures, not corrections.
+
 ## [0.18.16] - 2026-08-14
 
 Tag: `fqe-v0.18.16`. The v0.18.15 guard caught one spelling of the defect. There are at least five.
