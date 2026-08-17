@@ -113,9 +113,14 @@ const FILES = {
 # Test classes (the full-suite taxonomy): unit, integration, e2e, regression,
 # contract, property, uat, lint, type, mutation, coverage, security, money.
 #
-# Examples:
+# Examples. These go UNDER the live "runners:" key at the bottom of this file.
+# Do NOT uncomment a second "runners:" line: YAML takes the last key, so a
+# duplicate silently discards everything you configured and leaves you with a
+# gate that passes everything.
 #
-# runners:
+# On Windows, "command: npm" does not start (npm is npm.cmd and fqe spawns
+# without a shell). Use command: "cmd", args: ["/c", "npm", "test"] there.
+#
 #   unit:
 #     command: "npm"
 #     args: ["test"]
@@ -151,7 +156,10 @@ const FILES = {
 #     - when: ["src/payments/**", "src/ledger/**"]
 #       classes: ["money", "regression", "contract"]
 
-runners: {}
+# Add your runners under this key. Left empty, the gate runs and always passes.
+# Block style (a bare "runners:") is the form the config parser handles; the
+# inline "runners: {}" it used to emit is read as a 2-character string.
+runners:
 `,
 
   '.github/workflows/fqe-quality.yml': `# Finexio Quality Engine - main CI gate
@@ -200,7 +208,7 @@ jobs:
           # it to a SHA (which SECURITY.md and getting-started.md both recommend
           # for production) failed with "Remote branch <sha> not found in upstream
           # origin", so the documented hardening path broke the gate outright.
-          FQE_REF="fqe-v0.18.17"
+          FQE_REF="fqe-v0.18.18"
           # A FRESH directory per job, never a fixed path under /tmp.
           #
           # This step fetches code and then executes it, so where it stages that
@@ -316,7 +324,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          fqe run --full \\
+          fqe run \\
             --commit '\${{ github.event.pull_request.head.sha }}' \\
             --base '\${{ github.event.pull_request.base.sha }}' \\
             --pr '\${{ github.event.pull_request.number }}' \\
@@ -453,7 +461,7 @@ jobs:
       - name: Install fqe CLI (ref-pinned)
         run: |
           set -euo pipefail
-          FQE_REF="fqe-v0.18.17"
+          FQE_REF="fqe-v0.18.18"
           FQE_SRC="$(mktemp -d "\${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
           git -C "$FQE_SRC" init -q .
           git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"

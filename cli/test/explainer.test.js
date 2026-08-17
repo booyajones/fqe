@@ -220,7 +220,33 @@ test('explainReason is deterministic AND pins expected output (snapshot)', () =>
   assert.equal(a.code, 'RUNNER_EXIT_NONZERO');
   assert.match(a.plain_english, /"web"/);
   assert.match(a.plain_english, /code 1/);
-  assert.match(a.repro_command, /^fqe run --full --base origin\/main/);
+  // The repro command must be RUNNABLE, not merely stable. This assertion used to
+  // pin `--full`, a flag the parser does not have, so the suite was actively
+  // certifying a command that fails on the first try with "missing required flag:
+  // --commit". A snapshot test defends whatever it was given, including a defect.
+  assert.match(a.repro_command, /^fqe run --commit /);
+  assert.doesNotMatch(a.repro_command, /--full|--verbose/, 'phantom flags: neither exists in the parser');
+});
+
+test('every repro command the explainer emits passes the real CLI parser', () => {
+  // The property the snapshot above could not see. Parse each emitted repro
+  // command with the same flag parser bin/fqe.js uses, and require that the
+  // flags fqe actually demands are present and that no invented flag survives.
+  const REASONS = [
+    'required runner "web" did not run',
+    'runner "web" exited 1',
+    'runner "web" ran but exit_code is not a number (got null)',
+    'some brand new reason nobody has explained yet',
+  ];
+  for (const reason of REASONS) {
+    const { repro_command } = explainReason(reason, { commit_sha: 'abc1234', base_sha: 'def5678' });
+    const first = repro_command.split('\n').find((l) => l.startsWith('fqe run'));
+    if (!first) continue; // some explanations legitimately suggest other subcommands
+    assert.match(first, /--commit \S+/, `missing required --commit: ${first}`);
+    assert.match(first, /--output \S+/, `missing required --output: ${first}`);
+    assert.doesNotMatch(first, /--full|--verbose/, `emits a nonexistent flag: ${first}`);
+    assert.doesNotMatch(first, /runner-.*\.log/, `points at a log file fqe never writes: ${first}`);
+  }
 });
 
 test('explainVerdict is deterministic', () => {
