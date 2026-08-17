@@ -358,14 +358,11 @@ function computeRequiredClasses(policy, files, diffIndeterminate = false) {
  * fresh repo with a single commit: legitimate, silent) from "the diff failed
  * even though history exists" (a real signal).
  *
- * IMPORTANT: this is only ONE arm of the qualifier, and it must never be the
- * only one. It cannot tell a fresh repo from a SHALLOW CLONE: `actions/checkout`
+ * IMPORTANT: this answer is AMBIGUOUS on its own and must never be the only
+ * qualifier. It cannot tell a fresh repo from a SHALLOW CLONE: `actions/checkout`
  * defaults to fetch-depth 1, and `git clone --depth 1` of a 500-commit repo
- * reports exactly 1 commit here. Using this alone silently disarmed the guard on
- * every shallow checkout - including under require_resolvable_diff on a money
- * repo - which is a receipt reporting clean when zero files were evaluated. See
- * the call site: an explicitly-named base that failed to resolve raises
- * regardless of what this returns.
+ * reports exactly 1 commit here. Pair it with repoIsShallow(), which resolves
+ * exactly that ambiguity.
  *
  * Fails SAFE toward silence: if we cannot even count commits, do not raise.
  */
@@ -376,6 +373,78 @@ function repoHasHistory(repoDir) {
   });
   if (r.status !== 0) return false;
   return parseInt(String(r.stdout).trim(), 10) > 1;
+}
+
+/**
+ * Is this a SHALLOW clone (history deliberately truncated)?
+ *
+ * This is the fact that makes repoHasHistory() usable. A shallow clone reports
+ * 1 commit no matter how old the repo is, so "1 commit" alone can mean either
+ * "genuinely brand new" (silence is correct) or "500 commits I am not allowed to
+ * see" (silence is a receipt reporting clean over a diff that never resolved).
+ * `fetch-depth: 1` is the DEFAULT for actions/checkout, so the second case is
+ * the common one in CI, not the exotic one.
+ *
+ * Fails SAFE toward SUSPICION: if we cannot determine depth, assume shallow, so
+ * an unknown state raises rather than silently passing. The cost of a false
+ * alarm is an engineer reading one extra line; the cost of false silence is a
+ * merged PR nothing checked.
+ */
+function repoIsShallow(repoDir) {
+  const cwd = repoDir || process.cwd();
+  const r = spawnSync('git', ['rev-parse', '--is-shallow-repository'], { cwd, encoding: 'utf8' });
+  if (r.status === 0) {
+    const out = String(r.stdout).trim();
+    if (out === 'true') return true;
+    if (out === 'false') return false;
+  }
+  // git < 2.15 has no --is-shallow-repository. The marker file predates it and
+  // is authoritative, so fall back to it before giving up.
+  const g = spawnSync('git', ['rev-parse', '--git-dir'], { cwd, encoding: 'utf8' });
+  if (g.status === 0) {
+    const gitDir = String(g.stdout).trim();
+    try {
+      return fs.existsSync(path.resolve(cwd, gitDir, 'shallow'));
+    } catch (_) { /* fall through to the safe default */ }
+  }
+  return true; // undeterminable depth -> treat as history-blind, never as fresh
+}
+
+/**
+ * Is this the ONE case where an unresolvable diff deserves silence?
+ *
+ * Exactly one: a genuinely brand-new repository, where the caller named no base,
+ * so there is legitimately nothing to diff against. Every other shape of
+ * "the diff did not resolve" is a real signal and must surface.
+ *
+ * All three conditions are required, and each closes a hole a previous version
+ * shipped:
+ *   - no base named     : naming a base that does not resolve is always an error
+ *   - not shallow       : a truncated clone is history-blind, not history-free
+ *   - <= 1 commit       : with the two above, this now genuinely means "new"
+ *
+ * @returns {boolean} true only when silence is provably correct
+ */
+function isGenuinelyFirstRun(opts) {
+  if (opts && opts.baseSha) return false;
+  const repoDir = opts && opts.repoDir;
+  // Not a git repo at all is a DIFFERENT state from a truncated one. There is no
+  // history here to be blind to and no diff was ever possible, which is the
+  // documented "empty config / always_run only" case. Treating it as suspicious
+  // would flag every non-git invocation. A CI checkout that failed is still
+  // covered, because the generated workflow always names a --base.
+  if (!isGitRepo(repoDir)) return true;
+  if (repoIsShallow(repoDir)) return false;
+  return !repoHasHistory(repoDir);
+}
+
+/** Is this directory inside a git work tree at all? */
+function isGitRepo(repoDir) {
+  const r = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd: repoDir || process.cwd(),
+    encoding: 'utf8',
+  });
+  return r.status === 0 && String(r.stdout).trim() === 'true';
 }
 
 function changedFiles({ baseSha, headSha, repoDir }) {
@@ -1015,15 +1084,24 @@ function run(opts) {
     // swallowing an unresolvable diff, which is the whole defect. Key on the
     // repo instead of on the flag: a repo with more than one commit CAN produce a
     // diff, so failing to is a real signal; a first-commit repo genuinely cannot.
-    // The UNION of both qualifiers, deliberately. Either alone has a hole:
-    //   - `!!opts.baseSha` alone misses a repo with history and no base given.
-    //   - `repoHasHistory()` alone is defeated by a shallow clone, which is the
-    //     DEFAULT on GitHub Actions, so an explicitly-named base that failed to
-    //     resolve was swallowed and the run reported PASS over zero files.
-    // A base that was named and did not resolve is an unambiguous error at any
-    // clone depth, so it raises on its own. The history check only has to cover
-    // the no-base case, where its fresh-repo silence is correct.
-    diff_indeterminate: !diff.ok && (!!opts.baseSha || repoHasHistory(opts.repoDir)),
+    // SILENCE MUST BE EARNED. An unresolved diff raises unless we can positively
+    // prove the one case where silence is right: a genuinely new repo, with no
+    // base named, that simply has nothing to diff against yet.
+    //
+    // Written this way round because the previous two attempts both framed it as
+    // "raise IF ..." and both shipped a hole. The first keyed on `!!opts.baseSha`
+    // and missed a repo with history and no base. The second keyed on
+    // `repoHasHistory()` and was defeated by a shallow clone. The third was the
+    // union of those two, which still collapsed to `repoHasHistory()` alone
+    // whenever `--base` was omitted - and `--base` is optional in fqe's own help
+    // text - so a shallow checkout with no base still reported PASS over zero
+    // evaluated files. Each time the defect was a case the condition never
+    // considered, so the condition now enumerates the ONLY safe case instead.
+    //
+    // repoIsShallow() is what makes this decidable: it separates "1 commit
+    // because the repo is new" from "1 commit because the clone is truncated",
+    // which repoHasHistory() alone can never do.
+    diff_indeterminate: !diff.ok && !isGenuinelyFirstRun(opts),
     diff_base: opts.baseSha || null,
   };
   let verdictOut;
@@ -1115,4 +1193,12 @@ module.exports = {
   quarantineExpired,
   readChangedFileContents,
   sanitizeRunnerEnv,
+  // Exported so the guard can be tested directly. The shallow-clone hole shipped
+  // twice partly because nothing could reach this decision without spawning the
+  // whole CLI, so every test asserted the verdict's branching instead of the
+  // predicate that feeds it.
+  repoIsShallow,
+  repoHasHistory,
+  isGenuinelyFirstRun,
+  isGitRepo,
 };

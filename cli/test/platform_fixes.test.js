@@ -530,3 +530,81 @@ test('a genuinely fresh single-commit repo with no base still stays silent (no c
   assert.strictEqual(r.status, 0,
     `a newcomer's first commit with no --base must not be flagged:\n${r.stdout}${r.stderr}`);
 });
+
+/**
+ * ROUND 5. The round-4 fix closed only the half of the hole it was looking at.
+ *
+ * `!diff.ok && (!!opts.baseSha || repoHasHistory(...))` collapses to
+ * `repoHasHistory(...)` alone whenever --base is omitted - and --base is
+ * OPTIONAL in fqe's own help text - so a shallow checkout with no base still
+ * reported PASS over zero evaluated files, with LESS setup than the bug round 4
+ * fixed. Three attempts, all framed as "raise IF ...", each with a case the
+ * condition never considered.
+ *
+ * The predicate is inverted now: silence must be EARNED by proving a genuinely
+ * first run. These pin every arm of that proof.
+ */
+test('shallow clone + NO --base still blocks (the hole round 4 left open)', () => {
+  const dir = shallowClone();
+  assert.strictEqual(
+    execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: dir, encoding: 'utf8' }).trim(),
+    'true',
+    'precondition: this must actually be a shallow clone'
+  );
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), `require_resolvable_diff: true\nrunners:\n${RUNNER_BLOCK}`);
+
+  // NOTE: no --base. That is the whole point.
+  const r = spawnSync(
+    process.execPath,
+    [BIN, 'run', '--commit', sha, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 }
+  );
+  assert.strictEqual(r.status, 2,
+    `a shallow clone is history-BLIND, not history-FREE; silence here is a receipt reporting clean over zero evaluated files:\n${r.stdout}${r.stderr}`);
+});
+
+test('a shallow clone is never mistaken for a first run', () => {
+  const { repoIsShallow } = require('../lib/orchestrator');
+  const shallow = shallowClone();
+  const fresh = tmpRepo();
+  assert.strictEqual(repoIsShallow(shallow), true, 'a --depth 1 clone must read as shallow');
+  assert.strictEqual(repoIsShallow(fresh), false, 'a normal fresh repo must NOT read as shallow');
+});
+
+test('repoIsShallow fails toward SUSPICION when depth cannot be determined', () => {
+  const { repoIsShallow } = require('../lib/orchestrator');
+  // An undeterminable depth must never be reported as "definitely not shallow",
+  // because that is the answer that silences the guard.
+  const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-notgit-'));
+  assert.strictEqual(repoIsShallow(notARepo), true,
+    'an unknown clone depth must raise, not silently pass');
+});
+
+test('"not a git repo" is a different state from "shallow" and stays silent', () => {
+  const { isGitRepo, isGenuinelyFirstRun } = require('../lib/orchestrator');
+  const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-notgit2-'));
+  assert.strictEqual(isGitRepo(notARepo), false);
+  assert.strictEqual(isGitRepo(tmpRepo()), true);
+
+  // There is no history here to be blind to and no diff was ever possible - the
+  // documented "empty config / always_run only" case. Collapsing this into
+  // "shallow" would flag every non-git invocation, which is a false alarm, and
+  // false alarms are how a real signal gets ignored later.
+  assert.strictEqual(isGenuinelyFirstRun({ repoDir: notARepo }), true);
+  // ...but naming a base that did not resolve is still an error even here.
+  assert.strictEqual(isGenuinelyFirstRun({ repoDir: notARepo, baseSha: 'origin/main' }), false);
+});
+
+test('the ONLY silent case is a genuinely new repo with no base named', () => {
+  const { isGenuinelyFirstRun } = require('../lib/orchestrator');
+  const fresh = tmpRepo();
+  const shallow = shallowClone();
+
+  assert.strictEqual(isGenuinelyFirstRun({ repoDir: fresh }), true,
+    'a real first commit with no base is the one legitimate silence');
+  assert.strictEqual(isGenuinelyFirstRun({ repoDir: fresh, baseSha: 'origin/main' }), false,
+    'naming a base that did not resolve is always an error, even on a new repo');
+  assert.strictEqual(isGenuinelyFirstRun({ repoDir: shallow }), false,
+    'a shallow clone is not a first run');
+});
