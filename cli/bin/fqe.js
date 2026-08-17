@@ -1031,7 +1031,7 @@ const KNOWN_FLAGS = {
   uat: ['json', 'results', 'spec', 'strict'],
   golden: ['dir', 'json', 'manifest', 'repo-dir'],
   'qa-report': ['gate', 'json', 'receipt'],
-  receipt: ['actor', 'allowlist-version', 'commit', 'events-url', 'output', 'pr', 'requester-source', 'run-id'],
+  receipt: ['actor', 'allowlist-version', 'commit', 'events-url', 'output', 'pr', 'require-signature', 'requester-source', 'run-id'],
   scorecard: ['dir', 'format'],
   'bypass-tally': ['actor', 'commit', 'format', 'pr', 'state-dir', 'window-days'],
   status: ['check', 'commit', 'description', 'dry-run', 'output-text', 'repo', 'state'],

@@ -984,6 +984,10 @@ function run(opts) {
     // was not set explicitly (contract-only does not arm it; that is not money movement).
     require_money_idempotency: config.require_money_idempotency === true || hasMoneyClassRunner,
     require_money_policy_when_detected: config.require_money_policy_when_detected === true,
+    // Without this line the switch verdict.js reads is undefined on every real
+    // run, so the indeterminate-diff guard could FLAG but never block - which is
+    // how giving it "its own switch" quietly disarmed it everywhere.
+    require_resolvable_diff: config.require_resolvable_diff === true,
     require_nonempty_gate: config.require_nonempty_gate === true,
     money_signal: moneySignal,
     dead_require_for_globs: deadRequireForGlobs,

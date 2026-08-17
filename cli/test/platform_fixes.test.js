@@ -223,3 +223,143 @@ test('spawnSync sets .error on timeout, so .error alone can never mean "never st
   assert.ok(timedOut.signal, 'a timed-out child was killed by a signal, proving it ran');
   assert.strictEqual(missing.signal, null, 'a child that never started has no signal');
 });
+
+/**
+ * REVIEW ROUND 2. Three fixes shipped with no test at all, and the two that did
+ * have tests had blind spots that let a real bug through green. These close that.
+ */
+
+/**
+ * A quarantined runner that TIMES OUT must still say it timed out.
+ *
+ * Once a timeout reports ran:true it reaches Pass 2, where the quarantine
+ * branches match first - so the timeout branch was dead for any quarantined
+ * runner and the receipt said only "produced no numeric exit_code" for a suite
+ * that hung. The quarantine still shields (that is its job); the record must
+ * still be honest about what happened.
+ */
+test('a QUARANTINED runner that times out still names the timeout in the reason', () => {
+  const out = computeVerdict({
+    runners: [{
+      name: 'flaky-e2e', required: true, ran: true, exit_code: undefined,
+      timed_out: true, timeout_ms: 300000,
+      quarantined: true, quarantine_expired: false,
+    }],
+  });
+  assert.match(out.reasons.join('\n'), /TIMED OUT after 300000ms/,
+    'a quarantine may neutralize the verdict, but it must never hide the cause:\n' + out.reasons.join('\n'));
+});
+
+test('an EXPIRED quarantine on a timed-out runner blocks AND names the timeout', () => {
+  const out = computeVerdict({
+    runners: [{
+      name: 'flaky-e2e', required: true, ran: true, exit_code: undefined,
+      timed_out: true, timeout_ms: 1000,
+      quarantined: true, quarantine_expired: true,
+    }],
+  });
+  assert.strictEqual(out.verdict, 'FAIL');
+  assert.match(out.reasons.join('\n'), /TIMED OUT after 1000ms/);
+});
+
+/**
+ * FINDING 5, both directions. Shipped with a switch that nothing populated and
+ * that config validation rejected, so the guard could FLAG but never block -
+ * strictly worse than the wrong-switch version it replaced. A guard is only real
+ * if it is reachable from a .fqe.yml an adopter can actually write.
+ */
+test('require_resolvable_diff is a VALID .fqe.yml key (a guard you cannot turn on is not a guard)', () => {
+  const { validateConfig } = require('../lib/config_schema');
+  const ok = validateConfig({ runners: {}, require_resolvable_diff: true });
+  assert.deepStrictEqual(ok.errors || [], [], 'adopters must be able to set this key');
+
+  const bad = validateConfig({ runners: {}, require_resolvable_diff: 'yes' });
+  assert.ok((bad.errors || []).length > 0, 'a non-boolean must be rejected');
+});
+
+test('require_resolvable_diff escalates an indeterminate diff to FAIL when true, FLAG when absent', () => {
+  const strict = computeVerdict({
+    runners: [{ name: 'unit', required: true, ran: true, exit_code: 0 }],
+    diff_indeterminate: true,
+    require_resolvable_diff: true,
+  });
+  assert.strictEqual(strict.verdict, 'FAIL', 'switch ON must block:\n' + strict.reasons.join('\n'));
+
+  const loose = computeVerdict({
+    runners: [{ name: 'unit', required: true, ran: true, exit_code: 0 }],
+    diff_indeterminate: true,
+  });
+  assert.strictEqual(loose.verdict, 'FLAG', 'switch OFF must flag, not block:\n' + loose.reasons.join('\n'));
+});
+
+test('the orchestrator actually forwards require_resolvable_diff (the wiring, not just the switch)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'orchestrator.js'), 'utf8');
+  assert.match(
+    src,
+    /require_resolvable_diff:\s*config\.require_resolvable_diff\s*===\s*true/,
+    'verdict.js reads input.require_resolvable_diff; if the orchestrator never sets it from config, it is undefined on every real run'
+  );
+});
+
+test('the payments scaffold sets require_resolvable_diff so money repos keep blocking', () => {
+  const dir = tmpRepo();
+  execFileSync(process.execPath, [BIN, 'init', '--dir', dir, '--payments'], { encoding: 'utf8' });
+  const yml = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
+  assert.match(yml, /^require_resolvable_diff:\s*true$/m, 'payments profile must block on an unresolvable diff');
+
+  // And it must validate clean - a scaffold that fails its own validator is worse
+  // than no scaffold, because the gate then refuses to run at all.
+  const r = spawnSync(process.execPath, [BIN, 'validate', '--dir', dir], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `the generated payments config must validate:\n${r.stdout}${r.stderr}`);
+});
+
+/**
+ * FINDING 6, which shipped untested. Two runner names that differ only in a
+ * character the sanitizer collapses must not share one log file, or
+ * evidence_paths shows runner A's output under runner B's name.
+ */
+test('the log-name sanitizer is injective over every runner name the parser accepts', () => {
+  // Finding 6 said `unit/fast` and `unit_fast` both map to runner-unit_fast.log,
+  // on the premise that .fqe.yml keys are free-form. They are NOT: the config
+  // parser constrains a runner key to /^[A-Za-z_][\w-]*$/, and every character
+  // that survives is already in the sanitizer's keep-set, so the mapping is
+  // injective and the collision is unreachable through the product today. The
+  // disambiguation added for it is defense in depth, kept deliberately.
+  //
+  // THIS is the invariant that makes it safe, so this is what gets pinned: if
+  // anyone ever loosens the parser to accept '/' or ':' or a space, the collision
+  // becomes reachable and this test fails at that moment - which is the point at
+  // which someone needs to know.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'orchestrator.js'), 'utf8');
+
+  const keyRe = src.match(/const m = trimmed\.match\((\/\^\(\[A-Za-z_\]\[[^)]*\)[^;]*)\);[\s\S]{0,120}?malformed runner key/);
+  assert.ok(keyRe, 'could not locate the runner-key regex; if it moved, re-derive this guard');
+
+  const sanitizer = src.match(/replace\(\/\[\^([^\]]+)\]\/g, '_'\)/);
+  assert.ok(sanitizer, 'could not locate the log-name sanitizer');
+  assert.strictEqual(sanitizer[1], 'A-Za-z0-9._-', 'sanitizer keep-set changed; re-check injectivity');
+
+  // Every character the parser can accept must be preserved by the sanitizer.
+  const parserAccepts = 'abcXYZ019_-';
+  for (const ch of parserAccepts) {
+    assert.strictEqual(
+      ch.replace(/[^A-Za-z0-9._-]/g, '_'),
+      ch,
+      `parser accepts '${ch}' but the sanitizer rewrites it, so two distinct runner names can collide`
+    );
+  }
+
+  // And the parser must still reject the characters that would break it.
+  const { parseConfigYaml } = require('../lib/orchestrator');
+  for (const bad of ['unit/fast', 'unit fast', 'unit:fast']) {
+    assert.throws(
+      () => parseConfigYaml(`runners:
+  ${bad}:
+    command: "node"
+    args: []
+`),
+      /malformed runner key|config parse/,
+      `if '${bad}' became a legal runner key, the sanitizer would no longer be injective`
+    );
+  }
+});

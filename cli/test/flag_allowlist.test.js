@@ -49,6 +49,14 @@ function deriveFlags() {
     for (const f of body.matchAll(/requireFlags\(opts,\s*\[([^\]]*)\]/g)) {
       for (const q of f[1].matchAll(/'([a-z0-9-]+)'/g)) flags.add(q[1]);
     }
+    // Not every flag is read through `opts`. `receipt verify` tests the raw argv
+    // with `rest.includes('--require-signature')`, and the first version of this
+    // derivation only knew about `opts`, so the map and the derivation shared the
+    // blind spot and the drift test compared it to itself and passed - while the
+    // CLI rejected a flag its own signing recipe documents. Any argv membership
+    // test counts as a read.
+    for (const f of body.matchAll(/\.includes\(\s*'--([a-z0-9-]+)'\s*\)/g)) flags.add(f[1]);
+    for (const f of body.matchAll(/\.includes\(\s*"--([a-z0-9-]+)"\s*\)/g)) flags.add(f[1]);
     out[st.name] = [...flags].sort();
   });
   return out;
@@ -88,11 +96,18 @@ function docFlagPairs() {
   const pairs = new Map();
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8');
-    // `fqe <sub>` followed by its flags, stopping at the end of the line.
-    for (const m of text.matchAll(/\bfqe\s+([a-z][a-z0-9-]*)((?:\s+--?[a-zA-Z][^\n`]*)?)/g)) {
+    // `fqe <sub> ...` and everything up to the end of that command. Flags do NOT
+    // have to follow the subcommand immediately: the signing recipe writes
+    // `fqe receipt verify out/QA-RESULT.yml --require-signature`, with a
+    // positional in between, and an earlier regex that required adjacency
+    // silently skipped it. Also accept `fqe.js`, since docs invoke the binary as
+    // `node cli/bin/fqe.js <sub>`. Stop at a shell separator so a flag cannot be
+    // attributed to the wrong command.
+    for (const m of text.matchAll(/\bfqe(?:\.js)?\s+([a-z][a-z0-9-]*)([^\n`]*)/g)) {
       const sub = m[1];
       if (!Object.prototype.hasOwnProperty.call(KNOWN_FLAGS, sub)) continue;
-      for (const fm of (m[2] || '').matchAll(/--([a-z][a-z0-9-]*)/g)) {
+      const tail = (m[2] || '').split(/&&|\|\||[|;]/)[0];
+      for (const fm of tail.matchAll(/--([a-z][a-z0-9-]*)/g)) {
         const key = `${sub} --${fm[1]}`;
         if (!pairs.has(key)) pairs.set(key, { sub, flag: fm[1], file: path.relative(ROOT, f) });
       }

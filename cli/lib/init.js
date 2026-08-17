@@ -64,6 +64,10 @@ const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init 
 version: 0.15
 require_money_idempotency: true
 require_money_policy_when_detected: true
+# If fqe cannot resolve the diff it cannot tell which runners were required, so a
+# green result would mean "nothing was checked", not "nothing was wrong". On a
+# money repo that must block, not flag.
+require_resolvable_diff: true
 
 mutation:
   mode: blocking

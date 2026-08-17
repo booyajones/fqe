@@ -159,20 +159,35 @@ function computeVerdict(input) {
       const quarantineActive = r.quarantined === true && r.quarantine_expired === false;
       const quarantineExpired = r.quarantined === true && r.quarantine_expired === true;
       if (typeof r.exit_code !== 'number' || Number.isNaN(r.exit_code)) {
+        // Why the timeout is described here and not in its own branch: a timed-out
+        // runner now has ran:true, so it reaches Pass 2 and the quarantine branches
+        // match FIRST. A timeout branch placed after them is dead for any
+        // quarantined runner, and the receipt then said only "produced no numeric
+        // exit_code" for a suite that actually hung - the record omitting the one
+        // fact the reader needs. Every branch below names the real cause.
+        //
+        // The VERDICT is deliberately unchanged: an active quarantine still
+        // shields, because that is exactly what a quarantine is for and a
+        // quarantined runner that FAILS is already non-blocking. It stays visible
+        // in the receipt and expires on the TTL. What is fixed is the honesty of
+        // the reason, not the blocking policy.
+        const tms = typeof r.timeout_ms === 'number' ? ` after ${r.timeout_ms}ms` : '';
+        const noCode = r.timed_out === true
+          ? `TIMED OUT${tms} and was killed, so it produced no exit code`
+          : 'produced no numeric exit_code';
         if (quarantineActive) {
           hasFlag = true;
-          reasons.push(`runner "${r.name}" is QUARANTINED and produced no numeric exit_code (neutral, not blocking)`);
+          reasons.push(`runner "${r.name}" is QUARANTINED and ${noCode} (neutral, not blocking)`);
         } else if (quarantineExpired) {
           hasFail = true;
-          reasons.push(`runner "${r.name}" QUARANTINE EXPIRED and it produced no numeric exit_code; the quarantine no longer shields it (fix it or refresh quarantined_since)`);
+          reasons.push(`runner "${r.name}" QUARANTINE EXPIRED and it ${noCode}; the quarantine no longer shields it (fix it or refresh quarantined_since)`);
         } else if (r.timed_out === true) {
-          // A timeout DID run. It blocks either way, but naming it sends the
-          // engineer to their suite's duration or timeout_ms, not to a hunt for
-          // malformed runner JSON that was never the problem.
+          // A timeout DID run. It blocks, but naming it sends the engineer to
+          // their suite's duration or timeout_ms, not to a hunt for malformed
+          // runner JSON that was never the problem.
           hasFail = true;
-          const ms = typeof r.timeout_ms === 'number' ? ` after ${r.timeout_ms}ms` : '';
           reasons.push(
-            `runner "${r.name}" TIMED OUT${ms} and was killed, so it produced no exit code; ` +
+            `runner "${r.name}" ${noCode}; ` +
             `the process did run (raise timeout_ms for this runner, or make the suite faster)`
           );
         } else {
