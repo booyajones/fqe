@@ -1019,6 +1019,14 @@ const SUBCOMMANDS = {
  * gate, and a misconfigured gate must never silently pass.
  */
 const KNOWN_FLAGS = {
+  // The three no-argument subcommands. They were omitted here because the
+  // derivation only recognised `name(args) {`, so assertKnownFlags returned
+  // early and `fqe version --anything` was silently accepted - the same
+  // swallow-the-typo defect this map exists to close, in the commands the
+  // guard could not see. An empty list means "takes no flags", not "unchecked".
+  version: [],
+  thresholds: [],
+  help: [],
   explain: ['dir', 'json'],
   init: ['actor', 'dir', 'force', 'payments', 'with-mutation', 'with-qodo'],
   verdict: [],

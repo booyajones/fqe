@@ -343,12 +343,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qa-receipt-\${{ github.event.pull_request.head.sha }}
+          # runner-*.log carries what the receipt's evidence_paths names and what
+          # the explainer tells you to download. Without it the receipt points at
+          # files no reader can reach.
+          # (Keep this comment ABOVE \`path:\` — inside a \`|\` block scalar a '#'
+          # line is literal text, not a comment, and would be uploaded as a glob.)
           path: |
             out/QA-RESULT.yml
             out/QA-RESULT.md
-            # The runner logs the receipt's evidence_paths names and the
-            # explainer tells you to download. Without these the receipt
-            # points at files no reader can reach.
             out/runner-*.log
           # 365 days for SOC2/PCI evidence retention (1-year minimum). The repo's
           # max artifact-retention setting must allow this; the Check Run output

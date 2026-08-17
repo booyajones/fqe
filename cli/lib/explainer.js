@@ -55,20 +55,33 @@ function explainReason(reason, ctx = {}) {
   // "no numeric exit_code" pattern, and must never be confused with a spawn
   // failure: a timeout means the command was correct and the suite was slow,
   // so sending the reader to their `command` wastes the moment they are blocked.
-  m = reason.match(/^runner "([^"]+)" TIMED OUT(?: after (\d+)ms)?/);
+  // verdict.js emits the timeout in THREE shapes, because the quarantine
+  // branches wrap it: plain, `is QUARANTINED and TIMED OUT`, and `QUARANTINE
+  // EXPIRED and it TIMED OUT`. Matching only the plain one sent the other two -
+  // including the EXPIRED case, which is a blocking FAIL - to UNKNOWN_REASON,
+  // i.e. "file an issue", in the file whose entire job is explaining timeouts.
+  m = reason.match(/^runner "([^"]+)" (?:is QUARANTINED and |QUARANTINE EXPIRED and it )?TIMED OUT(?: after (\d+)ms)?/);
   if (m) {
     const [, name, ms] = m;
+    const quarantined = /is QUARANTINED and/.test(reason);
+    const expired = /QUARANTINE EXPIRED/.test(reason);
     const dur = ms ? `${ms}ms` : 'its configured timeout';
     return {
       code: 'RUNNER_TIMED_OUT',
       plain_english:
         `The "${name}" runner started and ran, but was still going after ${dur}, so fqe killed it. ` +
-        `A killed process has no exit code, so fqe cannot tell whether your tests were passing, and it blocks. ` +
-        `Your command is fine; the suite did not finish in time.`,
+        `A killed process has no exit code, so fqe cannot tell whether your tests were passing. ` +
+        (quarantined
+          ? `This runner is QUARANTINED, so it is not blocking the merge — but nothing was verified by it either.`
+          : expired
+            ? `Its quarantine has EXPIRED, so it no longer shields this and the merge is blocked.`
+            : `That blocks the merge.`) +
+        ` Your command is fine; the suite did not finish in time.`,
       fix:
         `Either raise the budget — set "${name}".timeout_ms in .fqe.yml above the suite's real wall-clock time ` +
         `(the default is 300000, five minutes) — or make the suite faster. If it hangs rather than runs long, ` +
-        `look for a test awaiting a port, a prompt, or a network call that never resolves in CI.`,
+        `look for a test awaiting a port, a prompt, or a network call that never resolves in CI.` +
+        (expired ? ` Then fix it or refresh quarantined_since; the quarantine will not shield it again as-is.` : ''),
       repro_command: repro,
     };
   }

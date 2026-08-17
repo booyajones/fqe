@@ -270,3 +270,38 @@ test('missing base_sha defaults to origin/main', () => {
   const out = explainReason('runner "web" exited 1');
   assert.match(out.repro_command, /--base origin\/main/);
 });
+
+/**
+ * A timed-out runner is explained in ALL THREE shapes verdict.js emits.
+ *
+ * The first version matched only the plain shape. The quarantine branches wrap
+ * the timeout text, so `is QUARANTINED and TIMED OUT` and `QUARANTINE EXPIRED
+ * and it TIMED OUT` both fell through to UNKNOWN_REASON - "file an issue" - and
+ * the EXPIRED case is a BLOCKING failure. Sending someone to the issue tracker
+ * at the moment they are blocked, from the file whose whole job is explaining
+ * timeouts, is the failure this pattern exists to prevent.
+ */
+const TIMEOUT_SHAPES = [
+  ['plain', 'runner "slow" TIMED OUT after 1000ms and was killed, so it produced no exit code; the process did run (raise timeout_ms for this runner, or make the suite faster)'],
+  ['quarantined', 'runner "slow" is QUARANTINED and TIMED OUT after 1000ms and was killed, so it produced no exit code (neutral, not blocking)'],
+  ['quarantine expired', 'runner "slow" QUARANTINE EXPIRED and it TIMED OUT after 1000ms and was killed, so it produced no exit code; the quarantine no longer shields it (fix it or refresh quarantined_since)'],
+];
+
+for (const [label, reason] of TIMEOUT_SHAPES) {
+  test(`a timeout is explained, not sent to the issue tracker (${label})`, () => {
+    const out = explainReason(reason);
+    assert.strictEqual(out.code, 'RUNNER_TIMED_OUT', `${label} shape fell through to ${out.code}`);
+    assert.match(out.plain_english, /slow/);
+    assert.match(out.fix, /timeout_ms/, 'the fix must point at the timeout budget');
+    // It must NOT send the reader to the command, which is the spawn-failure advice.
+    assert.doesNotMatch(out.plain_english, /never started/i);
+  });
+}
+
+test('the timeout explanation states the right blocking outcome per quarantine state', () => {
+  const active = explainReason(TIMEOUT_SHAPES[1][1]);
+  assert.match(active.plain_english, /not blocking/i, 'an active quarantine does not block; saying it does is wrong');
+
+  const expired = explainReason(TIMEOUT_SHAPES[2][1]);
+  assert.match(expired.plain_english, /blocked/i, 'an expired quarantine DOES block');
+});

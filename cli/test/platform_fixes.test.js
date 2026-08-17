@@ -248,6 +248,12 @@ test('a QUARANTINED runner that times out still names the timeout in the reason'
   });
   assert.match(out.reasons.join('\n'), /TIMED OUT after 300000ms/,
     'a quarantine may neutralize the verdict, but it must never hide the cause:\n' + out.reasons.join('\n'));
+  // Assert the VERDICT too, not just the message. Without this the test passes
+  // identically if the timeout branch is moved ahead of the quarantine branches
+  // - which would silently start blocking merges on quarantined runners while
+  // the reason text still matched the regex above.
+  assert.strictEqual(out.verdict, 'FLAG',
+    'an ACTIVE quarantine must still shield; describing the timeout must not change the outcome');
 });
 
 test('an EXPIRED quarantine on a timed-out runner blocks AND names the timeout', () => {
@@ -399,4 +405,59 @@ test('the log-name sanitizer is injective over every runner name the parser acce
       `if '${bad}' became a legal runner key, the sanitizer would no longer be injective`
     );
   }
+});
+
+/**
+ * A '#' line inside a YAML block scalar is TEXT, not a comment.
+ *
+ * The runner-log upload comment was written inside `path: |`, so three lines of
+ * English prose were passed to actions/upload-artifact as glob patterns - in
+ * both the template and every workflow `fqe init` generates. It degrades to
+ * harmless no-op globs rather than failing loudly, which is exactly why it
+ * needs a test: nothing would ever have surfaced it.
+ */
+/**
+ * Extract the lines a YAML `path: |` block scalar actually contains. A block
+ * scalar ends when indentation drops below its first line, so this must respect
+ * indentation - a regex that just takes following indented lines swallows the
+ * next key's comment and reports a false positive.
+ */
+function blockScalarEntries(yaml) {
+  const lines = yaml.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^\s*path: \|\s*$/.test(l));
+  if (start === -1) return [];
+  const indentOf = (l) => l.length - l.trimStart().length;
+  const base = indentOf(lines[start + 1] || '');
+  const out = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.trim() === '') continue;
+    if (indentOf(l) < base) break;
+    out.push(l.trim());
+  }
+  return out;
+}
+
+test('the generated workflow uploads globs, not comment text, in its artifact path block', () => {
+  const dir = tmpRepo();
+  execFileSync(process.execPath, [BIN, 'init', '--dir', dir], { encoding: 'utf8' });
+  const wf = fs.readFileSync(path.join(dir, '.github', 'workflows', 'fqe-quality.yml'), 'utf8');
+
+  const entries = blockScalarEntries(wf);
+  assert.ok(entries.length > 0, 'could not find the artifact path block in the generated workflow');
+  for (const e of entries) {
+    assert.ok(!e.startsWith('#'),
+      `'${e}' is prose being passed to upload-artifact as a glob; move the comment ABOVE 'path: |'`);
+  }
+  assert.ok(entries.includes('out/runner-*.log'), `runner logs must be uploaded, got: ${JSON.stringify(entries)}`);
+});
+
+test('the shipped workflow TEMPLATE has the same clean path block', () => {
+  const tpl = fs.readFileSync(path.join(__dirname, '..', '..', 'workflows', 'fqe-quality.yml.template'), 'utf8');
+  const entries = blockScalarEntries(tpl);
+  assert.ok(entries.length > 0, 'could not find the artifact path block in the template');
+  for (const e of entries) {
+    assert.ok(!e.startsWith('#'), `'${e}' is prose inside a YAML block scalar in the template`);
+  }
+  assert.ok(entries.includes('out/runner-*.log'));
 });
