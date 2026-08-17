@@ -2,6 +2,28 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.18.19] - 2026-08-17
+
+Tag: `fqe-v0.18.19`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.
+
+### Fixed (platform)
+
+- **The receipt claimed a process ran when it never started.** `command: "npm"` on Windows cannot be spawned (npm is a `.cmd` shim), so fqe recorded `ran: true`, `exit_code: null` and a 7ms duration for a 74-second suite, blocked the merge, and told the engineer their runner's JSON was malformed. A tamper-evident receipt asserting a process ran is the worst thing this tool can get wrong, because the receipt IS the product. A spawn failure now reports `ran: false` with the OS error and, on Windows, the `cmd /c` workaround. It still blocks; it just tells the truth about why.
+- **Unknown flags were accepted silently.** A one-character typo in `--config` made fqe load the DEFAULT config, turning a fail-closed gate into a green PASS. It is also why `--full`, a flag that never existed, survived into six docs and every generated receipt: nothing ever objected. Unknown flags are now rejected per subcommand.
+- **An unresolvable base ref was swallowed.** `--base origin/main` against a `master`-default repo made git error, the error was discarded, `changed_file_count` came back 0, every `when`-gated runner sat out, and the gate returned PASS over a typo. Now surfaced. Scoped to an explicitly-named base so a fresh single-commit repo does not cry wolf.
+- **`evidence_paths` was hardcoded to `[]`** while three docs promised the runner's stderr and the repro command told you to `cat ./out/runner-<name>.log`, a file nothing ever wrote. Runner stdout/stderr is now written to exactly that path and referenced by the receipt.
+
+### Fixed (from CodeRabbit's review)
+
+- `workflows/fqe-quality.yml.template` still emitted `fqe run --full`, the second time a reference template survived a fix that landed everywhere else.
+- A CI guard now verifies on `main` that the pinned tag actually resolves. The doc guard only proved pins MATCH package.json, never that the tag EXISTS, so a release could ship pins pointing at nothing.
+- Step 2's heading still promised detection that does not exist; `fqe doctor` and the smart-detect instruction removed from README and troubleshooting.
+
+### Notes
+
+- 808 tests. `cli/test/platform_fixes.test.js` reproduces each of the four defects as behaviour, end-to-end through the CLI and the real receipt.
+- One of those tests was initially vacuous: it imported `runOne`, which is not exported, and returned early, reporting `ok` while asserting nothing. Rewritten to drive the real binary, at which point it FAILED and exposed that the spawn detail was being dropped in the mapping into the verdict input. The honest test found a real bug the green one hid.
+
 ## [0.18.17] - 2026-08-14
 
 Tag: `fqe-v0.18.17`. Moves the proof into the suite, and fixes two pieces of text that had gone stale under their own code.

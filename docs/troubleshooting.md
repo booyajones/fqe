@@ -18,7 +18,7 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Root cause:** an old version of the `parseFlags` helper treated `--output-text "$BODY"` as a boolean true when `$BODY` started with `--` (e.g., a YAML frontmatter delimiter `---`).
 
-**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Re-pin the workflow's `FQE_REF` to `fqe-v0.18.18` (the current tag) to pick it up. If you've pinned an older SHA, bump it.
+**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Re-pin the workflow's `FQE_REF` to `fqe-v0.18.19` (the current tag) to pick it up. If you've pinned an older SHA, bump it.
 
 ### `fqe: error: 'gh' CLI not found on PATH`
 
@@ -111,7 +111,7 @@ Two paths:
 
 ## "It's not detecting my repo correctly"
 
-`fqe init --force` re-runs the smart-detect against the current state of the repo. If a marker you expect isn't being detected, open an issue with the marker name and what your repo looks like.
+`fqe init --force` rewrites the scaffold files. It does NOT inspect your repo to guess runners: `.fqe.yml` is a static template with commented examples you adapt by hand.
 
 Currently detected markers:
 - `package.json` → Node project

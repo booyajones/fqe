@@ -1004,6 +1004,61 @@ const SUBCOMMANDS = {
   },
 };
 
+/**
+ * Every flag each subcommand accepts. A flag absent from this map is REJECTED.
+ *
+ * fqe accepted any `--anything` silently. Three consequences, all measured:
+ *   - `--full` never existed, so it survived into six docs, explain.js, and
+ *     every generated receipt, because nothing ever objected to it.
+ *   - `--skip-all-runners` was accepted and ignored, which reads like a bypass.
+ *   - a one-character typo in `--config` meant fqe loaded the DEFAULT config
+ *     instead of the one you named, turning a fail-closed gate into a green
+ *     PASS. That is the failure this tool exists to prevent, in the tool.
+ *
+ * Fail closed on the CLI surface too: an unrecognized flag is a misconfigured
+ * gate, and a misconfigured gate must never silently pass.
+ */
+const KNOWN_FLAGS = {
+  run: ['commit', 'output', 'base', 'config', 'pr', 'repo-dir'],
+  init: ['dir', 'force', 'actor', 'with-mutation', 'with-qodo', 'payments'],
+  explain: ['dir', 'json'],
+  validate: ['config'],
+  verdict: [],
+  'oracle-guard': ['changed', 'base', 'head', 'include-tests', 'block', 'repo-dir'],
+  'bypass-check': ['comments', 'head', 'allowed', 'allowlist-file', 'now'],
+  uat: ['spec', 'results', 'strict', 'json'],
+  golden: ['manifest', 'dir', 'json'],
+  'qa-report': ['receipt', 'json', 'gate'],
+  'spec-mutate': ['report', 'threshold'],
+  trace: ['matrix'],
+  reconcile: ['ledger'],
+  scorecard: ['dir', 'json'],
+  status: ['check', 'commit', 'state', 'description', 'output-text', 'repo', 'dry-run'],
+  receipt: ['commit', 'pr', 'actor', 'requester-source', 'events-url', 'allowlist-version', 'output'],
+  'bypass-tally': ['state-dir', 'pr', 'commit', 'actor', 'window-days', 'format'],
+  'coverage-ratchet': ['report', 'baseline', 'patch-threshold'],
+  'mutation-gate': ['report', 'threshold', 'changed'],
+};
+
+function assertKnownFlags(sub, args) {
+  const allowed = KNOWN_FLAGS[sub];
+  if (!allowed) return; // subcommand not in the map: do not invent a policy for it
+  const FLAG_RE = /^--[A-Za-z]/;
+  const unknown = [];
+  for (const a of args) {
+    if (!FLAG_RE.test(a)) continue;
+    const key = a.slice(2).split('=')[0];
+    if (!allowed.includes(key)) unknown.push('--' + key);
+  }
+  if (unknown.length) {
+    die(
+      `unknown flag(s) for '${sub}': ${unknown.join(', ')}\n` +
+      `  ${sub} accepts: ${allowed.map((f) => '--' + f).join(', ') || '(none)'}\n` +
+      `  Refusing to continue: an unrecognized flag means the gate is not configured the way you think.`
+    );
+  }
+}
+
 function parseFlags(args) {
   // Treat `--foo` as boolean true ONLY when next arg is missing, OR next arg
   // is an actual flag (matches /^--[A-Za-z]/, i.e. `--word`). String content
@@ -1055,6 +1110,7 @@ function main() {
   }
   const fn = SUBCOMMANDS[sub];
   if (!fn) die(`unknown subcommand: ${sub}. Run 'fqe help' for usage.`);
+  assertKnownFlags(sub, process.argv.slice(3));
   try {
     fn(rest);
   } catch (e) {

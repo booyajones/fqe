@@ -33,8 +33,26 @@ function explainReason(reason, ctx = {}) {
   const commitCmd = ctx.commit_sha ? `--commit ${ctx.commit_sha}` : '--commit $(git rev-parse HEAD)';
   const repro = `fqe run ${commitCmd} ${baseCmd} --output ./out/`;
 
+  // Pattern 0: the runner could not be started at all. Must be matched BEFORE
+  // the generic "did not run", which it would otherwise fall through to.
+  let m = reason.match(/^required runner "([^"]+)" FAILED TO START \(([^)]*)\)/);
+  if (m) {
+    const [, name, err] = m;
+    return {
+      code: 'RUNNER_SPAWN_FAILED',
+      plain_english:
+        `The "${name}" runner never started, so there is no exit code and nothing was tested. ` +
+        `The operating system reported: ${err}. This is not a test failure; the command could not be executed.`,
+      fix:
+        `Check "${name}".command in .fqe.yml. On Windows, npm / npx / yarn / pnpm are .cmd shims and cannot be ` +
+        `spawned directly: use command: "cmd" with args: ["/c", "npm", "test"]. On Linux and macOS, confirm the ` +
+        `binary exists on PATH inside the runner environment (a devDependency binary needs npm ci to have run first).`,
+      repro_command: repro,
+    };
+  }
+
   // Pattern 1: required runner did not run
-  let m = reason.match(/^required runner "([^"]+)" did not run$/);
+  m = reason.match(/^required runner "([^"]+)" did not run$/);
   if (m) {
     const name = m[1];
     return {
