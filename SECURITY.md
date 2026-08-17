@@ -24,8 +24,8 @@ fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when 
 
 | Where | Mechanism | As shipped | Ceiling if hardened |
 |---|---|---|---|
-| `fqe-quality.yml` and `fqe-second-approve.yml`, both written by `fqe init` | `FQE_REF` + `git fetch --depth=1 <url> "$FQE_REF"` then `git checkout --detach FETCH_HEAD` | `fqe-v0.18.17`, a **mutable** git tag (force-pushable unless tag protection is on) | **Immutable.** Set `FQE_REF` to a 40-char SHA. Staged in a fresh `mktemp -d` under `RUNNER_TEMP`, never a fixed path in world-writable `/tmp`, because the step executes what it fetches. |
-| `fqe-oracle-guard.yml` | `FQE_TAG` + `npx -p github:booyajones/fqe#${FQE_TAG}` | `fqe-v0.18.17`, same mutable tag | **Immutable.** npm's commit-ish accepts a SHA. Never affected by the `--branch` bug. |
+| `fqe-quality.yml` and `fqe-second-approve.yml`, both written by `fqe init` | `FQE_REF` + `git fetch --depth=1 <url> "$FQE_REF"` then `git checkout --detach FETCH_HEAD` | `fqe-v0.18.18`, a **mutable** git tag (force-pushable unless tag protection is on) | **Immutable.** Set `FQE_REF` to a 40-char SHA. Staged in a fresh `mktemp -d` under `RUNNER_TEMP`, never a fixed path in world-writable `/tmp`, because the step executes what it fetches. |
+| `fqe-oracle-guard.yml` | `FQE_TAG` + `npx -p github:booyajones/fqe#${FQE_TAG}` | `fqe-v0.18.18`, same mutable tag | **Immutable.** npm's commit-ish accepts a SHA. Never affected by the `--branch` bug. |
 
 **There is no container mechanism. The image does not exist.** Until v0.18.12 both `workflows/*.yml.template` and the `fqe-second-approve.yml` that `fqe init` *generates* declared `container: ghcr.io/booyajones/fqe:0.1`. It has never been published: the authenticated GitHub Packages API returns 404 for the package, and the owner has zero container packages. A job declaring it fails on image pull before its first step, so every adopter who ran `fqe init` received a second-approve workflow that could not start. That is the bypass-rate unblock, precisely the path you need working on a bad day.
 
@@ -67,7 +67,7 @@ Surfaced during adversarial design review and corroborated by Finexio's internal
 | 4 | Workflow artifacts (receipts) expired at 90 days, under the SOC2/PCI 1-year minimum | **Mitigated in 0.6.0.** | Receipt artifact retention raised to 365 days (`retention-days: 365`); the repo's max-retention setting must allow it. Check Run output also persists with the commit. For 7-year SOX, mirror receipts to object storage via a post-merge job. |
 | 5 | Bypass-tally JSONL writes to the protected branch from the workflow | The tally is updated by a `workflow_run` event AFTER merge, not from the PR's own workflow. Fork PRs have read-only `GITHUB_TOKEN` and cannot bypass. Concurrency stress-tested up to ~5 concurrent merges. | External KV state backend (SQLite cache + signed JSONL fallback). |
 
-If any of these is a deal-breaker for your repo, **do not enable `fqe/pass` as a required check until 0.2 ships.** Run it as informational only and tighten as the fixes land.
+If any of these is a deal-breaker for your repo, run `fqe/pass` as an informational check first and promote it to required once you have measured its false-red rate on your own repo. That is the adoption path [docs/build-vs-buy.md](docs/build-vs-buy.md) recommends regardless.
 
 ## What fqe does NOT protect against
 
@@ -83,10 +83,10 @@ For Finexio production repos:
 
 1. **Required status checks** on the protected branch: `fqe/pass` and `fqe/second-reviewer-required`.
 2. **Enforce admins** ON in branch protection. No admin-merge override.
-3. **Pin `fqe-v0.18.17` to a SHA** in your workflow. Resolve it without needing a local clone (a bare `git rev-parse` only works if the tag is already fetched, and on an annotated tag it can resolve to the tag object rather than the commit):
+3. **Pin `fqe-v0.18.18` to a SHA** in your workflow. Resolve it without needing a local clone (a bare `git rev-parse` only works if the tag is already fetched, and on an annotated tag it can resolve to the tag object rather than the commit):
 
    ```bash
-   git ls-remote https://github.com/booyajones/fqe.git 'refs/tags/fqe-v0.18.17^{}' | cut -f1
+   git ls-remote https://github.com/booyajones/fqe.git 'refs/tags/fqe-v0.18.18^{}' | cut -f1
    ```
 4. **Restrict who is on `.github/fqe-bypass-allowlist.yml`.** The workflow reads it at the default-branch HEAD, so a PR cannot add itself and a removal takes effect immediately on in-flight PRs.
 5. **Enable Dependabot** on your gated repo for the GitHub Actions used in `fqe-quality.yml`.
@@ -94,4 +94,4 @@ For Finexio production repos:
 
 ## Disclosure history
 
-None yet. This is v0.1.0.
+None yet.

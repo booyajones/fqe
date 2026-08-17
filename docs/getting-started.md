@@ -7,12 +7,12 @@
 In any git repo with a `main` or `master` branch:
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.17 fqe init
+npx --yes -p github:booyajones/fqe#fqe-v0.18.18 fqe init
 ```
 
 This creates:
 
-- `.fqe.yml`: your runner config, pre-populated with suggestions based on what's in your repo.
+- `.fqe.yml`: your runner config. A static template with commented examples; fqe does not inspect your repo to guess runners.
 - `.github/workflows/fqe-quality.yml`: the gate workflow.
 - `.github/workflows/fqe-second-approve.yml`: the bypass-unblock workflow.
 - `.github/fqe-bypass-allowlist.yml`: who can bypass (seeded with your GitHub login).
@@ -24,22 +24,25 @@ Commit and push these on a branch, open a PR, watch the workflow fire.
 ## Step 2: See what fqe detected
 
 ```bash
-node ./node_modules/.bin/fqe explain
+npx --yes -p github:booyajones/fqe#fqe-v0.18.18 fqe explain
 ```
 
-Or, if you ran `init` via `npx`, look at `.fqe.yml`. The smart-detect pass added commented suggestions tagged with the marker that triggered them:
+Then open `.fqe.yml`. It ships with commented examples you adapt by hand:
 
 ```yaml
-# Detected: Node.js project (package.json present).
-# Suggested: unit tests via npm + browser checks via Playwright.
-# node-tests:
-#   command: "npm"
-#   args: ["test"]
-#   when: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]
-#   required: true
+#   unit:
+#     command: "npm"
+#     args: ["test"]
+#     when: ["**/*.ts", "test/**"]
+#     class: unit
+#     required: true
 ```
 
-To activate a suggestion, delete the leading `# ` on each line. Empty config means the gate runs but always passes.
+Copy an example under the live `runners:` key at the bottom of the file and delete the leading `# `. **Do not uncomment a second `runners:` line.** YAML takes the last key, so a duplicate silently discards everything you configured and leaves you with a gate that passes everything.
+
+**On Windows**, `command: "npm"` will not start, because npm is a `.cmd` shim and fqe spawns without a shell. Use `command: "cmd"` with `args: ["/c", "npm", "test"]`. A runner that fails to spawn is reported as a failure carrying no exit code.
+
+Empty config means the gate runs but always passes.
 
 ## Step 3: Open a PR and watch the workflow
 
@@ -59,17 +62,23 @@ First, install the CLI so you have an `fqe` binary on your PATH. Two options:
 ```bash
 # Option A: clone and link (recommended for iteration)
 git clone https://github.com/booyajones/fqe.git ~/.local/share/fqe
-cd ~/.local/share/fqe && git checkout fqe-v0.18.17
+cd ~/.local/share/fqe && git checkout fqe-v0.18.18
 npm link --prefix ~/.local/share/fqe/cli   # adds `fqe` to PATH
 
 # Option B: one-off via npx (no install, slower)
-alias fqe='npx --yes -p github:booyajones/fqe#fqe-v0.18.17 fqe'
+alias fqe='npx --yes -p github:booyajones/fqe#fqe-v0.18.18 fqe'
+```
+
+On **Windows**, both options above are Unix-only (`npm link` mutates your global prefix, and `alias` is a bash builtin that PowerShell rejects). Use a PowerShell function instead, or just type the full `npx` invocation:
+
+```powershell
+function fqe { npx --yes -p github:booyajones/fqe#fqe-v0.18.18 fqe @args }
 ```
 
 Then, from any repo with a `.fqe.yml`:
 
 ```bash
-fqe run --full --base origin/main --output ./out/
+fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/
 ```
 
 This produces the same QA-RESULT.yml and QA-RESULT.md that CI would. Same verdict. Same explainer output. You can iterate on your runner config without waiting for CI.
@@ -89,7 +98,7 @@ the runner's stderr. Then reproduce locally with the repro command below.
 
 **Reproduce locally:**
 ```bash
-fqe run --full --base origin/main --output ./out/ && cat ./out/runner-node-tests.log
+fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/
 ```
 ```
 
@@ -115,7 +124,7 @@ Empty `.fqe.yml` (or a `.fqe.yml` with all suggestions still commented out) mean
 For JS/TS repos that want the modern AI quality stack (Stryker mutation testing wired as a fqe runner, with Wilson-CI-bounded survival rate as the verdict), add the `--with-mutation` flag:
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.17 fqe init --with-mutation
+npx --yes -p github:booyajones/fqe#fqe-v0.18.18 fqe init --with-mutation
 npm install --save-dev @stryker-mutator/core
 ```
 
@@ -148,4 +157,4 @@ A SHA-pinned Docker image (`ghcr.io/booyajones/fqe`) will be pinned by image dig
 
 ## If something goes wrong
 
-`fqe doctor` (planned for v0.2) will validate your environment. For now: run `fqe explain` to see what fqe sees, then check the troubleshooting doc.
+Run `fqe explain` to see the config fqe resolved, then check [docs/troubleshooting.md](troubleshooting.md).

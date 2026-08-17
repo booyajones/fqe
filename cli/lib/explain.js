@@ -263,8 +263,8 @@ function renderExplainText(data) {
   lines.push(`  Audit source:       ${data.sources.audit_source}`);
   lines.push(`  Failure explainer:  ${data.sources.failure_explainer_source}`);
   lines.push('');
-  lines.push('Run `fqe doctor` to validate your local environment.');
-  lines.push('Run `fqe run --full --base origin/main --output ./out/` to dry-run the gate.');
+  lines.push('Run `fqe explain` to see the config fqe resolved, then check docs/troubleshooting.md.');
+  lines.push('Run `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/` to dry-run the gate.');
   return lines.join('\n');
 }
 

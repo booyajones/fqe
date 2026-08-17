@@ -84,7 +84,37 @@ test('init: .fqe.yml has empty runners (gate is no-op until configured)', () => 
   const dir = freshGitRepo();
   initLib.init({ dir, actor: 'chris-wyatt' });
   const cfg = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
-  assert.match(cfg, /^runners:\s*\{\}$/m);
+
+  // Block style, NOT the inline `runners: {}` this used to emit and assert.
+  // The permissive config parser reads `runners: {}` as the two-character STRING
+  // "{}" rather than an empty map, so the shipped default was mis-parsed from the
+  // day it was written, and this test pinned that as correct.
+  assert.match(cfg, /^runners:\s*$/m);
+  const { parseConfigYaml } = require('../lib/orchestrator');
+  const parsed = parseConfigYaml(cfg);
+  assert.strictEqual(typeof parsed.runners, 'object', 'runners must parse to an object, not a string');
+  assert.deepStrictEqual(parsed.runners, {}, 'a fresh gate has no runners and passes everything');
+});
+
+test('init: .fqe.yml declares runners EXACTLY once (duplicate key silently wins)', () => {
+  // The commented example used to carry its own `# runners:` line while a live
+  // `runners: {}` sat at the bottom. Uncommenting the example, which is exactly
+  // what the docs tell you to do, produced two `runners:` keys. YAML takes the
+  // last one, so every runner the adopter configured was discarded in silence and
+  // they were left with a green gate enforcing nothing.
+  const dir = freshGitRepo();
+  initLib.init({ dir, actor: 'chris-wyatt' });
+  const cfg = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
+
+  const live = cfg.split('\n').filter((l) => /^runners:/.test(l));
+  assert.strictEqual(live.length, 1, `expected one live runners: key, found ${live.length}`);
+
+  const commented = cfg.split('\n').filter((l) => /^#\s*runners:/.test(l));
+  assert.strictEqual(
+    commented.length,
+    0,
+    'the commented example must not carry its own `runners:` line; uncommenting it would create a duplicate key'
+  );
 });
 
 test('init: workflow reads bypass identity from a server-recorded source, not a PR file (invariant #1)', () => {
@@ -121,13 +151,13 @@ test('init --with-mutation: writes the Stryker glue + config + runner block', ()
     'should hand the engineer the npm install next-step');
 });
 
-test('init without --with-mutation: leaves runners: {} and no Stryker files', () => {
+test('init without --with-mutation: leaves runners empty and no Stryker files', () => {
   const dir = freshGitRepo();
   const result = initLib.init({ dir, actor: 'chris-wyatt' });
   assert.ok(!result.written.includes('scripts/fqe_stryker_runner.js'));
   assert.ok(!result.written.includes('stryker.conf.json'));
   const yml = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
-  assert.match(yml, /^runners:\s*\{\}\s*$/m, 'vanilla path must preserve empty runners');
+  assert.match(yml, /^runners:\s*$/m, 'vanilla path must preserve empty runners (block style)');
 });
 
 test('init --with-qodo: writes the Qodo runner + appends a qodo-cover block', () => {

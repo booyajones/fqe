@@ -168,7 +168,7 @@ These numbers are calibration choices, not derived constants. If your blast mode
 ## Debugging your runner
 
 1. **Run it standalone.** Just invoke `<command> <args>` directly with the env vars set. Verify your JSON line on stdout parses.
-2. **Run fqe locally.** `fqe run --full --base origin/main --output ./out/`. Inspect `out/QA-RESULT.md` for the explainer output.
+2. **Run fqe locally.** `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/`. Inspect `out/QA-RESULT.md` for the explainer output.
 3. **Check `fqe explain`.** It shows what fqe parses from your `.fqe.yml`. If your runner doesn't appear, your YAML is malformed.
 
 ## Anti-patterns

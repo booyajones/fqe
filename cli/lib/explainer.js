@@ -25,6 +25,13 @@ const { wilson95 } = require('./wilson');
  */
 function explainReason(reason, ctx = {}) {
   const baseCmd = ctx.base_sha ? `--base ${ctx.base_sha.slice(0, 7)}` : '--base origin/main';
+  // `--commit` is REQUIRED by the parser. Every repro command here used to omit
+  // it and pass `--full` and `--verbose`, neither of which exists, so the command
+  // fqe printed to a blocked engineer failed on the first try with
+  // "missing required flag: --commit". The parser accepted the phantom flags
+  // silently, which is why they survived into six docs and this file.
+  const commitCmd = ctx.commit_sha ? `--commit ${ctx.commit_sha}` : '--commit $(git rev-parse HEAD)';
+  const repro = `fqe run ${commitCmd} ${baseCmd} --output ./out/`;
 
   // Pattern 1: required runner did not run
   let m = reason.match(/^required runner "([^"]+)" did not run$/);
@@ -34,7 +41,7 @@ function explainReason(reason, ctx = {}) {
       code: 'REQUIRED_RUNNER_MISSING',
       plain_english: `The "${name}" runner is configured as required in .fqe.yml but didn't fire on this PR. Either no files matched its "when" globs, or its command didn't execute.`,
       fix: `Check .fqe.yml: is "${name}".when set to a pattern that matches your changed files? If "${name}" should run on every PR, set "${name}".always_run: true.`,
-      repro_command: `fqe run --full ${baseCmd} --output ./out/ --verbose`,
+      repro_command: repro,
     };
   }
 
@@ -46,7 +53,7 @@ function explainReason(reason, ctx = {}) {
       code: 'RUNNER_EXIT_NONZERO',
       plain_english: `The "${name}" runner exited with code ${exit}, which fqe treats as a failure. The runner's own logs (uploaded as a workflow artifact) explain why.`,
       fix: `Download the qa-receipt artifact from this PR's workflow run to see the runner's stderr. Then reproduce locally with the repro command below.`,
-      repro_command: `fqe run --full ${baseCmd} --output ./out/ && cat ./out/runner-${name}.log`,
+      repro_command: repro,
     };
   }
 
@@ -56,9 +63,15 @@ function explainReason(reason, ctx = {}) {
     const [, name, badValue] = m;
     return {
       code: 'RUNNER_EXIT_MALFORMED',
-      plain_english: `The "${name}" runner returned an unexpected exit_code: \`${badValue}\` (fqe expects a JSON number). This is usually an orchestration bug — your runner's stdout JSON probably has a typo or wrong type for exit_code.`,
-      fix: `Check your runner's stdout: the JSON line must look like {"runner":"${name}","exit_code":<integer>,...}. If you can't fix it immediately, the fqe/bypass-72h label is an option (requires repo write permission).`,
-      repro_command: `fqe run --full ${baseCmd} --output ./out/ --verbose && cat ./out/runner-${name}.log`,
+      plain_english:
+        `The "${name}" runner produced no usable exit code (got \`${badValue}\`). The most common cause by far is that the process never started, ` +
+        `so there was no exit code to report. On Windows that happens with \`command: "npm"\` (and yarn, pnpm, npx), because those are \`.cmd\` shims and fqe spawns without a shell. ` +
+        `Check the runner's duration in the receipt: a few milliseconds for a suite that takes seconds means nothing ran. It can also mean the process was killed by a signal or timed out.`,
+      fix:
+        `On Windows, use \`command: "cmd"\` with \`args: ["/c", "npm", "test"]\` (or point at the binary directly). On Linux/macOS, confirm the command exists on PATH in the runner environment. ` +
+        `If your runner emits the optional stdout JSON line, check it parses: {"runner":"${name}","exit_code":<integer>,...}. ` +
+        `To bypass in an emergency, an allowlisted maintainer posts \`/fqe-bypass <head-sha> <24h|48h|72h>\` as a PR comment.`,
+      repro_command: repro,
     };
   }
 
@@ -118,7 +131,7 @@ function explainReason(reason, ctx = {}) {
       `fqe produced a failure reason that doesn't match any known pattern: \`${reason}\`. ` +
       `This usually means a newer version of fqe is emitting reason text that this explainer hasn't been updated for, or the orchestrator passed a malformed reason. The verdict itself (PASS/FLAG/FAIL) is still trustworthy — only the friendly explanation is missing.`,
     fix: `File an issue at github.com/booyajones/fqe with the run-id from this PR. Pending fix, check the QA-RESULT.md artifact on this workflow run for full context.`,
-    repro_command: `fqe run --full ${baseCmd} --output ./out/ --verbose && cat ./out/QA-RESULT.md`,
+    repro_command: `${repro} && cat ./out/QA-RESULT.md`,
   };
 }
 
