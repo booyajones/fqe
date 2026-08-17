@@ -157,7 +157,7 @@ jobs:
           # and writes QA-RESULT.yml + QA-RESULT.md. Implementation of `fqe run`
           # itself is a Phase 1.2 deliverable; the components it composes
           # (verdict.js, receipt.js, wilson.js, bypass_tally.js) all exist.
-          fqe run --full \
+          fqe run \
             --commit "$FQE_COMMIT_SHA" \
             --output out/ || true
           # Parse verdict from the machine-readable YAML, not the markdown.

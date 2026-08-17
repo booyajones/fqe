@@ -125,7 +125,20 @@ function computeVerdict(input) {
     }
     if (r.required === true && r.ran !== true) {
       hasFail = true;
-      reasons.push(`required runner "${r.name}" did not run`);
+      // Distinguish "never fired" from "could not start". Both block, but they
+      // send an engineer to completely different places: the first to their
+      // `when` globs, the second to their `command`. Before this, a Windows
+      // spawn failure surfaced as the generic message and the explainer then
+      // guessed at malformed runner JSON, which is not the problem and wastes
+      // the reader's time at the exact moment they are blocked.
+      if (r.spawn_failed === true) {
+        reasons.push(
+          `required runner "${r.name}" FAILED TO START (${r.spawn_error || 'spawn failed'}); ` +
+          `the process never ran, so there is no exit code`
+        );
+      } else {
+        reasons.push(`required runner "${r.name}" did not run`);
+      }
     }
   }
 
@@ -494,6 +507,28 @@ function computeVerdict(input) {
     if (!hasRequiredRunner && !hasRequiredClass && !hasMoneyReq) {
       hasFail = true;
       reasons.push('require_nonempty_gate is set but this gate blocks nothing: no required runner, no required test class, and no money-idempotency requirement. A green here would protect nothing.');
+    }
+  }
+
+  // Pass 13: the diff could not be resolved. A run that scoped itself to zero
+  // files tested nothing, and until now that was indistinguishable from a clean
+  // run. The classic trigger is a documented `--base origin/main` against a
+  // repo whose default branch is master: git errors, the error is swallowed,
+  // changed_file_count is 0, and every `when`-gated runner sits out. FLAG by
+  // default so it is always visible in the receipt; FAIL under the same strict
+  // switch that governs the other scope guards.
+  if (input.diff_indeterminate === true) {
+    const base = input.diff_base ? ` (base: ${input.diff_base})` : '';
+    const msg =
+      `the diff could not be resolved${base}, so fqe evaluated ZERO changed files. ` +
+      `Any runner gated on "when" was skipped. Check that the base ref exists in this ` +
+      `checkout (a repo whose default branch is "master" will not resolve "origin/main")`;
+    if (input.require_money_policy_when_detected === true) {
+      hasFail = true;
+      reasons.push(`BLOCKED (indeterminate diff): ${msg}`);
+    } else {
+      hasFlag = true;
+      reasons.push(msg);
     }
   }
 

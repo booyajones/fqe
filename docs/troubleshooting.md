@@ -111,7 +111,7 @@ Two paths:
 
 ## "It's not detecting my repo correctly"
 
-`fqe init --force` re-runs the smart-detect against the current state of the repo. If a marker you expect isn't being detected, open an issue with the marker name and what your repo looks like.
+`fqe init --force` rewrites the scaffold files. It does NOT inspect your repo to guess runners: `.fqe.yml` is a static template with commented examples you adapt by hand.
 
 Currently detected markers:
 - `package.json` → Node project

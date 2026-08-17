@@ -21,7 +21,7 @@ This creates:
 
 Commit and push these on a branch, open a PR, watch the workflow fire.
 
-## Step 2: See what fqe detected
+## Step 2: Configure your runners
 
 ```bash
 npx --yes -p github:booyajones/fqe#fqe-v0.18.18 fqe explain
