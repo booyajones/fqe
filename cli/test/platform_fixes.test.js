@@ -292,13 +292,50 @@ test('require_resolvable_diff escalates an indeterminate diff to FAIL when true,
   assert.strictEqual(loose.verdict, 'FLAG', 'switch OFF must flag, not block:\n' + loose.reasons.join('\n'));
 });
 
-test('the orchestrator actually forwards require_resolvable_diff (the wiring, not just the switch)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'orchestrator.js'), 'utf8');
-  assert.match(
-    src,
-    /require_resolvable_diff:\s*config\.require_resolvable_diff\s*===\s*true/,
-    'verdict.js reads input.require_resolvable_diff; if the orchestrator never sets it from config, it is undefined on every real run'
-  );
+test('require_resolvable_diff blocks END TO END through `fqe run`, not just through computeVerdict', () => {
+  // The source-grep version of this test passed while I had not actually proved
+  // the path: my first manual check used a single-commit repo, where the guard is
+  // deliberately suppressed, and reported PASS. Logic tests and a grep for the
+  // forwarding line both pass whether or not an adopter can reach the behaviour.
+  // Only driving the real binary against a real .fqe.yml proves the wiring.
+  const dir = tmpRepo();
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'x\n');
+  execFileSync('git', ['add', 'f.txt'], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', 'two'], {
+    cwd: dir,
+    env: { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' },
+  });
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  const runner = [
+    '  unit:',
+    '    command: "node"',
+    '    args: ["-e", "console.log(1)"]',
+    '    always_run: true',
+    '    required: true',
+    '',
+  ].join('\n');
+
+  const run = (yml, out) => {
+    fs.writeFileSync(path.join(dir, '.fqe.yml'), yml);
+    return spawnSync(
+      process.execPath,
+      [BIN, 'run', '--commit', sha, '--base', 'origin/does-not-exist', '--output', path.join(dir, out), '--repo-dir', dir],
+      { encoding: 'utf8', cwd: dir, timeout: 90000 }
+    );
+  };
+
+  const strict = run(`require_resolvable_diff: true
+runners:
+${runner}`, 'out-strict');
+  assert.strictEqual(strict.status, 2,
+    `switch ON must BLOCK an unresolvable diff (exit 2):
+${strict.stdout}${strict.stderr}`);
+
+  const loose = run(`runners:
+${runner}`, 'out-loose');
+  assert.strictEqual(loose.status, 3,
+    `switch ABSENT must FLAG, not block (exit 3):
+${loose.stdout}${loose.stderr}`);
 });
 
 test('the payments scaffold sets require_resolvable_diff so money repos keep blocking', () => {
