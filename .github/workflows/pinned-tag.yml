@@ -1,0 +1,46 @@
+# Every documented install pins fqe-v<package.json version>. If that tag does not
+# exist, every install and both generated workflows fail their `git fetch`, and
+# fqe cannot be installed at all. The doc guard cannot see this: it proves pins
+# MATCH package.json, never that the tag RESOLVES.
+#
+# TRIGGERS ARE THE WHOLE DESIGN. This first lived in tests.yml on `push: main`,
+# where it failed on the release merge every single time, because the tag is
+# necessarily created after the merge. A check that is guaranteed red for a
+# window on every release is a check people learn to ignore, which is worse than
+# not having it. So it runs where the answer can actually be true:
+#   - on the tag push itself, proving the tag matches the version it claims
+#   - daily, catching a release that was merged and never tagged
+#   - on demand
+name: pinned tag resolves
+
+on:
+  push:
+    tags: ['fqe-v*']
+  schedule:
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+      - name: the version every doc pins must be a real tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="$(node -p "require('./package.json').version")"
+          tag="fqe-v$v"
+          echo "main declares $v, so every documented install pins $tag"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "$tag exists"
+          else
+            echo "::error::$tag does not exist. Every documented install pins it, so an adopter gets a failed git fetch and cannot install fqe. Tag main."
+            exit 1
+          fi

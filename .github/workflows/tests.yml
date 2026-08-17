@@ -145,35 +145,6 @@ jobs:
           npx --yes -p "$TARBALL" fqe validate
           echo "init + validate both work from a clean npx install"
 
-  # The pinned tag must actually exist, checked where it CAN exist.
-  #
-  # Every install pin references fqe-v<package.json version>, but that tag is
-  # only created after merge. On a PR the reference is legitimately forward, so
-  # checking there would fail every release PR. On main it is a hard promise:
-  # if the tag is missing, every documented install and both generated workflows
-  # fail their `git fetch`, and fqe cannot be installed at all. The doc guard
-  # cannot see this, because it only proves pins MATCH package.json, never that
-  # the tag RESOLVES.
-  pinned-tag-exists:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    name: pinned tag resolves
-    steps:
-      - uses: actions/checkout@v5
-      - name: the version every doc pins must be a real tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          v="$(node -p "require('./package.json').version")"
-          tag="fqe-v$v"
-          echo "checking $tag"
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-            echo "$tag exists"
-          else
-            echo "::error::$tag does not exist. Every documented install pins it, so adopters get a failed git fetch. Tag this commit."
-            exit 1
-          fi
-
   # This job exists to keep the branch-protection contract stable.
   #
   # `test` is the context required by branch protection on main. Turning the old
