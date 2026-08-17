@@ -354,11 +354,18 @@ function computeRequiredClasses(policy, files, diffIndeterminate = false) {
 /**
  * Does this repo have enough history that a diff SHOULD be computable?
  *
- * Distinguishes "the diff failed because there is nothing to diff" (a fresh
- * repo with a single commit: legitimate, silent) from "the diff failed even
- * though history exists" (a bad base ref: a real signal). Keying the guard on
- * this rather than on whether `--base` was passed is what makes it work on the
- * generated workflow, which passes no `--base`.
+ * Distinguishes "the diff failed because there is nothing to diff" (a genuinely
+ * fresh repo with a single commit: legitimate, silent) from "the diff failed
+ * even though history exists" (a real signal).
+ *
+ * IMPORTANT: this is only ONE arm of the qualifier, and it must never be the
+ * only one. It cannot tell a fresh repo from a SHALLOW CLONE: `actions/checkout`
+ * defaults to fetch-depth 1, and `git clone --depth 1` of a 500-commit repo
+ * reports exactly 1 commit here. Using this alone silently disarmed the guard on
+ * every shallow checkout - including under require_resolvable_diff on a money
+ * repo - which is a receipt reporting clean when zero files were evaluated. See
+ * the call site: an explicitly-named base that failed to resolve raises
+ * regardless of what this returns.
  *
  * Fails SAFE toward silence: if we cannot even count commits, do not raise.
  */
@@ -1008,7 +1015,15 @@ function run(opts) {
     // swallowing an unresolvable diff, which is the whole defect. Key on the
     // repo instead of on the flag: a repo with more than one commit CAN produce a
     // diff, so failing to is a real signal; a first-commit repo genuinely cannot.
-    diff_indeterminate: !diff.ok && repoHasHistory(opts.repoDir),
+    // The UNION of both qualifiers, deliberately. Either alone has a hole:
+    //   - `!!opts.baseSha` alone misses a repo with history and no base given.
+    //   - `repoHasHistory()` alone is defeated by a shallow clone, which is the
+    //     DEFAULT on GitHub Actions, so an explicitly-named base that failed to
+    //     resolve was swallowed and the run reported PASS over zero files.
+    // A base that was named and did not resolve is an unambiguous error at any
+    // clone depth, so it raises on its own. The history check only has to cover
+    // the no-base case, where its fresh-repo silence is correct.
+    diff_indeterminate: !diff.ok && (!!opts.baseSha || repoHasHistory(opts.repoDir)),
     diff_base: opts.baseSha || null,
   };
   let verdictOut;

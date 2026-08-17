@@ -461,3 +461,72 @@ test('the shipped workflow TEMPLATE has the same clean path block', () => {
   }
   assert.ok(entries.includes('out/runner-*.log'));
 });
+
+/**
+ * A SHALLOW CLONE must not disarm the indeterminate-diff guard.
+ *
+ * `repoHasHistory()` counts commits reachable from HEAD, and a shallow clone
+ * reports exactly 1 no matter how much history the repo really has.
+ * `actions/checkout` defaults to fetch-depth 1, so keying the guard on that
+ * alone meant an explicitly-named base that failed to resolve was swallowed and
+ * the run reported PASS over zero evaluated files - under
+ * `require_resolvable_diff: true`, on the money path.
+ *
+ * Every existing test for this feature fed `diff_indeterminate` straight into
+ * computeVerdict(), so all of them passed while the orchestrator wiring that
+ * DECIDES it was broken. These drive the real binary against a real shallow
+ * clone.
+ */
+function shallowClone() {
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-src-'));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  execFileSync('git', ['init', '-q', '.'], { cwd: src });
+  for (let i = 0; i < 4; i++) {
+    fs.appendFileSync(path.join(src, 'f.txt'), `line${i}\n`);
+    execFileSync('git', ['add', 'f.txt'], { cwd: src });
+    execFileSync('git', ['commit', '-q', '-m', `c${i}`], { cwd: src, env });
+  }
+  const dst = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-shallow-')) + '-c';
+  const srcUrl = 'file://' + src.split(path.sep).join('/');
+  execFileSync('git', ['clone', '-q', '--depth', '1', srcUrl, dst], { env });
+  return dst;
+}
+
+const RUNNER_BLOCK = [
+  '  unit:',
+  '    command: "node"',
+  '    args: ["-e", "console.log(1)"]',
+  '    always_run: true',
+  '    required: true',
+  '',
+].join('\n');
+
+test('a SHALLOW clone does not disarm the diff guard (an unresolvable base still blocks)', () => {
+  const dir = shallowClone();
+  const depth = execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  assert.strictEqual(depth, '1', 'precondition: a shallow clone must look like a single-commit repo');
+
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), `require_resolvable_diff: true\nrunners:\n${RUNNER_BLOCK}`);
+
+  const r = spawnSync(
+    process.execPath,
+    [BIN, 'run', '--commit', sha, '--base', 'origin/does-not-exist', '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 }
+  );
+  assert.strictEqual(r.status, 2,
+    `a named base that did not resolve must BLOCK even on a shallow clone; a green here is a receipt reporting clean over zero evaluated files:\n${r.stdout}${r.stderr}`);
+});
+
+test('a genuinely fresh single-commit repo with no base still stays silent (no cry wolf)', () => {
+  const dir = tmpRepo();
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), `runners:\n${RUNNER_BLOCK}`);
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  const r = spawnSync(
+    process.execPath,
+    [BIN, 'run', '--commit', sha, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 }
+  );
+  assert.strictEqual(r.status, 0,
+    `a newcomer's first commit with no --base must not be flagged:\n${r.stdout}${r.stderr}`);
+});
