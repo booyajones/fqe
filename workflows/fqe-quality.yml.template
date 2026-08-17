@@ -177,6 +177,10 @@ jobs:
           path: |
             out/QA-RESULT.yml
             out/QA-RESULT.md
+            # The runner logs the receipt's evidence_paths names and the
+            # explainer tells you to download. Without these the receipt
+            # points at files no reader can reach.
+            out/runner-*.log
           retention-days: 90
 
       - name: Determine fqe/pass state from verdict

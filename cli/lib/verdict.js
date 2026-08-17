@@ -165,6 +165,16 @@ function computeVerdict(input) {
         } else if (quarantineExpired) {
           hasFail = true;
           reasons.push(`runner "${r.name}" QUARANTINE EXPIRED and it produced no numeric exit_code; the quarantine no longer shields it (fix it or refresh quarantined_since)`);
+        } else if (r.timed_out === true) {
+          // A timeout DID run. It blocks either way, but naming it sends the
+          // engineer to their suite's duration or timeout_ms, not to a hunt for
+          // malformed runner JSON that was never the problem.
+          hasFail = true;
+          const ms = typeof r.timeout_ms === 'number' ? ` after ${r.timeout_ms}ms` : '';
+          reasons.push(
+            `runner "${r.name}" TIMED OUT${ms} and was killed, so it produced no exit code; ` +
+            `the process did run (raise timeout_ms for this runner, or make the suite faster)`
+          );
         } else {
           hasFail = true;
           reasons.push(`runner "${r.name}" ran but exit_code is not a number (got ${JSON.stringify(r.exit_code)})`);
@@ -515,15 +525,20 @@ function computeVerdict(input) {
   // run. The classic trigger is a documented `--base origin/main` against a
   // repo whose default branch is master: git errors, the error is swallowed,
   // changed_file_count is 0, and every `when`-gated runner sits out. FLAG by
-  // default so it is always visible in the receipt; FAIL under the same strict
-  // switch that governs the other scope guards.
+  // default so it is always visible in the receipt; FAIL under its OWN switch.
+  //
+  // This used to escalate on `require_money_policy_when_detected`, which governs
+  // the money guards and has nothing to do with whether a diff resolved. The
+  // consequence was concrete: a non-payments repo that reasonably sets that flag
+  // false could never make an unresolvable diff blocking, and a payments repo got
+  // the behaviour whether or not it wanted it. Scope switches belong to scope.
   if (input.diff_indeterminate === true) {
     const base = input.diff_base ? ` (base: ${input.diff_base})` : '';
     const msg =
       `the diff could not be resolved${base}, so fqe evaluated ZERO changed files. ` +
       `Any runner gated on "when" was skipped. Check that the base ref exists in this ` +
       `checkout (a repo whose default branch is "master" will not resolve "origin/main")`;
-    if (input.require_money_policy_when_detected === true) {
+    if (input.require_resolvable_diff === true) {
       hasFail = true;
       reasons.push(`BLOCKED (indeterminate diff): ${msg}`);
     } else {

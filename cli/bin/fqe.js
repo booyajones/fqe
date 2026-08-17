@@ -153,7 +153,7 @@ const SUBCOMMANDS = {
   },
 
   run(args) {
-    // fqe run [--full|--quick] --commit <sha> --output <dir> [--config <.fqe.yml>] [--base <sha>]
+    // fqe run --commit <sha> --output <dir> [--config <.fqe.yml>] [--base <sha>]
     // Composes verified pieces. Returns verdict + writes QA-RESULT.{yml,md}.
     const opts = parseFlags(args);
     requireFlags(opts, ['commit', 'output']);
@@ -1019,25 +1019,29 @@ const SUBCOMMANDS = {
  * gate, and a misconfigured gate must never silently pass.
  */
 const KNOWN_FLAGS = {
-  run: ['commit', 'output', 'base', 'config', 'pr', 'repo-dir'],
-  init: ['dir', 'force', 'actor', 'with-mutation', 'with-qodo', 'payments'],
   explain: ['dir', 'json'],
-  validate: ['config'],
+  init: ['actor', 'dir', 'force', 'payments', 'with-mutation', 'with-qodo'],
   verdict: [],
-  'oracle-guard': ['changed', 'base', 'head', 'include-tests', 'block', 'repo-dir'],
-  'bypass-check': ['comments', 'head', 'allowed', 'allowlist-file', 'now'],
-  uat: ['spec', 'results', 'strict', 'json'],
-  golden: ['manifest', 'dir', 'json'],
-  'qa-report': ['receipt', 'json', 'gate'],
+  run: ['base', 'commit', 'config', 'output', 'pr', 'repo-dir'],
+  validate: ['config', 'dir'],
+  discover: ['config', 'dir', 'strict'],
+  baseline: ['count', 'spec'],
+  'oracle-guard': ['base', 'block', 'changed', 'head', 'include-tests', 'repo-dir'],
+  'bypass-check': ['allowed', 'allowlist-file', 'comments', 'head', 'now'],
+  uat: ['json', 'results', 'spec', 'strict'],
+  golden: ['dir', 'json', 'manifest', 'repo-dir'],
+  'qa-report': ['gate', 'json', 'receipt'],
+  receipt: ['actor', 'allowlist-version', 'commit', 'events-url', 'output', 'pr', 'requester-source', 'run-id'],
+  scorecard: ['dir', 'format'],
+  'bypass-tally': ['actor', 'commit', 'format', 'pr', 'state-dir', 'window-days'],
+  status: ['check', 'commit', 'description', 'dry-run', 'output-text', 'repo', 'state'],
+  'coverage-ratchet': ['baseline', 'bump', 'patch', 'patch-threshold', 'report'],
+  'mutation-gate': ['changed', 'killed', 'min-mutants', 'report', 'surviving', 'threshold'],
   'spec-mutate': ['report', 'threshold'],
   trace: ['matrix'],
   reconcile: ['ledger'],
-  scorecard: ['dir', 'json'],
-  status: ['check', 'commit', 'state', 'description', 'output-text', 'repo', 'dry-run'],
-  receipt: ['commit', 'pr', 'actor', 'requester-source', 'events-url', 'allowlist-version', 'output'],
-  'bypass-tally': ['state-dir', 'pr', 'commit', 'actor', 'window-days', 'format'],
-  'coverage-ratchet': ['report', 'baseline', 'patch-threshold'],
-  'mutation-gate': ['report', 'threshold', 'changed'],
+  wilson: [],
+  'min-n': [],
 };
 
 function assertKnownFlags(sub, args) {
@@ -1125,4 +1129,8 @@ function main() {
   }
 }
 
-main();
+// Run when invoked as a program; stay inert when required, so tests can assert
+// against the real KNOWN_FLAGS map instead of a copy that drifts from it.
+if (require.main === module) main();
+
+module.exports = { KNOWN_FLAGS };

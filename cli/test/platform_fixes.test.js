@@ -153,3 +153,73 @@ test('runner output is written to disk and referenced by the receipt', () => {
   const yml = fs.readFileSync(path.join(outDir, 'QA-RESULT.yml'), 'utf8');
   assert.match(yml, /runner-talky\.log/, 'the receipt must reference the evidence it promises');
 });
+
+/**
+ * DEFECT 1b (the regression the fix for 1 introduced, shipped in v0.18.19):
+ * a runner that TIMES OUT genuinely ran.
+ *
+ * spawnSync sets `.error` when the child "failed OR timed out", so keying
+ * neverStarted off `.error` reported a suite that ran for its full timeout as
+ * never having started. Every runner has a timeout, so this was reachable on
+ * any slow suite: the receipt would tell an engineer their `command` is wrong
+ * when the real answer is that their tests are slow.
+ *
+ * A timeout must still BLOCK, and must say so for the true reason.
+ */
+test('a runner that TIMES OUT reports ran:true and blocks for the timeout, not a phantom spawn failure', () => {
+  const dir = tmpRepo();
+  const outDir = path.join(dir, 'out');
+  const node = JSON.stringify(process.execPath);
+  fs.writeFileSync(
+    path.join(dir, '.fqe.yml'),
+    'runners:\n  slow:\n' +
+      `    command: ${node}\n` +
+      '    args: ["-e", "setTimeout(function(){}, 60000)"]\n' +
+      '    timeout_ms: 1500\n' +
+      '    always_run: true\n' +
+      '    required: true\n'
+  );
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  const r = spawnSync(process.execPath, [BIN, 'run', '--commit', sha, '--output', outDir, '--repo-dir', dir], {
+    encoding: 'utf8',
+    cwd: dir,
+    timeout: 90000,
+  });
+
+  const yml = fs.readFileSync(path.join(outDir, 'QA-RESULT.yml'), 'utf8');
+
+  // It ran. This is the whole point.
+  assert.doesNotMatch(
+    yml,
+    /ran:\s*false/,
+    'a runner that executed for its full timeout MUST NOT be recorded as never started:\n' + yml.slice(0, 900)
+  );
+  assert.doesNotMatch(
+    yml,
+    /FAILED TO START/,
+    'a timeout is not a spawn failure:\n' + yml.slice(0, 900)
+  );
+
+  // It still blocks, and for the honest reason.
+  assert.match(yml, /verdict:\s*FAIL/, 'a timed-out required runner must still block:\n' + yml.slice(0, 900));
+  assert.match(yml, /TIMED OUT/, 'the receipt must name the timeout as the cause:\n' + yml.slice(0, 900));
+  assert.strictEqual(r.status, 2, 'exit code must be 2 (FAIL/block)');
+});
+
+/**
+ * The discriminator itself, at the unit level: presence of `.error` must never
+ * be what decides whether a process ran.
+ */
+test('spawnSync sets .error on timeout, so .error alone can never mean "never started"', () => {
+  const timedOut = spawnSync(process.execPath, ['-e', 'setTimeout(function(){}, 30000)'], { timeout: 400 });
+  const missing = spawnSync('definitely-not-a-real-binary-xyz', []);
+
+  // Both populate `.error` - which is exactly why keying on it was wrong.
+  assert.ok(timedOut.error, 'precondition: node sets error on timeout');
+  assert.ok(missing.error, 'precondition: node sets error on ENOENT');
+
+  // The real discriminator: evidence of execution.
+  assert.strictEqual(timedOut.error.code, 'ETIMEDOUT');
+  assert.ok(timedOut.signal, 'a timed-out child was killed by a signal, proving it ran');
+  assert.strictEqual(missing.signal, null, 'a child that never started has no signal');
+});

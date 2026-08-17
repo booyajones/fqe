@@ -342,6 +342,10 @@ jobs:
           path: |
             out/QA-RESULT.yml
             out/QA-RESULT.md
+            # The runner logs the receipt's evidence_paths names and the
+            # explainer tells you to download. Without these the receipt
+            # points at files no reader can reach.
+            out/runner-*.log
           # 365 days for SOC2/PCI evidence retention (1-year minimum). The repo's
           # max artifact-retention setting must allow this; the Check Run output
           # also persists with the commit. For 7-year SOX, mirror to object storage.

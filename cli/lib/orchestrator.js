@@ -351,6 +351,26 @@ function computeRequiredClasses(policy, files, diffIndeterminate = false) {
  * payments change pass with no money test). The caller fails closed on !ok.
  * @returns {{ files: string[], ok: boolean }}
  */
+/**
+ * Does this repo have enough history that a diff SHOULD be computable?
+ *
+ * Distinguishes "the diff failed because there is nothing to diff" (a fresh
+ * repo with a single commit: legitimate, silent) from "the diff failed even
+ * though history exists" (a bad base ref: a real signal). Keying the guard on
+ * this rather than on whether `--base` was passed is what makes it work on the
+ * generated workflow, which passes no `--base`.
+ *
+ * Fails SAFE toward silence: if we cannot even count commits, do not raise.
+ */
+function repoHasHistory(repoDir) {
+  const r = spawnSync('git', ['rev-list', '--count', '-n', '2', 'HEAD'], {
+    cwd: repoDir || process.cwd(),
+    encoding: 'utf8',
+  });
+  if (r.status !== 0) return false;
+  return parseInt(String(r.stdout).trim(), 10) > 1;
+}
+
 function changedFiles({ baseSha, headSha, repoDir }) {
   if (process.env.FQE_CHANGED_FILES !== undefined) {
     // FQE_CHANGED_FILES is a TRUSTED CI override: the workflow computes the
@@ -586,8 +606,21 @@ function runOne(name, cfg, ctx) {
   // given a chance, so it reports ran:false, which Pass 1 of the verdict already
   // treats as a hard FAIL for a required runner. Same blocking outcome, honest
   // reason, and the reason string now names the real cause.
+  // A TIMEOUT IS NOT A SPAWN FAILURE. Node sets `error` on spawnSync when the
+  // child "failed OR timed out" (ETIMEDOUT, status:null, signal:'SIGTERM'), so
+  // keying neverStarted off `error` alone reports a suite that genuinely ran for
+  // five minutes as never having started — reintroducing the exact lie this block
+  // exists to remove. Every runner carries a timeout (DEFAULT_TIMEOUT_MS), so
+  // that misclassification is reachable on any slow suite, not a corner case.
+  //
+  // So: decide on positive EVIDENCE OF EXECUTION, never on the presence of an
+  // error object. A killing signal, a real exit code, any output, or a timeout
+  // all prove the process ran. Only the total absence of all four is "never
+  // started", which is what ENOENT/EACCES/EPERM actually look like.
   const spawnError = r && r.error ? r.error : null;
-  const neverStarted = !!spawnError || (finalCode === null && !r.signal && !(r.stdout || r.stderr));
+  const timedOut = !!spawnError && spawnError.code === 'ETIMEDOUT';
+  const ranEvidence = timedOut || !!r.signal || finalCode !== null || !!(r.stdout || r.stderr);
+  const neverStarted = !ranEvidence;
   const spawnHint = spawnError && spawnError.code === 'ENOENT' && process.platform === 'win32'
     ? ' On Windows, npm/npx/yarn/pnpm are .cmd shims and cannot be spawned directly:'
       + ' use command: "cmd" with args: ["/c", "npm", "test"].'
@@ -610,6 +643,11 @@ function runOne(name, cfg, ctx) {
     required: cfg.required === true,
     class: cfg.class,
     ran: !neverStarted,
+    // A timeout still BLOCKS (Pass 2 fails closed on a non-numeric exit_code),
+    // but it must block for the true reason. Carry it so the receipt says
+    // "timed out after Nms" instead of "produced no numeric exit_code".
+    timed_out: timedOut || undefined,
+    timeout_ms: timedOut ? (cfg.timeout_ms || DEFAULT_TIMEOUT_MS) : undefined,
     spawn_failed: neverStarted || undefined,
     spawn_error: neverStarted
       ? ((spawnError ? (spawnError.code || spawnError.message) : 'process produced no exit code, no signal and no output')
@@ -665,6 +703,7 @@ function computeContentHash(files, repoDir) {
  */
 function writeRunnerLogs(results, outputDir) {
   const paths = [];
+  const usedStems = new Set();
   if (!outputDir) return paths;
   for (const r of results || []) {
     const body = [
@@ -683,7 +722,20 @@ function writeRunnerLogs(results, outputDir) {
     // Skip only runners that produced nothing at all AND started fine; a spawn
     // failure has no output but is exactly the case worth writing down.
     if (!r.stdout && !r.stderr && r.ran !== false) continue;
-    const file = path.join(outputDir, `runner-${String(r.name).replace(/[^A-Za-z0-9._-]/g, '_')}.log`);
+    // The sanitizer is NOT injective: `unit/fast` and `unit_fast` both collapse
+    // to `runner-unit_fast.log`, so the second write silently overwrote the
+    // first and evidence_paths listed the same path twice, showing one runner's
+    // output under another's name. .fqe.yml keys are free-form, so this is
+    // reachable. In a file whose entire purpose is evidence, a collision is a
+    // correctness bug, not a cosmetic one. Disambiguate on collision.
+    let stem = `runner-${String(r.name).replace(/[^A-Za-z0-9._-]/g, '_')}`;
+    if (usedStems.has(stem)) {
+      let n = 2;
+      while (usedStems.has(`${stem}-${n}`)) n++;
+      stem = `${stem}-${n}`;
+    }
+    usedStems.add(stem);
+    const file = path.join(outputDir, `${stem}.log`);
     try {
       fs.mkdirSync(outputDir, { recursive: true });
       fs.writeFileSync(file, body, 'utf8');
@@ -917,6 +969,8 @@ function run(opts) {
         // This mapping is where the detail was being dropped.
         spawn_failed: r.spawn_failed === true || undefined,
         spawn_error: r.spawn_error,
+        timed_out: r.timed_out === true || undefined,
+        timeout_ms: r.timeout_ms,
       };
     }),
     adversarial_stats: adversarialStats,
@@ -940,12 +994,17 @@ function run(opts) {
     // git errors, the diff comes back empty, no `when`-gated runner fires, and
     // the gate returns PASS over a typo. Surfacing it here means a run that
     // scoped itself to nothing can never look like a clean run.
-    // Only when a base was EXPLICITLY given and did not resolve. Without this
-    // qualifier every legitimate first-run flags: a fresh repo with one commit
-    // has no HEAD~1, the default diff fails, and the gate would cry wolf on the
-    // most common newcomer path. The dangerous case is narrower and is exactly
-    // this: you named a base, and it was not there.
-    diff_indeterminate: !diff.ok && !!opts.baseSha,
+    // Fires when the diff could not be resolved AND the repo actually has a
+    // history to diff against.
+    //
+    // The first version qualified on `!!opts.baseSha`, to avoid crying wolf on a
+    // fresh single-commit repo. That disarmed it exactly where adopters run it:
+    // the workflow `fqe init` generates calls `fqe run --commit ... --output out/`
+    // with NO `--base`, so opts.baseSha was undefined and the generated gate kept
+    // swallowing an unresolvable diff, which is the whole defect. Key on the
+    // repo instead of on the flag: a repo with more than one commit CAN produce a
+    // diff, so failing to is a real signal; a first-commit repo genuinely cannot.
+    diff_indeterminate: !diff.ok && repoHasHistory(opts.repoDir),
     diff_base: opts.baseSha || null,
   };
   let verdictOut;

@@ -139,7 +139,7 @@ Payments QA techniques (the bet-the-company tests):
 
 ```bash
 # Same verdict CI computes, run on your laptop:
-fqe run --full --base origin/main --output ./out/
+fqe run --base origin/main --output ./out/
 
 # See what fqe will check on the current diff:
 fqe explain
