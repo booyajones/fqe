@@ -208,7 +208,7 @@ jobs:
           # it to a SHA (which SECURITY.md and getting-started.md both recommend
           # for production) failed with "Remote branch <sha> not found in upstream
           # origin", so the documented hardening path broke the gate outright.
-          FQE_REF="fqe-v0.18.18"
+          FQE_REF="fqe-v0.18.19"
           # A FRESH directory per job, never a fixed path under /tmp.
           #
           # This step fetches code and then executes it, so where it stages that
@@ -461,7 +461,7 @@ jobs:
       - name: Install fqe CLI (ref-pinned)
         run: |
           set -euo pipefail
-          FQE_REF="fqe-v0.18.18"
+          FQE_REF="fqe-v0.18.19"
           FQE_SRC="$(mktemp -d "\${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
           git -C "$FQE_SRC" init -q .
           git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"

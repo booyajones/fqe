@@ -571,6 +571,28 @@ function runOne(name, cfg, ctx) {
   const finalCode = typeof r.status === 'number' ? r.status : null;
   const flaky = attempts.length > 1 && attempts[0] !== 0 && finalCode === 0;
 
+  // DID THE PROCESS ACTUALLY START?
+  //
+  // `ran: true` used to be hardcoded below, so a command that never launched was
+  // recorded in a tamper-evident receipt as having run. The reproducible case is
+  // `command: "npm"` on Windows: npm is a .cmd shim and spawnSync without a shell
+  // cannot execute it, so spawnSync returns `error: ENOENT` with `status: null`.
+  // fqe then reported ran:true, exit_code:null, and a 7ms duration for a suite
+  // that takes 74s, blocked the merge, and told the engineer their runner's JSON
+  // was malformed. The receipt asserting a process ran when it never started is
+  // the single worst thing this tool can do, because the receipt IS the product.
+  //
+  // A spawn failure is NOT a test failure. It is the runner never having been
+  // given a chance, so it reports ran:false, which Pass 1 of the verdict already
+  // treats as a hard FAIL for a required runner. Same blocking outcome, honest
+  // reason, and the reason string now names the real cause.
+  const spawnError = r && r.error ? r.error : null;
+  const neverStarted = !!spawnError || (finalCode === null && !r.signal && !(r.stdout || r.stderr));
+  const spawnHint = spawnError && spawnError.code === 'ENOENT' && process.platform === 'win32'
+    ? ' On Windows, npm/npx/yarn/pnpm are .cmd shims and cannot be spawned directly:'
+      + ' use command: "cmd" with args: ["/c", "npm", "test"].'
+    : '';
+
   let parsed = null;
   if (r.stdout) {
     for (const line of r.stdout.split('\n')) {
@@ -587,7 +609,12 @@ function runOne(name, cfg, ctx) {
     name,
     required: cfg.required === true,
     class: cfg.class,
-    ran: true,
+    ran: !neverStarted,
+    spawn_failed: neverStarted || undefined,
+    spawn_error: neverStarted
+      ? ((spawnError ? (spawnError.code || spawnError.message) : 'process produced no exit code, no signal and no output')
+         + spawnHint)
+      : undefined,
     exit_code: finalCode,
     attempts,
     flaky,
@@ -623,6 +650,47 @@ function computeContentHash(files, repoDir) {
     h.update('\0');
   }
   return `sha256:${h.digest('hex')}`;
+}
+
+/**
+ * Persist each runner's stdout/stderr next to the receipt and return the paths.
+ *
+ * The receipt's whole claim is that it records what happened. Without this it
+ * recorded only that something failed, while the docs promised stderr and the
+ * repro command told you to `cat ./out/runner-<name>.log`, a file nothing wrote.
+ * Naming matches that documented path so the instruction is finally true.
+ *
+ * Best-effort by design: a receipt that cannot be written because a log write
+ * failed would be a worse outcome than a receipt with fewer evidence paths.
+ */
+function writeRunnerLogs(results, outputDir) {
+  const paths = [];
+  if (!outputDir) return paths;
+  for (const r of results || []) {
+    const body = [
+      `runner: ${r.name}`,
+      `ran: ${r.ran}`,
+      `exit_code: ${r.exit_code === undefined ? 'undefined' : JSON.stringify(r.exit_code)}`,
+      r.spawn_error ? `spawn_error: ${r.spawn_error}` : null,
+      '',
+      '--- stdout ---',
+      r.stdout || '(empty)',
+      '',
+      '--- stderr ---',
+      r.stderr || '(empty)',
+      '',
+    ].filter((l) => l !== null).join('\n');
+    // Skip only runners that produced nothing at all AND started fine; a spawn
+    // failure has no output but is exactly the case worth writing down.
+    if (!r.stdout && !r.stderr && r.ran !== false) continue;
+    const file = path.join(outputDir, `runner-${String(r.name).replace(/[^A-Za-z0-9._-]/g, '_')}.log`);
+    try {
+      fs.mkdirSync(outputDir, { recursive: true });
+      fs.writeFileSync(file, body, 'utf8');
+      paths.push(file);
+    } catch (_) { /* evidence is additive; never fail the run over it */ }
+  }
+  return paths;
 }
 
 function run(opts) {
@@ -843,6 +911,12 @@ function run(opts) {
         quarantined: money ? false : (r.quarantined === true),   // MS: a money runner can never be quarantined
         quarantine_expired: quarantineExpired(cfg, finishedAt),  // F1
         invariant: Array.isArray(cfg.invariant) ? cfg.invariant : undefined,
+        // Carry the spawn outcome through. Without these two the verdict sees a
+        // plain ran:false and emits the generic "did not run", which sends the
+        // engineer to their `when` globs when the actual problem is `command`.
+        // This mapping is where the detail was being dropped.
+        spawn_failed: r.spawn_failed === true || undefined,
+        spawn_error: r.spawn_error,
       };
     }),
     adversarial_stats: adversarialStats,
@@ -860,6 +934,19 @@ function run(opts) {
     money_signal: moneySignal,
     dead_require_for_globs: deadRequireForGlobs,
     mutation: mutationResult,
+    // The diff could not be resolved (bad/unreachable base ref). This already
+    // fails closed for require_for, but with no such policy it was INVISIBLE:
+    // point --base at origin/main in a repo whose default branch is master and
+    // git errors, the diff comes back empty, no `when`-gated runner fires, and
+    // the gate returns PASS over a typo. Surfacing it here means a run that
+    // scoped itself to nothing can never look like a clean run.
+    // Only when a base was EXPLICITLY given and did not resolve. Without this
+    // qualifier every legitimate first-run flags: a fresh repo with one commit
+    // has no HEAD~1, the default diff fails, and the gate would cry wolf on the
+    // most common newcomer path. The dangerous case is narrower and is exactly
+    // this: you named a base, and it was not there.
+    diff_indeterminate: !diff.ok && !!opts.baseSha,
+    diff_base: opts.baseSha || null,
   };
   let verdictOut;
   try {
@@ -914,7 +1001,14 @@ function run(opts) {
     verdict: verdictOut.verdict,
     verdict_reasons: verdictOut.reasons,
     bypass: null,
-    evidence_paths: [],
+    // EVIDENCE. This was hardcoded to [] while three separate docs promised the
+    // runner's stderr would be in the receipt, and the explainer told blocked
+    // engineers to "download the qa-receipt artifact to see the runner's
+    // stderr". It was captured in memory and thrown away, so a FAIL receipt
+    // carried an exit code and nothing else, and the one file the repro command
+    // told you to `cat` was never written. Write it for every runner that
+    // produced output, so the receipt can answer "why" and not just "no".
+    evidence_paths: writeRunnerLogs(runnerResults, opts.outputDir),
     human_review: humanReview,
   });
 
