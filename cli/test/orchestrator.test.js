@@ -727,3 +727,39 @@ test('a reserved-key error never prints a line number that cannot exist', () => 
     assert.match(e.message, /at line 3/); // the real file line, not 0
   }
 });
+
+// --- round 8: found by an old-vs-ad5ab10 differential over the new quote-aware split ---
+
+test('an interior empty element in an inline list throws (doubled comma)', () => {
+  // The first quote-aware split filtered empties, so `[a, , b]` silently became
+  // two elements. That is the same quiet weakening this change exists to remove,
+  // newly reachable from runner fields and pre-existing for policy lists.
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  a:', '    args: [a, , b]',
+  ].join('\n')), /empty element at position 2 of inline list at runners\.a\.args/);
+});
+
+test('a single trailing comma in an inline list is benign', () => {
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  a:', '    args: [a, b,]'].join('\n')).runners.a.args,
+    ['a', 'b']
+  );
+});
+
+test('a quote is only special at the START of a list element', () => {
+  // YAML's own rule. Treating it as special mid-element made an ordinary
+  // apostrophe report as an unterminated quote.
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  a:', "    args: [dont, it's, fine]"].join('\n')).runners.a.args,
+    ['dont', "it's", 'fine']
+  );
+  // A genuinely unterminated quote still throws.
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  a:', "    args: [a, 'oops]",
+  ].join('\n')), /unterminated single quote/);
+  // And a quoted element still protects its commas.
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  a:', "    args: [jest, '--x=p,l']"].join('\n')).runners.a.args,
+    ['jest', '--x=p,l']
+  );
+});

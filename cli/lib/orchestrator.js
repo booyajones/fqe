@@ -394,7 +394,10 @@ function splitFlowElements(inner, t, where) {
       if (ch === '\\' && quote === '"' && i + 1 < inner.length) { buf += ch + inner[++i]; continue; }
       if (ch === quote) quote = null;
       buf += ch;
-    } else if (ch === '"' || ch === "'") {
+    } else if ((ch === '"' || ch === "'") && buf.trim() === '') {
+      // A quote only opens a quoted element at the START of that element, which is
+      // YAML's own rule. Mid-element it is an ordinary character, so `[dont, it's]`
+      // is two plain scalars rather than an unterminated quote.
       quote = ch;
       buf += ch;
     } else if (ch === ',') {
@@ -411,7 +414,20 @@ function splitFlowElements(inner, t, where) {
     );
   }
   out.push(buf);
-  return out.map((s) => s.trim().replace(/^(["'])(.*)\1$/, '$2')).filter((s) => s !== '');
+  const elements = out.map((s) => s.trim());
+  // A single trailing comma is benign YAML: `[a, b,]` is two elements.
+  if (elements.length > 1 && elements[elements.length - 1] === '') elements.pop();
+  // An INTERIOR empty element is a doubled-comma typo. Dropping it silently turns
+  // `[a, , b]` into two elements with no complaint, which is the same class of
+  // quiet weakening this whole change exists to remove.
+  const emptyAt = elements.indexOf('');
+  if (emptyAt !== -1) {
+    throw configParseError(
+      `config parse: empty element at position ${emptyAt + 1} of inline list` +
+      `${where ? ` at ${where}` : ''} (a doubled comma?): ${t}`
+    );
+  }
+  return elements.map((s) => s.replace(/^(["'])(.*)\1$/, '$2'));
 }
 
 function parseFlowList(t, where) {
