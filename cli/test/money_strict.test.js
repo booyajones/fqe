@@ -324,6 +324,47 @@ test('MS U7: an unclosed ARM marker throws instead of uncommenting the rest of t
 });
 
 /**
+ * MS U9. The OPTIONAL policy ships as two pieces in two different places, and the header
+ * tells the reader to "uncomment in place". Review found the earlier single-block form
+ * put a `regression:` runner inside the `policy:` stanza when uncommented the way a human
+ * selects a visual block - it threw rather than silently dropping the runner, so it was
+ * fail-loud, but the reader's only protection was a prose line sitting inside the very
+ * block they were selecting. Prose is not a mechanism. This asserts the mechanism: strip
+ * the comment markers off each piece WHERE IT SITS and the result must be a valid config
+ * with the policy at the top level and the runner under runners:.
+ */
+test('MS U9: each OPTIONAL piece is valid when uncommented exactly where it sits', () => {
+  // Uncomment only the YAML lines of both pieces: `# ` followed by the block's own indent.
+  // Prose lines (`# PIECE 1 of 2 - ...`) are left alone, which is what a reader does.
+  const YAML_LINE = /^# ( *(?:policy:|require_for:|- when:|classes:|regression:|command:|args:|always_run:|class:|required:))/;
+  const opted = armPaymentsTemplate(PAYMENTS_FQE_YML)
+    .split(/\r?\n/)
+    .map((l) => (YAML_LINE.test(l) ? l.replace(/^# /, '') : l))
+    .join('\n');
+
+  const cfg = parseConfigYaml(opted);
+  const r = validateConfig(cfg);
+  assert.equal(r.valid, true, `both OPTIONAL pieces must uncomment in place into a valid config:\n${r.errors.join('\n')}`);
+
+  // PIECE 1 landed at the TOP level, not nested somewhere odd.
+  assert.ok(cfg.policy && Array.isArray(cfg.policy.require_for), 'PIECE 1 must land as a top-level policy.require_for');
+  assert.deepEqual(cfg.policy.require_for[0].classes, ['money', 'regression']);
+
+  // PIECE 2 landed under runners:, NOT under policy: - the exact confusion this shape fixes.
+  assert.deepEqual(Object.keys(cfg.runners), ['money', 'contract', 'regression'],
+    'PIECE 2 must land under runners:, beside the armed money and contract runners');
+  assert.equal(cfg.runners.regression.class, 'regression');
+  assert.equal(cfg.runners.regression.always_run, true);
+
+  // And the pairing the warning promises actually holds: the class named in PIECE 1 is
+  // provided by PIECE 2, so turning both on does not reproduce the round-2 regression trap.
+  const provided = new Set(Object.values(cfg.runners).map((c) => c.class));
+  for (const cls of cfg.policy.require_for[0].classes) {
+    assert.ok(provided.has(cls), `class "${cls}" is demanded by the policy but no runner provides it`);
+  }
+});
+
+/**
  * MS U8: the third "arms into a gate that cannot pass" case, found by review after U5
  * closed the second. `policy.require_for` used to be part of ARM 1 with its `when` globs
  * hardcoded to src/payments + src/ledger + src/billing. A repo with only src/payments -

@@ -151,38 +151,34 @@ mutation:
 # <<< END ARM 1 of 2 <<<
 
 # OPTIONAL, and NOT part of arming. policy.require_for binds a PATH to the test classes
-# that must have run and passed when that path changes. The armed runners above are
-# always_run, so the money and contract classes are already demanded on every pull
-# request; require_for adds nothing for them. It is worth turning on only to demand a
-# class the runners above do NOT provide - regression is the usual one.
+# that must have run and passed when that path changes. The armed runners are always_run,
+# so the money and contract classes are already demanded on every pull request;
+# require_for adds nothing for them. It is worth turning on only to demand a class the
+# armed runners do NOT provide - regression is the usual one.
 #
-# READ BOTH WARNINGS FIRST. Each one blocks EVERY pull request, not just money ones:
+# It comes in TWO PIECES that live in two different places: the policy here, and a
+# regression runner further down under runners:. Each piece is positioned so that
+# uncommenting it WHERE IT SITS is correct - do not move them. Turn on both or neither.
+#
+# READ BOTH WARNINGS FIRST. Each blocks EVERY pull request, not just money ones:
 #
 #   1. Every glob must match a real file in YOUR repo. A glob that matches nothing is
 #      BLOCKED (dead policy glob) under require_money_policy_when_detected, which is on
 #      above. That is deliberate - a typo'd money path would otherwise silently grant the
 #      loose bar - but it also fires for the ordinary case of "we do not happen to have a
-#      directory by that name". The three below are an EXAMPLE of the shape, not a
-#      default: a repo with src/payments but no src/ledger is blocked on every PR until
-#      the list matches its real layout.
+#      directory by that name". Replace the path below with YOUR money paths, and list
+#      every one of them: a glob for a directory this repo does not have blocks every PR.
 #
 #   2. Every class you name must have a runner that RAN AND PASSED, or the gate FAILs on
 #      exactly the pull requests those globs cover - the money PRs. Naming "regression"
-#      without also adding the class:regression runner below is the trap.
+#      here without also uncommenting the regression runner below is the trap.
 #
+# PIECE 1 of 2 - the policy. Uncomment in place, then edit the paths.
 # policy:
 #   require_for:
-#     - when: ["src/payments/**"]          # <- YOUR real money paths, all of them live
-#       classes: ["money", "regression"]   # <- only classes a runner below provides
-#
-#   regression:
-#     command: "node"
-#     args: ["node_modules/.bin/fqe", "golden", "verify", "--manifest", "golden.yml", "--dir", "goldens"]
-#     always_run: true
-#     class: regression
-#     required: true
-#
-# (the regression runner goes under runners:, the policy at the top level.)
+#     - when: ["src/payments/**"]
+#       classes: ["money", "regression"]
+# End of PIECE 1. PIECE 2 (the regression runner) is under runners:, further down.
 # See docs/recipes/regression-golden.md.
 
 # Your runners go under this key. Left empty, the gate runs and always passes.
@@ -215,6 +211,21 @@ runners:
 #     strict_coverage: true
 #     min_tests: 1
 # <<< END ARM 2 of 2 <<<
+
+# PIECE 2 of 2 of the OPTIONAL policy above, and NOT part of arming. Uncomment in place -
+# it already sits under runners:, at the right indent. It needs PIECE 1 (the policy) to do
+# anything, and PIECE 1 needs this to avoid blocking every money PR. Both or neither.
+#
+# 'fqe golden verify' needs a manifest you have already captured; without one it exits
+# non-zero with a clear message, which on a required runner blocks the merge. Run
+# 'fqe golden capture' first. See docs/recipes/regression-golden.md.
+#
+#   regression:
+#     command: "node"
+#     args: ["node_modules/.bin/fqe", "golden", "verify", "--manifest", "golden.yml", "--dir", "goldens"]
+#     always_run: true
+#     class: regression
+#     required: true
 `;
 
 // The ARM sentinels, exported so a test can uncomment the template exactly the way the
