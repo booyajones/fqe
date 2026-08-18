@@ -647,3 +647,53 @@ test('every parse throw is tagged fqeConfigInvalid', () => {
     }
   }
 });
+
+// --- round 6: a regression this PR introduced, and the locate half of round 5 ---
+
+test('an inline list splits only on commas OUTSIDE quotes', () => {
+  // Round 5 moved runner fields off a bare JSON.parse and onto parseFlowList,
+  // which made its tolerant fallback reachable from `args` for the first time.
+  // That fallback split EVERY comma, so a quoted element containing one became
+  // two arguments, silently, on a money runner. Latent in policy and mutation
+  // lists before that, so it is fixed once for all four callers.
+  const cfg = parseConfigYaml([
+    'runners:',
+    '  money-tests:',
+    '    command: "npx"',
+    "    args: [jest, '--testPathPattern=payments,ledger']",
+    '    class: money',
+  ].join('\n'));
+  assert.deepEqual(cfg.runners['money-tests'].args, ['jest', '--testPathPattern=payments,ledger']);
+
+  const pol = parseConfigYaml(['policy:', "  require_classes: [unit, 'a,b']"].join('\n'));
+  assert.deepEqual(pol.policy.require_classes, ['unit', 'a,b']);
+
+  // Strict JSON and the unquoted flow form both keep working.
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  m:', '    args: ["-m", "pytest", "-q"]'].join('\n')).runners.m.args,
+    ['-m', 'pytest', '-q']
+  );
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  m:', '    invariant: [idempotency, double-spend]'].join('\n')).runners.m.invariant,
+    ['idempotency', 'double-spend']
+  );
+});
+
+test('an unterminated quote in an inline list throws rather than guessing', () => {
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  m:', "    args: [a, 'unterminated]",
+  ].join('\n')), /unterminated single quote in inline list/);
+});
+
+test('inline-list errors name the key and the line', () => {
+  // parseFlowList has four callers and its throw named neither, while every
+  // other throw in this parser carries a line number.
+  try {
+    parseConfigYaml(['runners:', '  m:', '    command: "node"', '    args: [not, valid, json'].join('\n'));
+    assert.fail('expected a throw');
+  } catch (e) {
+    assert.match(e.message, /runners\.m\.args/);
+    assert.match(e.message, /line 4/);
+    assert.equal(e.fqeConfigInvalid, true);
+  }
+});

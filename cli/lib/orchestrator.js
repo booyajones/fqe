@@ -202,7 +202,7 @@ function parseConfigYaml(text) {
           // in this parser accepts via parseMaybeList. docs/recipes/money-invariants.md
           // ships `invariant: [idempotency, double-spend]`, so the parser and the
           // shipped recipe disagreed; the parser was the odd one out.
-          result.runners[currentRunner][key] = parseFlowList(val);
+          result.runners[currentRunner][key] = parseFlowList(val, `runners.${currentRunner}.${key}, line ${i + 1}`);
         } else if (val === '' && key === 'args') {
           result.runners[currentRunner][key] = [];
         } else {
@@ -349,7 +349,7 @@ function parseFlatMapBlock(lines) {
         `The later value would silently replace the earlier one.`
       );
     }
-    out[key] = parseMaybeList(val);
+    out[key] = parseMaybeList(val, `${key}`);
   }
   return out;
 }
@@ -358,23 +358,70 @@ function parseFlatMapBlock(lines) {
  * Parse an inline flow value: either a list `[a, b]` (JSON or YAML-flow) or a
  * scalar. Tolerant of both `["a","b"]` (JSON) and `[a, b]` (unquoted YAML flow).
  */
-function parseMaybeList(val) {
+function parseMaybeList(val, where) {
   const t = val.trim();
-  if (t.startsWith('[')) return parseFlowList(t);
+  if (t.startsWith('[')) return parseFlowList(t, where);
   return parseInlineScalar(t);
 }
 
-function parseFlowList(t) {
+/**
+ * Split on commas that sit OUTSIDE quotes.
+ *
+ * The tolerant fallback used to be a bare `inner.split(',')`, which splits every
+ * comma including one inside a quoted element:
+ *
+ *   args: [jest, '--testPathPattern=payments,ledger']
+ *     -> ["jest", "--testPathPattern=payments", "ledger"]
+ *
+ * Three arguments where the author wrote two, silently, on a money runner. That
+ * was latent for `policy` and `mutation` lists and became reachable from runner
+ * fields when those moved off a bare JSON.parse, so it is fixed here for all
+ * four callers rather than at any one of them. An unterminated quote is a
+ * malformed list, not something to guess at.
+ */
+function splitFlowElements(inner, t, where) {
+  const out = [];
+  let buf = '';
+  let quote = null;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (quote) {
+      if (ch === '\\' && quote === '"' && i + 1 < inner.length) { buf += ch + inner[++i]; continue; }
+      if (ch === quote) quote = null;
+      buf += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      buf += ch;
+    } else if (ch === ',') {
+      out.push(buf);
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  if (quote) {
+    throw configParseError(
+      `config parse: unterminated ${quote === '"' ? 'double' : 'single'} quote in inline list` +
+      `${where ? ` at ${where}` : ''}: ${t}`
+    );
+  }
+  out.push(buf);
+  return out.map((s) => s.trim().replace(/^(["'])(.*)\1$/, '$2')).filter((s) => s !== '');
+}
+
+function parseFlowList(t, where) {
   if (!t.startsWith('[') || !t.endsWith(']')) {
-    throw configParseError(`config parse: malformed inline list: ${t}`);
+    throw configParseError(
+      `config parse: malformed inline list${where ? ` at ${where}` : ''}: ${t}`
+    );
   }
   try {
     const j = JSON.parse(t);
     if (Array.isArray(j)) return j.map(String);
-  } catch (_) { /* fall through to the tolerant comma-split below */ }
+  } catch (_) { /* fall through to the tolerant, quote-aware split below */ }
   const inner = t.slice(1, -1).trim();
   if (inner === '') return [];
-  return inner.split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  return splitFlowElements(inner, t, where);
 }
 
 /**
@@ -445,7 +492,7 @@ function parsePolicyBlock(lines, lineNos) {
           `The later value would silently replace the earlier one.`
         );
       }
-      policy[key] = parseMaybeList(val);
+      policy[key] = parseMaybeList(val, `policy.${key}, line ${lineNos[i]}`);
     }
   }
   return policy;
@@ -479,7 +526,7 @@ function parseRequireFor(lines, start) {
         throw configParseError(`policy parse: require_for key '${m[1]}' must have an inline list value`);
       }
       assertSafeKey(m[1], 'require_for key', 0);
-      cur[m[1]] = parseMaybeList(m[2]);
+      cur[m[1]] = parseMaybeList(m[2], `require_for.${m[1]}`);
     } else {
       if (!cur) throw configParseError(`policy parse: require_for continuation without an item: ${line}`);
       const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
@@ -501,7 +548,7 @@ function parseRequireFor(lines, start) {
         // would make a diff-conditional money requirement vanish).
         throw configParseError(`policy parse: require_for key '${m[1]}' must have an inline list value`);
       }
-      cur[m[1]] = parseMaybeList(m[2]);
+      cur[m[1]] = parseMaybeList(m[2], `require_for.${m[1]}`);
     }
   }
   return { items, next: i };
