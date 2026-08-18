@@ -21,7 +21,7 @@ Ten review rounds against v0.18.19, all in one subsystem: **deciding which range
 
 ### Fixed (the receipt)
 
-- **The receipt recorded nothing about scope,** so a blind PASS and a genuinely clean PASS were byte-identical after the fact — the product failing its own thesis. It now carries `diff_scope`: `source` (git or env), `base` (null unless a diff actually ran against it), `declared_base`, `range_start` (the merge base actually used), `confidence`, `truncated_history`, `changed_file_count`, `unusable_reason`, and `tree_commit`.
+- **The receipt recorded nothing about scope,** so a blind PASS and a genuinely clean PASS were byte-identical after the fact — the product failing its own thesis. It now carries `diff_scope`: `source` (git or env), `base` (null unless a diff actually ran against it), `declared_base`, `range_start` (the merge base actually used), `confidence`, `indeterminate` (the field that answers whether this scope was trustworthy at all), `truncated_history`, `changed_file_count`, `unusable_reason`, and `tree_commit`.
 - **The receipt could claim a base it never diffed against.** With `FQE_CHANGED_FILES` set, the file list comes from the environment and no `git diff` runs — but `diff_scope.base` was filled from `--base` anyway, so an env list of nonexistent paths plus a correct `--base` read as a git-verified clean run.
 - **The receipt contradicted itself on truncated clones.** `diff_indeterminate` meant "zero information" until it also came to mean "approximate range, the runners did run" — and the sentence rendering it was never revisited, so a receipt asserted "evaluated ZERO changed files. Any runner gated on `when` was skipped" two lines above `runners_fired: ["unit"]` and `changed_file_count: 1`. Scope confidence is now three states (`exact`, `approximate`, `unknown`) and each renders a sentence that is true for it.
 
@@ -39,6 +39,10 @@ Ten review rounds against v0.18.19, all in one subsystem: **deciding which range
 - **The whole diff-scope reason family had no explanation.** It rendered as "file an issue, this explainer hasn't been updated" for conditions fqe understands completely; the approximate-range case now names the remedy (`fetch-depth: 0`).
 - **A timeout was explained in only one of the three shapes the verdict emits,** so the blocking quarantine-expired case sent the reader to the issue tracker.
 - **Runner logs are uploaded by CI.** `evidence_paths` named `out/runner-<name>.log` while the workflow uploaded only `QA-RESULT.*`, so the receipt pointed at files no reader could reach. A `#` comment inside the `path: |` block scalar was also being passed to `upload-artifact` as three glob patterns.
+
+### Fixed (docs)
+
+- **`verdict.js` had outgrown its own documented size** in six places across `README.md`, `docs/faq.md` and `docs/architecture.md` (claimed ~500 lines, actually ~600). fqe asks readers to audit that file themselves, so a wrong size is the first thing they check. Caught by the repo's own doc-accuracy guard and corrected rather than silenced.
 
 ### Notes
 
