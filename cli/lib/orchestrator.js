@@ -105,8 +105,19 @@ function parseConfigYaml(text) {
     const trimmed = line.trim();
     if (indent === 0) {
       const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-      if (!m) throw new Error(`config parse: malformed top-level line ${i + 1}: ${line}`);
+      if (!m) throw configParseError(`config parse: malformed top-level line ${i + 1}: ${line}`);
       current = m[1];
+      assertSafeKey(current, 'top-level key', i + 1);
+      // Fail closed on a repeated top-level key. `result[current] = {}` overwrote,
+      // so a second `runners:` block silently deleted the first one whole — the
+      // v0.18.18 duplicate-key defect, reachable at the parser rather than only
+      // through the generator that used to emit it.
+      if (Object.prototype.hasOwnProperty.call(result, current)) {
+        throw configParseError(
+          `config parse: duplicate top-level key '${current}' at line ${i + 1}. ` +
+          `The later block would silently replace the earlier one.`
+        );
+      }
       if (m[2] === '') {
         result[current] = {};
         if (current === 'policy') {
@@ -114,14 +125,16 @@ function parseConfigYaml(text) {
           // Collect the whole nested policy block (all following indent>0 lines)
           // and hand it to a dedicated parser.
           const block = [];
+          const blockLineNos = [];
           let j = i + 1;
           for (; j < lines.length; j++) {
             const l = lines[j];
             if (l.trim() === '' || l.trim().startsWith('#')) continue;
             if (l.length - l.trimStart().length === 0) break;
             block.push(l);
+            blockLineNos.push(j + 1); // 1-based file line, for parse errors
           }
-          result.policy = parsePolicyBlock(block);
+          result.policy = parsePolicyBlock(block, blockLineNos);
           i = j - 1; // resume at the next top-level line (the loop does i++)
           current = null;
         } else if (current === 'mutation') {
@@ -148,28 +161,155 @@ function parseConfigYaml(text) {
     } else if (current === 'runners') {
       if (indent === 2) {
         const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-        if (!m) throw new Error(`config parse: malformed runner key line ${i + 1}: ${line}`);
+        if (!m) throw configParseError(`config parse: malformed runner key line ${i + 1}: ${line}`);
         currentRunner = m[1];
+        assertSafeKey(currentRunner, 'runner name', i + 1);
+        if (Object.prototype.hasOwnProperty.call(result.runners, currentRunner)) {
+          throw configParseError(
+            `config parse: duplicate runner '${currentRunner}' at line ${i + 1}. ` +
+            `The later definition would silently replace the earlier one.`
+          );
+        }
         result.runners[currentRunner] = {};
         if (m[2] !== '') {
-          throw new Error(`config parse: runners.${currentRunner} must be a block`);
+          throw configParseError(`config parse: runners.${currentRunner} must be a block`);
         }
       } else if (indent === 4 && currentRunner) {
         const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-        if (!m) throw new Error(`config parse: malformed runner field line ${i + 1}`);
+        if (!m) throw configParseError(`config parse: malformed runner field line ${i + 1}: ${trimmed}`);
         const key = m[1];
         const val = m[2];
+        assertSafeKey(key, `field on runner '${currentRunner}'`, i + 1);
+        if (Object.prototype.hasOwnProperty.call(result.runners[currentRunner], key)) {
+          throw configParseError(
+            `config parse: duplicate field '${key}' on runner '${currentRunner}' at line ${i + 1}. ` +
+            `The later value would silently replace the earlier one.`
+          );
+        }
+        // A block-scalar introducer (`key: |`) would otherwise parse to the
+        // one-character STRING "|" and the indented body below it would report a
+        // confusing indent error a line later. Reject it where the author wrote it.
+        if (/^[|>][-+]?$/.test(val.trim())) {
+          throw configParseError(
+            `config parse: '${key}' at line ${i + 1} uses a YAML block scalar ('${val.trim()}'), ` +
+            `which is not read. Put multi-line text in its own file and reference it.`
+          );
+        }
         if (val.startsWith('[')) {
-          result.runners[currentRunner][key] = JSON.parse(val);
+          // Was a bare JSON.parse, which threw an untagged SyntaxError naming
+          // neither the key nor the line ("Unexpected token 'i', ... is not valid
+          // JSON") and rejected the unquoted YAML-flow form that every other list
+          // in this parser accepts via parseMaybeList. docs/recipes/money-invariants.md
+          // ships `invariant: [idempotency, double-spend]`, so the parser and the
+          // shipped recipe disagreed; the parser was the odd one out.
+          result.runners[currentRunner][key] = parseFlowList(val, `runners.${currentRunner}.${key}, line ${i + 1}`);
         } else if (val === '' && key === 'args') {
           result.runners[currentRunner][key] = [];
         } else {
           result.runners[currentRunner][key] = parseInlineScalar(val);
         }
+      } else if (indent === 4) {
+        // indent 4 with no runner opened yet: a field before its runner name.
+        throw configParseError(
+          `config parse: runner field at line ${i + 1} has no runner to attach to ` +
+          `(a runner name must come first, indented exactly 2 spaces): ${trimmed}`
+        );
+      } else {
+        // Fail closed. Every other indent used to fall through BOTH branches and
+        // be silently discarded — no throw, no warning. A one-space typo on
+        // `required: true` produced a runner the author believed was required and
+        // that validateConfig still called valid; a mis-indented runner NAME
+        // emptied `runners` entirely and the gate went green protecting nothing.
+        // This is the same fail-closed treatment a typo'd key already gets.
+        const what = currentRunner
+          ? `runners.${currentRunner}`
+          : 'runners';
+        throw configParseError(
+          `config parse: malformed indent under ${what}, line ${i + 1} ` +
+          `(runner names must be indented exactly 2 spaces, fields exactly 4, ` +
+          `found ${indent}): ${trimmed}${blockShapeHint(trimmed, line)}`
+        );
       }
+    } else {
+      // Fail closed. This is the same silent drop one branch over: an indented
+      // line reaching here belongs to a top-level key that takes no block, so
+      // nothing consumed it and the chain simply ended. A `version: 0.15` line
+      // placed between two runners reset `current`, and every runner after it
+      // vanished with validateConfig still reporting valid. `policy` and
+      // `mutation` never reach here, because their blocks are collected whole
+      // and `i` is advanced past them.
+      const owner = current ? `'${current}'` : 'no open key';
+      throw configParseError(
+        `config parse: unexpected indented line ${i + 1} under ${owner}, ` +
+        `which takes no nested block: ${trimmed}`
+      );
     }
   }
   return result;
+}
+
+/**
+ * Every parse failure in this file is a malformed `.fqe.yml`, which MUST block
+ * as ERROR and never map to a neutral/INFRA outcome. `bin/fqe.js` keys its
+ * pinned `EXIT.ERROR` branch on this flag; without it these throws fall through
+ * to `die()`'s default, which is the same code today but is exactly the
+ * regression that binding was written to prevent.
+ */
+function configParseError(message) {
+  const e = new Error(message);
+  e.fqeConfigInvalid = true;
+  return e;
+}
+
+/**
+ * Key names that do not behave as own properties on a plain object.
+ *
+ * `result.runners['__proto__'] = {}` goes through Object.prototype's setter and
+ * re-points the map's prototype instead of adding a key, so a runner named
+ * `__proto__` vanished entirely: `Object.keys(runners)` came back empty, the
+ * duplicate guard read false, every field landed on the prototype, and
+ * `runners: {}` validated clean. The last member of the "runner name silently
+ * disappears" family. Rejected by name rather than by switching these maps to
+ * null-prototype objects, which would change what every downstream consumer of
+ * the parsed config receives.
+ */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function assertSafeKey(key, whatItIs, lineNo) {
+  if (UNSAFE_KEYS.has(key)) {
+    // `lineNo` is optional because parseFlatMapBlock genuinely has no line
+    // numbers to give. Omit the clause rather than print "at line 0", a line that
+    // cannot exist: the same degraded-error path that parsePolicyBlock's
+    // `lineNos = []` default produced, which was deleted rather than carried.
+    const at = Number.isInteger(lineNo) && lineNo > 0 ? ` at line ${lineNo}` : '';
+    throw configParseError(
+      `config parse: ${whatItIs} '${key}'${at} is a reserved JavaScript ` +
+      `property name and cannot be used as a key. Rename it.`
+    );
+  }
+}
+
+/**
+ * Name the real problem when a mis-indented line is actually a YAML block
+ * sequence or block scalar. Telling the author to re-indent a `- item` line to 4
+ * spaces sends them to a second, less clear error, because this parser reads
+ * inline flow lists only. `docs/writing-a-runner.md` shipped exactly this shape
+ * until v0.18.20, so adopters carry it.
+ */
+function blockShapeHint(trimmed, rawLine) {
+  // A tab counts as ONE column, so a tab-indented field reports "found 1" for a
+  // line that looks correctly indented in the author's editor. YAML forbids tabs
+  // for indentation outright, so say that instead of quoting a column count.
+  if (rawLine !== undefined && /^[ ]*\t/.test(rawLine)) {
+    return '. That line is indented with a TAB, which YAML does not allow for indentation; use spaces.';
+  }
+  if (trimmed.startsWith('- ') || trimmed === '-') {
+    return ". This looks like a YAML block sequence; use inline-list syntax instead (e.g. args: [\"-e\", \"0\"]).";
+  }
+  if (/:\s*\|-?\s*$/.test(trimmed) || trimmed === '|' || trimmed === '|-') {
+    return '. This looks like a YAML block scalar, which is not read; put multi-line text in its own file and reference it.';
+  }
+  return '';
 }
 
 function parseInlineScalar(v) {
@@ -196,7 +336,7 @@ function parseFlatMapBlock(lines) {
     const t = raw.trim();
     const m = t.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
     if (!m) {
-      throw new Error(
+      throw configParseError(
         `config parse: malformed mapping line: ${raw.trim()}. ` +
         `This block takes flat 'key: value' lines only; use inline-list syntax ` +
         `for lists (e.g. allowlist: ["file:1:Mutator"]), not a nested '- item' block.`
@@ -205,9 +345,16 @@ function parseFlatMapBlock(lines) {
     const key = m[1];
     const val = m[2];
     if (val === '') {
-      throw new Error(`config parse: key '${key}' must have an inline value (e.g. ${key}: blocking)`);
+      throw configParseError(`config parse: key '${key}' must have an inline value (e.g. ${key}: blocking)`);
     }
-    out[key] = parseMaybeList(val);
+    assertSafeKey(key, 'key');
+    if (Object.prototype.hasOwnProperty.call(out, key)) {
+      throw configParseError(
+        `config parse: duplicate key '${key}' in this block: ${raw.trim()}. ` +
+        `The later value would silently replace the earlier one.`
+      );
+    }
+    out[key] = parseMaybeList(val, `${key}`);
   }
   return out;
 }
@@ -216,23 +363,86 @@ function parseFlatMapBlock(lines) {
  * Parse an inline flow value: either a list `[a, b]` (JSON or YAML-flow) or a
  * scalar. Tolerant of both `["a","b"]` (JSON) and `[a, b]` (unquoted YAML flow).
  */
-function parseMaybeList(val) {
+function parseMaybeList(val, where) {
   const t = val.trim();
-  if (t.startsWith('[')) return parseFlowList(t);
+  if (t.startsWith('[')) return parseFlowList(t, where);
   return parseInlineScalar(t);
 }
 
-function parseFlowList(t) {
+/**
+ * Split on commas that sit OUTSIDE quotes.
+ *
+ * The tolerant fallback used to be a bare `inner.split(',')`, which splits every
+ * comma including one inside a quoted element:
+ *
+ *   args: [jest, '--testPathPattern=payments,ledger']
+ *     -> ["jest", "--testPathPattern=payments", "ledger"]
+ *
+ * Three arguments where the author wrote two, silently, on a money runner. That
+ * was latent for `policy` and `mutation` lists and became reachable from runner
+ * fields when those moved off a bare JSON.parse, so it is fixed here for all
+ * four callers rather than at any one of them. An unterminated quote is a
+ * malformed list, not something to guess at.
+ */
+function splitFlowElements(inner, t, where) {
+  const out = [];
+  let buf = '';
+  let quote = null;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (quote) {
+      if (ch === '\\' && quote === '"' && i + 1 < inner.length) { buf += ch + inner[++i]; continue; }
+      if (ch === quote) quote = null;
+      buf += ch;
+    } else if ((ch === '"' || ch === "'") && buf.trim() === '') {
+      // A quote only opens a quoted element at the START of that element, which is
+      // YAML's own rule. Mid-element it is an ordinary character, so `[dont, it's]`
+      // is two plain scalars rather than an unterminated quote.
+      quote = ch;
+      buf += ch;
+    } else if (ch === ',') {
+      out.push(buf);
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  if (quote) {
+    throw configParseError(
+      `config parse: unterminated ${quote === '"' ? 'double' : 'single'} quote in inline list` +
+      `${where ? ` at ${where}` : ''}: ${t}`
+    );
+  }
+  out.push(buf);
+  const elements = out.map((s) => s.trim());
+  // A single trailing comma is benign YAML: `[a, b,]` is two elements.
+  if (elements.length > 1 && elements[elements.length - 1] === '') elements.pop();
+  // An INTERIOR empty element is a doubled-comma typo. Dropping it silently turns
+  // `[a, , b]` into two elements with no complaint, which is the same class of
+  // quiet weakening this whole change exists to remove.
+  const emptyAt = elements.indexOf('');
+  if (emptyAt !== -1) {
+    throw configParseError(
+      `config parse: empty element at position ${emptyAt + 1} of inline list` +
+      `${where ? ` at ${where}` : ''} (a doubled comma?): ${t}`
+    );
+  }
+  return elements.map((s) => s.replace(/^(["'])(.*)\1$/, '$2'));
+}
+
+function parseFlowList(t, where) {
   if (!t.startsWith('[') || !t.endsWith(']')) {
-    throw new Error(`policy parse: malformed inline list: ${t}`);
+    throw configParseError(
+      `config parse: malformed inline list${where ? ` at ${where}` : ''}: ${t}`
+    );
   }
   try {
     const j = JSON.parse(t);
     if (Array.isArray(j)) return j.map(String);
-  } catch (_) { /* fall through to the tolerant comma-split below */ }
+  } catch (_) { /* fall through to the tolerant, quote-aware split below */ }
   const inner = t.slice(1, -1).trim();
   if (inner === '') return [];
-  return inner.split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  return splitFlowElements(inner, t, where);
 }
 
 /**
@@ -244,28 +454,81 @@ function parseFlowList(t) {
  * Anything malformed throws (fail closed). Unknown keys are passed through so
  * config_schema.validateConfig rejects them with a clear message.
  */
-function parsePolicyBlock(lines) {
+function parsePolicyBlock(lines, lineNos) {
   const policy = {};
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const indent = line.length - line.trimStart().length;
-    if (indent !== 2) continue; // deeper lines are consumed by their parent key
+    if (indent !== 2) {
+      // Fail closed, same reason as the runners block. A well-formed policy never
+      // reaches here: `require_for`'s nested lines are consumed by parseRequireFor,
+      // which advances `i` past them. So any line that lands here is mis-indented,
+      // and `continue` silently discarded it — a `require_for:` one space off
+      // dropped a diff-conditional money requirement while the config still
+      // parsed and validated clean.
+      throw configParseError(
+        `policy parse: malformed indent under policy, line ${lineNos[i]} ` +
+        `(policy keys must be indented exactly 2 spaces; found ${indent}): ${line.trim()}`
+      );
+    }
     const trimmed = line.trim();
     const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-    if (!m) throw new Error(`policy parse: malformed line: ${line}`);
+    if (!m) throw configParseError(`policy parse: malformed line: ${line}`);
     const key = m[1];
     const val = m[2];
+    assertSafeKey(key, 'policy key', lineNos[i]);
     if (key === 'require_for' && val === '') {
-      const { items, next } = parseRequireFor(lines, i + 1);
+      // This branch assigns unconditionally, so it sat outside the duplicate
+      // guard below and a repeated `require_for:` silently replaced the earlier
+      // one — the money rule, on the one key where losing it matters most.
+      if (Object.prototype.hasOwnProperty.call(policy, 'require_for')) {
+        throw configParseError(
+          `policy parse: duplicate key 'require_for' at line ${lineNos[i]}. ` +
+          `The later block would silently replace the earlier one.`
+        );
+      }
+      const { items, next } = parseRequireFor(lines, i + 1, lineNos);
+      // Fail closed on an empty block, for the reason the sibling branch below
+      // already states: `require_for:` with no items (or with every item
+      // commented out) parsed to `[]`, which validateConfig accepts and the
+      // verdict then ignores, so a diff-conditional money requirement vanished
+      // with the config reporting valid.
+      if (items.length === 0) {
+        throw configParseError(
+          `policy parse: 'require_for' at line ${lineNos[i]} has no entries. ` +
+          `Give it at least one '- when: [...]' item, or remove the key.`
+        );
+      }
       policy.require_for = items;
       i = next - 1;
     } else if (val === '') {
       // Fail closed: a policy key with no inline value (e.g. `require_classes:`
       // alone, or a typo'd block key) must throw, not parse to an empty object
       // that the verdict would then ignore.
-      throw new Error(`policy parse: key '${key}' must have an inline list value (e.g. ${key}: ["unit"])`);
+      throw configParseError(`policy parse: key '${key}' must have an inline list value (e.g. ${key}: ["unit"])`);
     } else {
-      policy[key] = parseMaybeList(val);
+      // `require_for: []` is the inline spelling of the empty block just above.
+      // Same end state: validateConfig accepts it, the verdict ignores it, the
+      // diff-conditional rule is gone and hasMoneyPolicy loses a signal. The
+      // author did type it, so it is legible rather than silent, but there is no
+      // "require nothing conditionally" that differs from omitting the key, and
+      // the block spelling throwing while this one passes is indefensible.
+      if (key === 'require_for') {
+        const parsedList = parseMaybeList(val, `policy.${key}, line ${lineNos[i]}`);
+        if (Array.isArray(parsedList) && parsedList.length === 0) {
+          throw configParseError(
+            `policy parse: 'require_for' at line ${lineNos[i]} has no entries. ` +
+            `Give it at least one '- when: [...]' item, or remove the key.`
+          );
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(policy, key)) {
+        throw configParseError(
+          `policy parse: duplicate key '${key}' at line ${lineNos[i]}. ` +
+          `The later value would silently replace the earlier one.`
+        );
+      }
+      policy[key] = parseMaybeList(val, `policy.${key}, line ${lineNos[i]}`);
     }
   }
   return policy;
@@ -276,7 +539,7 @@ function parsePolicyBlock(lines) {
  * (indent 4) optionally followed by `classes: [...]` (indent 6).
  * @returns {{ items: object[], next: number }} next = index after the block
  */
-function parseRequireFor(lines, start) {
+function parseRequireFor(lines, start, lineNos = []) {
   const items = [];
   let i = start;
   let cur = null;
@@ -291,25 +554,37 @@ function parseRequireFor(lines, start) {
       items.push(cur);
       const after = trimmed.slice(2).trim();
       const m = after.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-      if (!m) throw new Error(`policy parse: malformed require_for item: ${line}`);
+      if (!m) throw configParseError(`policy parse: malformed require_for item: ${line}`);
       if (m[2] === '') {
         // Fail closed: `when:` or `classes:` with no inline value must throw, not
         // become null and get silently dropped by computeRequiredClasses (which
         // would make a diff-conditional money requirement vanish).
-        throw new Error(`policy parse: require_for key '${m[1]}' must have an inline list value`);
+        throw configParseError(`policy parse: require_for key '${m[1]}' must have an inline list value`);
       }
-      cur[m[1]] = parseMaybeList(m[2]);
+      assertSafeKey(m[1], 'require_for key', lineNos[i]);
+      cur[m[1]] = parseMaybeList(m[2], `require_for.${m[1]}`);
     } else {
-      if (!cur) throw new Error(`policy parse: require_for continuation without an item: ${line}`);
+      if (!cur) throw configParseError(`policy parse: require_for continuation without an item: ${line}`);
       const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-      if (!m) throw new Error(`policy parse: malformed require_for field: ${line}`);
+      if (!m) throw configParseError(`policy parse: malformed require_for field: ${line}`);
+      // Fail closed on a repeated key inside one item. This is how a second entry
+      // written without its leading `- ` disappeared: both keys overwrote the
+      // first item's, the two entries merged into one, and the earlier `when`
+      // (typically the payments rule) was gone with the config still valid.
+      assertSafeKey(m[1], 'require_for key', lineNos[i]);
+      if (Object.prototype.hasOwnProperty.call(cur, m[1])) {
+        throw configParseError(
+          `policy parse: duplicate key '${m[1]}' in one require_for entry: ${line.trim()}. ` +
+          `A new entry must start with '- '; without it the keys overwrite the previous entry.`
+        );
+      }
       if (m[2] === '') {
         // Fail closed: `when:` or `classes:` with no inline value must throw, not
         // become null and get silently dropped by computeRequiredClasses (which
         // would make a diff-conditional money requirement vanish).
-        throw new Error(`policy parse: require_for key '${m[1]}' must have an inline list value`);
+        throw configParseError(`policy parse: require_for key '${m[1]}' must have an inline list value`);
       }
-      cur[m[1]] = parseMaybeList(m[2]);
+      cur[m[1]] = parseMaybeList(m[2], `require_for.${m[1]}`);
     }
   }
   return { items, next: i };

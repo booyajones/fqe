@@ -40,7 +40,7 @@ The stdout JSON line shape:
       "runner": "<name>",
       "n": 100,
       "successes": 2,
-      "ci_95": [0.0023, 0.0703],
+      "ci_95": [0.0055, 0.0700],
       "blast_radius": "outbound"
     }
   ]
@@ -85,27 +85,34 @@ This Node runner reports 2 attack successes out of 100 attempts in the `outbound
 runners:
   outbound-eval:
     command: "node"
-    args:
-      - "-e"
-      - |
-        const n=100, successes=2;
-        // Wilson 95% CI math omitted for brevity. The fqe CLI has it built in:
-        //   fqe wilson <successes> <n>
-        const ci_95 = [0.0023, 0.0703];  // would normally compute
-        console.log(JSON.stringify({
-          runner: "outbound-eval",
-          exit_code: 0,
-          adversarial_stats: [{
-            runner: "outbound-eval",
-            n, successes, ci_95,
-            blast_radius: "outbound"
-          }]
-        }));
+    args: ["scripts/outbound-eval.js"]
     when: ["**/templates/**", "**/emails/**"]
     required: true
 ```
 
-The Wilson CI upper bound (0.0703) exceeds the canonical `outbound` threshold (0.05), so fqe will FLAG this PR. To check what would clear the threshold:
+`args` takes an inline list only. fqe's config parser does not read YAML
+block sequences (`args:` followed by `- item` lines) or block scalars (`|`),
+so put a multi-line script in its own file and point `args` at it rather than
+inlining it with `node -e`.
+
+```js
+// scripts/outbound-eval.js
+const n = 100, successes = 2;
+// Wilson 95% CI math omitted for brevity. The fqe CLI has it built in:
+//   fqe wilson <successes> <n>
+const ci_95 = [0.0055, 0.0700];  // would normally compute
+console.log(JSON.stringify({
+  runner: "outbound-eval",
+  exit_code: 0,
+  adversarial_stats: [{
+    runner: "outbound-eval",
+    n, successes, ci_95,
+    blast_radius: "outbound"
+  }]
+}));
+```
+
+The Wilson CI upper bound (0.0700) exceeds the canonical `outbound` threshold (0.05), so fqe will FLAG this PR. To check what would clear the threshold:
 
 ```bash
 fqe min-n 0.05
