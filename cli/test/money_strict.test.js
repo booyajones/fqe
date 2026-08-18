@@ -181,30 +181,37 @@ test('MS U3: the ARM markers uncomment into a valid, strict money config', () =>
  * every dead-glob signal is silent. The when-scoped shape still blocks a docs-only PR.
  * Both arms differ in exactly one line.
  */
-test('MS U4: in a real payments repo, always_run runs the money suite on a docs-only PR and when-globs do not', () => {
-  const SUITE = 'const fs=require("fs"),p=require("path");' +
-    'const o=process.argv[2];fs.mkdirSync(p.dirname(o),{recursive:true});' +
-    'fs.writeFileSync(o,\'<testsuites><testsuite name="s" tests="1">' +
-    '<testcase classname="c" name="settle_is_idempotent"/></testsuite></testsuites>\');';
+const SUITE = 'const fs=require("fs"),p=require("path");' +
+  'const o=process.argv[2];fs.mkdirSync(p.dirname(o),{recursive:true});' +
+  'fs.writeFileSync(o,\'<testsuites><testsuite name="s" tests="1">' +
+  '<testcase classname="c" name="settle_is_idempotent"/></testsuite></testsuites>\');';
 
-  const armedYml = armPaymentsTemplate(PAYMENTS_FQE_YML)
-    // Point the template's npm scripts at a real, passing suite. Everything the money
-    // strictness rests on (report, reconcile, strict_coverage, min_tests, invariant,
-    // required) is left exactly as the template ships it.
+/**
+ * The shipped template, armed through the ARM markers, with only the npm scripts pointed
+ * at a real passing suite. Everything the money strictness rests on (required, report,
+ * reconcile, strict_coverage, min_tests, invariant, always_run) is left exactly as the
+ * template ships it, so these tests measure the TEMPLATE, not a rewrite of it.
+ */
+function armedTemplate() {
+  return armPaymentsTemplate(PAYMENTS_FQE_YML)
     .replace(/^ {4}command: "npm"$/gm, '    command: "node"')
     .replace(/^ {4}args: \["run", "test:money"\]$/m, '    args: ["scripts/suite.js", "reports/money-junit.xml"]')
     .replace(/^ {4}args: \["run", "test:contract"\]$/m, '    args: ["scripts/suite.js", "reports/contract-junit.xml"]')
     .replace(/^ {4}inventory_cmd: .*$/gm, '    inventory_cmd: "echo 1"');
+}
 
-  // A real payments repo: every path the template's require_for names exists, so no
-  // dead-glob signal can be mistaken for the thing this test is measuring.
-  const seed = {
-    'README.md': 'hello\n',
-    'scripts/suite.js': SUITE,
-    'src/payments/charge.js': 'function charge(cents) { return cents; }\n',
-    'src/ledger/post.js': 'function post(entry) { return entry; }\n',
-    'src/billing/invoice.js': 'function invoice(id) { return id; }\n',
-  };
+/** A real payments repo: every path the template's require_for names exists. */
+const PAYMENTS_SEED = {
+  'README.md': 'hello\n',
+  'scripts/suite.js': SUITE,
+  'src/payments/charge.js': 'function charge(cents) { return cents; }\n',
+  'src/ledger/post.js': 'function post(entry) { return entry; }\n',
+  'src/billing/invoice.js': 'function invoice(id) { return id; }\n',
+};
+
+test('MS U4: in a real payments repo, always_run runs the money suite on a docs-only PR and when-globs do not', () => {
+  const armedYml = armedTemplate();
+  const seed = PAYMENTS_SEED;
 
   const always = gitRepo({ ...seed, '.fqe.yml': armedYml });
   const alwaysRes = runGate(always, { 'README.md': 'hello\nworld\n' });
@@ -222,4 +229,72 @@ test('MS U4: in a real payments repo, always_run runs the money suite on a docs-
     `engine's 'required' semantics changed and the template can go back to when globs:\n${scopedRes.stdout}`);
   assert.ok(reasonsOf(scopedRes.yml).some((r) => r === 'required runner "money" did not run'),
     `and it must block for THAT reason:\n${reasonsOf(scopedRes.yml).join('\n')}`);
+});
+
+/**
+ * MS U5 is the axis MS U1-U4 all missed: they only ever diff README.md, so none of them
+ * exercised a pull request that touches the MONEY paths - the one kind of PR the payments
+ * profile exists for. Found by review, reproduced, and it was real: the armed template
+ * declared `classes: ["money", "regression"]` while providing no class:regression runner,
+ * so verdict Pass 5 FAILed every money PR on `required test class "regression" has no
+ * runner that ran and passed`. Same defect class this whole change is about ("a gate no
+ * PR can pass"), one layer deeper, reachable only on the money path.
+ *
+ * The rule this pins: every class named in policy.require_for must have a runner in the
+ * template that can satisfy it.
+ */
+test('MS U5: the armed template PASSes a pull request that changes the money paths', () => {
+  const repo = gitRepo({ ...PAYMENTS_SEED, '.fqe.yml': armedTemplate() });
+  const res = runGate(repo, { 'src/payments/charge.js': 'function charge(cents) { return cents + 0; }\n' });
+
+  assert.strictEqual(res.status, 0,
+    `the armed template must let a money PR through when the money suite passes:\n${res.stdout}${res.stderr}`);
+  assert.match(res.yml, /verdict:\s*PASS/);
+  assert.deepEqual(reasonsOf(res.yml), []);
+  assert.match(res.yml, /name:\s*money/, 'the money runner must have run on a money PR');
+});
+
+/**
+ * The header tells the operator what happens if they arm only one block. Both halves of
+ * that claim are measured here, because the first version of that prose was WRONG in one
+ * direction: it said arming part of it "stops" the gate, and ARM 2 alone in fact yields a
+ * working, narrower gate. Prose about behaviour has to be pinned by the behaviour.
+ */
+test('MS U6: ARM 2 alone is a working narrower gate; ARM 1 alone blocks every PR', () => {
+  const onlyBlock = (n) => {
+    const out = []; let inside = false;
+    for (const line of PAYMENTS_FQE_YML.split(/\r?\n/)) {
+      if (!inside && new RegExp(`^# >>> ARM ${n} of 2:.*>>>$`).test(line)) { inside = true; continue; }
+      if (inside && new RegExp(`^# <<< END ARM ${n} of 2 <<<$`).test(line)) { inside = false; continue; }
+      out.push(inside ? line.replace(/^# ?/, '') : line);
+    }
+    return out.join('\n');
+  };
+
+  // ARM 2 only: runners, no explicit flags. The money-class runner arms the idempotency
+  // requirement by itself (orchestrator), so this is a real gate, just without the
+  // path-to-class binding.
+  const arm2 = onlyBlock(2)
+    .replace(/^ {4}command: "npm"$/gm, '    command: "node"')
+    .replace(/^ {4}args: \["run", "test:money"\]$/m, '    args: ["scripts/suite.js", "reports/money-junit.xml"]')
+    .replace(/^ {4}args: \["run", "test:contract"\]$/m, '    args: ["scripts/suite.js", "reports/contract-junit.xml"]')
+    .replace(/^ {4}inventory_cmd: .*$/gm, '    inventory_cmd: "echo 1"');
+  const cfg2 = parseConfigYaml(arm2);
+  assert.equal(validateConfig(cfg2).valid, true, 'ARM 2 alone must validate');
+  assert.deepEqual(Object.keys(cfg2.runners), ['money', 'contract']);
+  assert.equal(cfg2.policy, undefined, 'ARM 2 alone carries no require_for binding');
+  const r2 = runGate(gitRepo({ ...PAYMENTS_SEED, '.fqe.yml': arm2 }), { 'README.md': 'hello\nworld\n' });
+  assert.strictEqual(r2.status, 0, `ARM 2 alone must be a WORKING gate:\n${r2.stdout}${r2.stderr}`);
+
+  // ARM 1 only: flags and policy, no runner that can satisfy them. Blocks every PR.
+  const r1 = runGate(gitRepo({ ...PAYMENTS_SEED, '.fqe.yml': onlyBlock(1) }), { 'README.md': 'hello\nworld\n' });
+  assert.strictEqual(r1.status, 2, `ARM 1 alone must block every PR:\n${r1.stdout}${r1.stderr}`);
+  assert.ok(reasonsOf(r1.yml).some((r) => /require_money_idempotency is on but no runner PROVED/.test(r)),
+    `and for the reason the header names:\n${reasonsOf(r1.yml).join('\n')}`);
+});
+
+test('MS U7: an unclosed ARM marker throws instead of uncommenting the rest of the file', () => {
+  const broken = PAYMENTS_FQE_YML.replace('# <<< END ARM 2 of 2 <<<\n', '');
+  assert.notEqual(broken, PAYMENTS_FQE_YML, 'the end marker must actually have been removed');
+  assert.throws(() => armPaymentsTemplate(broken), /opened and never closed/);
 });

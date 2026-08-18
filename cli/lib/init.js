@@ -85,12 +85,18 @@ const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init 
 #
 # LIVE right now, in any repo:
 #   require_money_policy_when_detected  the first pull request that adds money-LOOKING
-#                                       code (a payments / ledger / billing / settlement
-#                                       / invoice / payout path, or debit, credit, settle,
-#                                       reconcil, idempoten, chargeback, remittance in a
-#                                       source file) FAILS with "money-looking code is
-#                                       present but no money policy is configured". That
-#                                       is your cue to arm the template below.
+#                                       code FAILS with "money-looking code is present but
+#                                       no money policy is configured". That is your cue to
+#                                       arm the template below. It triggers on a payments /
+#                                       ledger / billing / settlement / invoice / payout
+#                                       PATH, or on any of these stems in a source file:
+#                                       idempoten, debit, credit, settle, reconcil,
+#                                       chargeback, payout, invoice, ledger, double-spend,
+#                                       no-negative-balance, remittance, disbursement.
+#                                       It is a heuristic, not a proof: money-moving code
+#                                       under a name it does not know (src/txn/, src/xfer/)
+#                                       is NOT detected. Arm the template; do not rely on
+#                                       the detector to notice for you.
 #   mutation                            blocking, already inside the caps a money policy
 #                                       requires, so arming does not fail validation.
 #
@@ -99,11 +105,23 @@ const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init 
 # src/billing. fqe cannot know your scripts or your paths. Shipping them live blocks EVERY
 # pull request in a repo that does not already have them - including the one that adds them.
 #
-# TO ARM THE MONEY GATE: uncomment BOTH marked blocks, together, and point them at your
-# real scripts and paths. Arming only part of it does not weaken the gate, it stops it:
-#   require_money_idempotency on, with no runner that PROVES the invariant  = FAIL, every PR
-#   a policy.require_for glob that matches no file in the repo              = BLOCKED, every PR
-#     (deliberate: a typo'd money path would otherwise silently grant the loose bar)
+# TO ARM THE MONEY GATE: uncomment BOTH marked blocks and point them at your real scripts
+# and paths. On Windows also restructure the command itself, not just its arguments (see
+# the note at the bottom). The two blocks are not symmetric:
+#   ARM 2 alone (the runners) is a WORKING gate, just a narrower one. A money-class runner
+#     arms the idempotency requirement by itself, so you get that for free. What you do
+#     NOT get is the path-to-class binding, so nothing demands money coverage on the
+#     ground that a money PATH changed.
+#   ARM 1 alone (the flags and the policy) BLOCKS EVERY PULL REQUEST, by design:
+#     require_money_idempotency on, with no runner that PROVES the invariant  = FAIL, every PR
+#     a policy.require_for glob that matches no file in the repo              = BLOCKED, every PR
+#       (deliberate: a typo'd money path would otherwise silently grant the loose bar)
+#
+# Every class you name in policy.require_for must have a runner that RAN AND PASSED, or the
+# gate FAILs on exactly the pull requests those globs cover - the money PRs. So require_for
+# below names only 'money', which ARM 2 provides. Adding "regression" there without also
+# adding a class:regression runner blocks every money PR; the commented line under it shows
+# the pairing. See docs/recipes/regression-golden.md.
 #
 # Note 'always_run: true' on the runners, NOT 'when:' globs. In fqe, 'required: true' means
 # "this runner must fire on THIS pull request", and the validator forces every money or
@@ -117,8 +135,11 @@ const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init 
 # quarantined. Loosening any of it FAILS validation loudly; the gate refuses to run rather
 # than silently weaken on a money path. Add your own unit/lint runners too.
 #
-# On Windows, "command: npm" does not start (npm is npm.cmd and fqe spawns without a
-# shell). Use command: "cmd", args: ["/c", "npm", "run", "test:money"] there.
+# On Windows the runners below need RESTRUCTURING, not just retargeting: "command: npm"
+# never starts (npm is npm.cmd and fqe spawns without a shell), and it fails as a spawn
+# error, not a test failure. Move npm into args:
+#   command: "cmd"
+#   args: ["/c", "npm", "run", "test:money"]
 
 version: 0.15
 require_money_policy_when_detected: true
@@ -135,7 +156,16 @@ mutation:
 # policy:
 #   require_for:
 #     - when: ["src/payments/**", "src/ledger/**", "src/billing/**"]
-#       classes: ["money", "regression"]
+#       classes: ["money"]
+#       # Add "regression" to that list ONLY together with a class:regression runner, or
+#       # every money PR FAILs on "required test class regression has no runner that ran
+#       # and passed". docs/recipes/regression-golden.md has the fqe golden verify recipe:
+#       #   regression:
+#       #     command: "node"
+#       #     args: ["node_modules/.bin/fqe", "golden", "verify", "--manifest", "golden.yml", "--dir", "goldens"]
+#       #     always_run: true
+#       #     class: regression
+#       #     required: true
 # <<< END ARM 1 of 2 <<<
 
 # Your runners go under this key. Left empty, the gate runs and always passes.
@@ -186,10 +216,18 @@ const ARM_END_RE = /^# <<< END ARM \d of 2 <<<$/;
 function armPaymentsTemplate(yml) {
   const out = [];
   let inside = false;
-  for (const line of String(yml).split('\n')) {
+  // Tolerate CRLF: a caller that reads a generated .fqe.yml back off disk gets \r\n, and
+  // a \n-only split would leave a trailing \r that the $-anchored marker regexes miss.
+  for (const line of String(yml).split(/\r?\n/)) {
     if (!inside && ARM_BEGIN_RE.test(line)) { inside = true; continue; }
     if (inside && ARM_END_RE.test(line)) { inside = false; continue; }
     out.push(inside ? line.replace(/^# ?/, '') : line);
+  }
+  // An unclosed marker silently uncomments the whole rest of the file, prose included.
+  // That happens to fail later in the YAML parser today, which is fail-loud by accident;
+  // make it fail-loud by construction, at the point the shape is actually wrong.
+  if (inside) {
+    throw new Error('armPaymentsTemplate: an ARM block was opened and never closed (missing "<<< END ARM n of 2 <<<")');
   }
   return out.join('\n');
 }
