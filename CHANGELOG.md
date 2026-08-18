@@ -39,9 +39,13 @@ The payments scaffold, over five review rounds. Not tagged.
 - The payments-scaffold rounds added 10 tests (MS U1-U10). `MS U1` drives the real binary through `fqe init --payments` in a fresh git repo and asserts a non-payments PR reaches a non-FAIL verdict — the gap the old test left open. `MS U2` asserts the inert scaffold still BLOCKS the first PR that adds money code, so the fix cannot be "remove the gate". `MS U3` uncomments the shipped template through the ARM markers and validates it, so the commented block cannot rot into a config that fails the moment somebody arms it. `MS U4` runs both shapes in a repo that HAS the money paths and pins the contrast: `always_run` PASSes a docs-only PR, `when`-globs FAIL it. `MS U5` arms the template and opens a pull request that CHANGES `src/payments/**` — the axis U1–U4 all missed. `MS U6` pins both halves of the partial-arm claim in the header. `MS U7` pins the unclosed-marker throw. `MS U8` arms in a repo that does NOT have the template's example directories. `MS U9` uncomments each OPTIONAL piece where it sits and checks it lands at the right level.
 - `MS I2` was asserting `/class: money/` against the generated file. That regex is satisfied by the commented line `#     class: money` just as well as by a live runner, so it would have kept passing while measuring nothing. It now asserts on live lines and on the parsed runner map.
 
+## [0.18.21] - 2026-08-18
+
+Tag: `fqe-v0.18.21`. Adds the payments-scaffold fix (PR #25): `fqe init --payments` generated a gate no pull request could pass.
+
 ## [0.18.20] - 2026-08-18
 
-Tag: `fqe-v0.18.20`.
+Tag: `fqe-v0.18.21`.
 
 Ten review rounds against v0.18.19, all in one subsystem: **deciding which range to gate, and reporting that honestly.** Every round's fix produced the next round's defect, so the entries below are as much a record of what the fixes broke as of what they fixed. Nothing here is tagged yet.
 
@@ -91,7 +95,7 @@ Ten review rounds against v0.18.19, all in one subsystem: **deciding which range
 
 ## [0.18.19] - 2026-08-17
 
-Tag: `fqe-v0.18.20`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.
+Tag: `fqe-v0.18.21`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.
 
 ### Fixed (platform)
 
