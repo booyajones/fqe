@@ -1383,3 +1383,44 @@ test('a stale re-run and a self-targeting pair are distinguishable in the receip
   assert.match(fs.readFileSync(path.join(dir, 'out-deg', 'QA-RESULT.yml'), 'utf8'),
     /unusable_reason: degenerate-range/);
 });
+
+/**
+ * A mis-indented `.fqe.yml` must BLOCK at the CLI, not just throw in the parser.
+ *
+ * Every other test for this fix asserts on parseConfigYaml directly, which pins
+ * the throw but not the exit code. `bin/fqe.js` binds `err.fqeConfigInvalid` to
+ * EXIT.ERROR explicitly, with a comment saying a refactor must never regress a
+ * malformed config to the neutral EXIT.INFRA (4) and let it pass. The new parse
+ * throws are tagged so they take that pinned branch; nothing held them there.
+ *
+ * Uses the money case, where a one-space typo on `class: money` silently removed
+ * every money rule and `fqe run` returned verdict PASS, exit 0, on v0.18.20.
+ */
+test('a mis-indented config blocks at the CLI and writes no receipt', () => {
+  const dir = tmpRepo();
+  const outDir = path.join(dir, 'out');
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), [
+    'version: 0.15',
+    'runners:',
+    '  money-check:',
+    '    command: "node"',
+    '    args: ["-e", "0"]',
+    '    always_run: true',
+    '   class: money', // 3 spaces: one short
+    '',
+  ].join('\n'));
+
+  const r = spawnSync(process.execPath, [BIN, 'run', '--commit', sha, '--output', outDir, '--repo-dir', dir], {
+    cwd: dir, encoding: 'utf8',
+  });
+
+  assert.notEqual(r.status, 0, 'a malformed config must never exit 0');
+  assert.notEqual(r.status, 4, 'a malformed config must block as ERROR, never the neutral INFRA code');
+  assert.equal(r.status, 1, `expected EXIT.ERROR (1), got ${r.status}: ${r.stderr}`);
+  assert.match(r.stderr, /malformed indent under runners\.money-check/);
+  assert.equal(
+    fs.existsSync(path.join(outDir, 'QA-RESULT.yml')), false,
+    'no receipt may be written for a config that never parsed'
+  );
+});
