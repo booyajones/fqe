@@ -12,7 +12,10 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { validateConfig } = require('../lib/config_schema');
 const { parseConfigYaml } = require('../lib/orchestrator');
-const { init, PAYMENTS_FQE_YML, armPaymentsTemplate, ARM_BEGIN_RE, ARM_END_RE } = require('../lib/init');
+const {
+  init, PAYMENTS_FQE_YML, armPaymentsTemplate, enableOptionalPolicy,
+  ARM_BEGIN_RE, ARM_END_RE, OPT_BEGIN_RE, OPT_END_RE,
+} = require('../lib/init');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-ms-'));
@@ -334,13 +337,13 @@ test('MS U7: an unclosed ARM marker throws instead of uncommenting the rest of t
  * with the policy at the top level and the runner under runners:.
  */
 test('MS U9: each OPTIONAL piece is valid when uncommented exactly where it sits', () => {
-  // Uncomment only the YAML lines of both pieces: `# ` followed by the block's own indent.
-  // Prose lines (`# PIECE 1 of 2 - ...`) are left alone, which is what a reader does.
-  const YAML_LINE = /^# ( *(?:policy:|require_for:|- when:|classes:|regression:|command:|args:|always_run:|class:|required:))/;
-  const opted = armPaymentsTemplate(PAYMENTS_FQE_YML)
-    .split(/\r?\n/)
-    .map((l) => (YAML_LINE.test(l) ? l.replace(/^# /, '') : l))
-    .join('\n');
+  // Uncomment by POSITION, via the shipped helper - the same mechanism as arming, and the
+  // same mechanism the sentinels tell a human to use. The first version of this test
+  // uncommented by matching a hand-listed set of key names, and review broke it by adding
+  // one plausible field (report:) to the template: that line stayed commented, the config
+  // still parsed, and the test still passed - a green over a config no human would produce.
+  // Uncommenting is a property of WHERE a line is, never of what it says.
+  const opted = enableOptionalPolicy(armPaymentsTemplate(PAYMENTS_FQE_YML));
 
   const cfg = parseConfigYaml(opted);
   const r = validateConfig(cfg);
@@ -362,6 +365,57 @@ test('MS U9: each OPTIONAL piece is valid when uncommented exactly where it sits
   for (const cls of cfg.policy.require_for[0].classes) {
     assert.ok(provided.has(cls), `class "${cls}" is demanded by the policy but no runner provides it`);
   }
+
+  // Position-based means EVERY line in the block comes through, including ones nobody
+  // enumerated. Pin that: no line inside either OPTIONAL block may survive commented.
+  // This is what the key-name version could not assert, and what let it pass with a
+  // silently-skipped field.
+  const inOptional = [];
+  let inside = false;
+  for (const line of PAYMENTS_FQE_YML.split(/\r?\n/)) {
+    if (!inside && OPT_BEGIN_RE.test(line)) { inside = true; continue; }
+    if (inside && OPT_END_RE.test(line)) { inside = false; continue; }
+    if (inside) inOptional.push(line);
+  }
+  assert.ok(inOptional.length >= 8, `expected the OPTIONAL blocks to have content, got ${inOptional.length} lines`);
+  for (const line of inOptional) {
+    const uncommented = line.replace(/^# ?/, '');
+    assert.ok(opted.split('\n').includes(uncommented),
+      `line "${line.trim()}" was not uncommented; the mechanism skipped it`);
+  }
+
+  // ARM and OPTIONAL must stay disjoint: arming alone must never enable the regression
+  // runner, or the armed template gains a `fqe golden verify` with no captured manifest -
+  // a required runner that dies on every PR, which is case one all over again.
+  const armedOnly = parseConfigYaml(armPaymentsTemplate(PAYMENTS_FQE_YML));
+  assert.deepEqual(Object.keys(armedOnly.runners), ['money', 'contract']);
+  assert.equal(armedOnly.policy, undefined);
+});
+
+test('MS U10: an appended runner block is separated from the template it lands on', () => {
+  // The payments template ENDS with a commented-out runner example, and `\s*$` in
+  // appendRunnerBlock eats the trailing newline, so without an explicit separator a live
+  // runner starts on the line immediately after the inert example and reads as part of it.
+  const dir = tmpRepo();
+  init({ dir, force: true, payments: true, withMutation: true, withQodo: true });
+  const body = fs.readFileSync(path.join(dir, '.fqe.yml'), 'utf8');
+
+  for (const live of ['stryker-mutation', 'qodo-cover']) {
+    const lines = body.split(/\r?\n/);
+    const i = lines.findIndex((l) => l.trim() === `${live}:`);
+    assert.ok(i > 0, `${live} must be present and live`);
+    // Walk back over its own leading comment block to the line before it.
+    let j = i - 1;
+    while (j >= 0 && lines[j].trim().startsWith('#')) j--;
+    assert.equal(lines[j].trim(), '',
+      `a live runner must be separated from what precedes it by a blank line, ` +
+      `or it reads as part of the commented-out example above it:\n` +
+      lines.slice(Math.max(0, j - 2), i + 1).join('\n'));
+  }
+
+  const cfg = parseConfigYaml(body);
+  assert.deepEqual(Object.keys(cfg.runners), ['stryker-mutation', 'qodo-cover']);
+  assert.equal(validateConfig(cfg).valid, true);
 });
 
 /**

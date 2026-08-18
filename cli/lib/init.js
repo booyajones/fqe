@@ -173,12 +173,13 @@ mutation:
 #      exactly the pull requests those globs cover - the money PRs. Naming "regression"
 #      here without also uncommenting the regression runner below is the trap.
 #
-# PIECE 1 of 2 - the policy. Uncomment in place, then edit the paths.
+# >>> OPTIONAL 1 of 2 (the policy): uncomment every line to END OPTIONAL 1, then edit. >>>
 # policy:
 #   require_for:
 #     - when: ["src/payments/**"]
 #       classes: ["money", "regression"]
-# End of PIECE 1. PIECE 2 (the regression runner) is under runners:, further down.
+# <<< END OPTIONAL 1 of 2 <<<
+# OPTIONAL 2 of 2 (the regression runner) is under runners:, further down.
 # See docs/recipes/regression-golden.md.
 
 # Your runners go under this key. Left empty, the gate runs and always passes.
@@ -212,52 +213,88 @@ runners:
 #     min_tests: 1
 # <<< END ARM 2 of 2 <<<
 
-# PIECE 2 of 2 of the OPTIONAL policy above, and NOT part of arming. Uncomment in place -
-# it already sits under runners:, at the right indent. It needs PIECE 1 (the policy) to do
-# anything, and PIECE 1 needs this to avoid blocking every money PR. Both or neither.
+# OPTIONAL 2 of 2 - the regression runner for the policy above, and NOT part of arming.
+# It already sits under runners:, at the right indent. It needs OPTIONAL 1 (the policy) to
+# do anything, and OPTIONAL 1 needs this to avoid blocking every money PR. Both or neither.
 #
 # 'fqe golden verify' needs a manifest you have already captured; without one it exits
 # non-zero with a clear message, which on a required runner blocks the merge. Run
 # 'fqe golden capture' first. See docs/recipes/regression-golden.md.
 #
+# >>> OPTIONAL 2 of 2 (the runner): uncomment every line to END OPTIONAL 2. >>>
 #   regression:
 #     command: "node"
 #     args: ["node_modules/.bin/fqe", "golden", "verify", "--manifest", "golden.yml", "--dir", "goldens"]
 #     always_run: true
 #     class: regression
 #     required: true
+# <<< END OPTIONAL 2 of 2 <<<
 `;
 
-// The ARM sentinels, exported so a test can uncomment the template exactly the way the
-// README tells a human to, and prove the commented-out block is still a valid config.
-// A template nobody validates rots into one that fails the moment somebody arms it.
+// The block sentinels, exported so a test can uncomment the template exactly the way the
+// scaffold tells a human to, and prove the commented-out blocks are still a valid config.
+// A template nobody validates rots into one that fails the moment somebody turns it on.
+//
+// ARM = the money gate itself. OPTIONAL = the require_for policy and its regression
+// runner, which are NOT part of arming. Two distinct marker vocabularies so arming can
+// never pick up the optional pieces: a `fqe golden verify` runner armed without a captured
+// manifest is a required runner that dies on every PR.
 const ARM_BEGIN_RE = /^# >>> ARM \d of 2:.*>>>$/;
 const ARM_END_RE = /^# <<< END ARM \d of 2 <<<$/;
+const OPT_BEGIN_RE = /^# >>> OPTIONAL \d of 2 .*>>>$/;
+const OPT_END_RE = /^# <<< END OPTIONAL \d of 2 <<<$/;
 
 /**
- * Uncomment the ARM-marked blocks of a payments scaffold. Strips a leading '# ' (or a
- * bare '#') from every line between the markers and drops the marker lines themselves.
- * This is the mechanical form of the instruction printed in the scaffold header.
+ * Uncomment every line BETWEEN a begin and end sentinel, and drop the sentinel lines.
+ *
+ * Position-based on purpose. An earlier test uncommented by matching a hand-listed set of
+ * YAML key names instead, and it passed while silently leaving behind any line whose key
+ * was not on the list - validating a config no human would ever produce. Uncommenting is a
+ * property of WHERE a line is, not of what it says, so the mechanism has to be positional.
+ *
  * @param {string} yml
+ * @param {RegExp} beginRe
+ * @param {RegExp} endRe
+ * @param {string} label  block name, for the unclosed-marker error
  * @returns {string}
  */
-function armPaymentsTemplate(yml) {
+function uncommentBlocks(yml, beginRe, endRe, label) {
   const out = [];
   let inside = false;
   // Tolerate CRLF: a caller that reads a generated .fqe.yml back off disk gets \r\n, and
   // a \n-only split would leave a trailing \r that the $-anchored marker regexes miss.
   for (const line of String(yml).split(/\r?\n/)) {
-    if (!inside && ARM_BEGIN_RE.test(line)) { inside = true; continue; }
-    if (inside && ARM_END_RE.test(line)) { inside = false; continue; }
+    if (!inside && beginRe.test(line)) { inside = true; continue; }
+    if (inside && endRe.test(line)) { inside = false; continue; }
     out.push(inside ? line.replace(/^# ?/, '') : line);
   }
   // An unclosed marker silently uncomments the whole rest of the file, prose included.
   // That happens to fail later in the YAML parser today, which is fail-loud by accident;
   // make it fail-loud by construction, at the point the shape is actually wrong.
   if (inside) {
-    throw new Error('armPaymentsTemplate: an ARM block was opened and never closed (missing "<<< END ARM n of 2 <<<")');
+    throw new Error(`uncommentBlocks: an ${label} block was opened and never closed`);
   }
   return out.join('\n');
+}
+
+/**
+ * Arm the money gate: uncomment the ARM-marked blocks. The mechanical form of the
+ * instruction printed in the scaffold header. Leaves the OPTIONAL blocks alone.
+ * @param {string} yml
+ * @returns {string}
+ */
+function armPaymentsTemplate(yml) {
+  return uncommentBlocks(yml, ARM_BEGIN_RE, ARM_END_RE, 'ARM');
+}
+
+/**
+ * Turn on the OPTIONAL require_for policy and its regression runner. Both pieces, since
+ * either alone blocks every money pull request. Leaves the ARM blocks alone.
+ * @param {string} yml
+ * @returns {string}
+ */
+function enableOptionalPolicy(yml) {
+  return uncommentBlocks(yml, OPT_BEGIN_RE, OPT_END_RE, 'OPTIONAL');
 }
 
 const FILES = {
@@ -800,12 +837,18 @@ function appendRunnerBlock(yml, block) {
   if (/\nrunners:\s*\{\}\s*\n?$/m.test(yml)) {
     return yml.replace(/\nrunners:\s*\{\}\s*\n?$/m, `\nrunners:${block}`);
   }
-  // Case 2: already populated "runners:\n  <something>" — append at the end
+  // Case 2: already populated "runners:\n  <something>" — append at the end.
+  // The leading \n is a SEPARATOR, not cosmetics. `\s*$` eats the template's own trailing
+  // newline, so without it the appended block's first line butts directly against whatever
+  // the template ended with. The payments template ends with a COMMENTED-OUT runner
+  // example, and a live runner starting on the very next line reads as part of it — a
+  // reader skimming "what is actually enabled" can misjudge where the example stops.
+  // A blank line makes the boundary visible in every combination, not just this one.
   if (/\nrunners:\s*\n/m.test(yml)) {
-    return yml.replace(/\s*$/, `${block}`);
+    return yml.replace(/\s*$/, `\n${block}`);
   }
   // Case 3: no anchor found — append a runners: section
-  return yml.replace(/\s*$/, `\nrunners:${block}`);
+  return yml.replace(/\s*$/, `\n\nrunners:${block}`);
 }
 
 /**
@@ -897,6 +940,10 @@ module.exports = {
   QODO_RUNNER_BLOCK,
   PAYMENTS_FQE_YML,
   armPaymentsTemplate,
+  enableOptionalPolicy,
+  uncommentBlocks,
   ARM_BEGIN_RE,
   ARM_END_RE,
+  OPT_BEGIN_RE,
+  OPT_END_RE,
 };

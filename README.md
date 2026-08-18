@@ -2,7 +2,7 @@
 
 **A CI gate that runs the checks you already have, refuses to let humans skip them, and emits a tamper-evident receipt of what was checked.**
 
-[![tests](https://img.shields.io/badge/tests-817%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.18.19-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-818%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.18.19-blue)](CHANGELOG.md)
 
 fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in about 500 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
@@ -181,7 +181,7 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.18.19.** 817 tests passing on Linux and Windows across Node 20 and 22 (one symlink test self-skips on a Windows box without developer mode, since it cannot create the symlink), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.18.19.** 818 tests passing on Linux and Windows across Node 20 and 22 (one symlink test self-skips on a Windows box without developer mode, since it cannot create the symlink), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 
 **Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
