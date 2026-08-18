@@ -756,6 +756,8 @@ test('base == commit is a degenerate range, not a clean run', () => {
   assert.notStrictEqual(r.status, 0,
     `zero files from a degenerate range means "we learned nothing", not "nothing changed":\n${r.stdout}${r.stderr}`);
   const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  // The DECLARED pair collapsed. Distinct from head-is-ancestor-of-base, which is
+  // a PR with nothing ahead of its base - different cause, different fix.
   assert.match(yml, /unusable_reason: degenerate-range/);
 });
 
@@ -1084,7 +1086,7 @@ test('mergeBase == head is degenerate too, not just base == head', () => {
   assert.notStrictEqual(r.status, 0,
     `an empty effective range means "we learned nothing", not "nothing changed":\n${r.stdout}${r.stderr}`);
   const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
-  assert.match(yml, /unusable_reason: degenerate-range/);
+  assert.match(yml, /unusable_reason: head-is-ancestor-of-base/);
 });
 
 /** Shallow clone where base and head converge on identical content. */
@@ -1246,4 +1248,138 @@ test('the verify CLI warns instead of printing a bare OK for an uncovered field'
   assert.match(out, /NOT authenticated/i,
     `the reader must be told diff_scope was not covered:\n${out}`);
   assert.match(out, /diff_scope/);
+});
+
+/**
+ * ROUND 10. The state machine had converged; the defect moved to the PROSE.
+ *
+ * `diff_indeterminate` meant exactly one thing - "zero information" - so Pass 13
+ * safely hardcoded "evaluated ZERO changed files. Any runner gated on `when` was
+ * skipped." Round 9 correctly widened the flag to also mean "approximate range,
+ * runners really did run", and nothing revisited the sentence. The receipt then
+ * asserted zero files and skipped runners two lines above `runners_fired:
+ * ["unit"]` and `changed_file_count: 1`.
+ */
+
+test('an approximate range is described as approximate, not as zero files', () => {
+  const out = computeVerdict({
+    runners: [{ name: 'unit', required: false, ran: true, exit_code: 0 }],
+    diff_indeterminate: true,
+    diff_confidence: 'approximate',
+    diff_base: 'abc123',
+  });
+  const text = out.reasons.join('\n');
+  assert.match(text, /APPROXIMATE/, 'the reader must be told the range is approximate');
+  assert.match(text, /runners DID run/i, 'and that the runners actually ran');
+  assert.doesNotMatch(text, /ZERO changed files/,
+    'a receipt must not claim zero files while reporting a runner that fired:\n' + text);
+  assert.doesNotMatch(text, /was skipped/, 'nor claim the runner was skipped');
+});
+
+test('a genuinely unresolved diff keeps the zero-files wording', () => {
+  const out = computeVerdict({
+    runners: [],
+    diff_indeterminate: true,
+    diff_confidence: 'unknown',
+    diff_base: 'origin/main',
+  });
+  const text = out.reasons.join('\n');
+  assert.match(text, /ZERO changed files/, 'this state really did evaluate nothing');
+  assert.doesNotMatch(text, /APPROXIMATE/);
+});
+
+test('an older caller that sets only the boolean still gets the original wording', () => {
+  // Defensive read: diff_confidence absent must not silently become "approximate".
+  const out = computeVerdict({ runners: [], diff_indeterminate: true, diff_base: 'x' });
+  assert.match(out.reasons.join('\n'), /ZERO changed files/);
+});
+
+test('the shallow receipt does not contradict itself end to end', () => {
+  // The whole point: a real run, on a real truncated clone, whose prose and whose
+  // fields agree with each other.
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-r10-'));
+  const go = (...a) => execFileSync('git', a, { cwd: origin, env, encoding: 'utf8' });
+  execFileSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: origin });
+  for (const v of ['v1', 'v2', 'v3']) {
+    fs.appendFileSync(path.join(origin, 'src.js'), v + '\n');
+    go('add', '-A'); go('commit', '-q', '-m', v);
+  }
+  const base = go('rev-parse', 'HEAD').trim();
+  go('checkout', '-q', '-b', 'feature');
+  fs.appendFileSync(path.join(origin, 'src.js'), 'BROKEN\n');
+  go('add', '-A'); go('commit', '-q', '-m', 'breaks it');
+  const head = go('rev-parse', 'HEAD').trim();
+
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-r10w-'));
+  const gw = (...a) => execFileSync('git', a, { cwd: work, env, encoding: 'utf8' });
+  execFileSync('git', ['init', '-q', '.'], { cwd: work });
+  const url = 'file://' + origin.split(path.sep).join('/');
+  gw('fetch', '-q', '--depth', '1', url, base);
+  gw('fetch', '-q', '--depth', '1', url, head);
+  gw('checkout', '-q', head);
+  fs.writeFileSync(path.join(work, '.fqe.yml'), [
+    'runners:',
+    '  unit:',
+    '    command: "node"',
+    '    args: ["-e", "process.exit(1)"]',
+    '    when: ["src.js"]',
+    '',
+  ].join('\n'));
+
+  spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(work, 'out'), '--repo-dir', work],
+    { encoding: 'utf8', cwd: work, timeout: 90000 });
+  const yml = fs.readFileSync(path.join(work, 'out', 'QA-RESULT.yml'), 'utf8');
+
+  assert.match(yml, /runners_fired: \["unit"\]/, 'precondition: the runner really fired');
+  assert.match(yml, /confidence: approximate/);
+  // The contradiction that made this round necessary.
+  assert.doesNotMatch(yml, /evaluated ZERO changed files/,
+    'the receipt claimed zero files while listing a runner that fired:\n' + yml.slice(0, 900));
+});
+
+test('the diff-scope reason family is explained, not sent to the issue tracker', () => {
+  // This family had NO explainer coverage, so it rendered as UNKNOWN_REASON -
+  // "file an issue, this explainer hasn't been updated" - for a condition fqe
+  // understands and can fix in one line. Round 9 made it routine rather than rare.
+  const approx = explainReason('the diff range is APPROXIMATE (base: abc123): the clone history is truncated');
+  assert.strictEqual(approx.code, 'DIFF_RANGE_APPROXIMATE');
+  assert.match(approx.fix, /fetch-depth: 0/, 'the fix must name the actual remedy');
+  assert.doesNotMatch(approx.plain_english, /file an issue/i);
+
+  const unresolved = explainReason('the diff could not be resolved (base: origin/main), so fqe evaluated ZERO changed files.');
+  assert.strictEqual(unresolved.code, 'DIFF_UNRESOLVED');
+  assert.match(unresolved.fix, /origin\/main/, 'the fix should quote the base it could not resolve');
+
+  // Also reachable through the BLOCKED prefix that require_resolvable_diff adds.
+  const blocked = explainReason('BLOCKED (indeterminate diff): the diff could not be resolved (base: x), so fqe evaluated ZERO changed files.');
+  assert.strictEqual(blocked.code, 'DIFF_UNRESOLVED');
+});
+
+test('a stale re-run and a self-targeting pair are distinguishable in the receipt', () => {
+  // Both collapse the range, but they are different mistakes with different
+  // fixes, and one reason string for both loses that.
+  const dir = tmpRepo();
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const g = (...a) => execFileSync('git', a, { cwd: dir, env, encoding: 'utf8' });
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), 'runners: {}\n');
+  fs.writeFileSync(path.join(dir, 'src.js'), 'v1\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'c1');
+  const head = g('rev-parse', 'HEAD').trim();
+  fs.appendFileSync(path.join(dir, 'src.js'), 'v2\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'c2');
+  const base = g('rev-parse', 'HEAD').trim();
+
+  spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(dir, 'out-anc'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  assert.match(fs.readFileSync(path.join(dir, 'out-anc', 'QA-RESULT.yml'), 'utf8'),
+    /unusable_reason: head-is-ancestor-of-base/);
+
+  spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', head, '--output', path.join(dir, 'out-deg'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  assert.match(fs.readFileSync(path.join(dir, 'out-deg', 'QA-RESULT.yml'), 'utf8'),
+    /unusable_reason: degenerate-range/);
 });

@@ -590,7 +590,10 @@ function changedFiles({ baseSha, headSha, repoDir }) {
   // returned PASS, exit 0, indeterminate: false. Check the EFFECTIVE range, not
   // just the declared one.
   if (mergeBase && headId && mergeBase === headId) {
-    return { files: [], ok: false, reason: 'degenerate-range', source: 'git', declaredBase: baseSha };
+    // Distinct from the declared-pair case above, and worth its own label: this
+    // is a PR with nothing ahead of its base (stale re-run after the branch
+    // merged, or a branch that never got a commit), not a self-targeting pair.
+    return { files: [], ok: false, reason: 'head-is-ancestor-of-base', source: 'git', declaredBase: baseSha };
   }
 
   if (!mergeBase) {
@@ -1049,8 +1052,24 @@ function run(opts) {
   // best-effort file list (so failures are still caught), and mark the scope
   // indeterminate (so a CLEAN result is not presented as authoritative). A
   // failing runner still yields FAIL; only an otherwise-clean run gets flagged.
-  const diffIndeterminate = (!diff.ok && !(exemptible && isGenuinelyFirstRun(opts)))
-    || diff.truncatedHistory === true;
+  //
+  // THREE STATES, not two. A boolean forced "approximate" and "no information"
+  // to share one label, and every consumer that rendered that label into English
+  // then told the reader the wrong thing. Compute the distinction once, here, and
+  // pass it down; `diffIndeterminate` stays as the derived boolean the gating
+  // logic wants, so no consumer changes behaviour, but the prose layer can now
+  // say something true.
+  //
+  //   exact       - merge-base anchored, or a CI-supplied file list. Trustworthy.
+  //   approximate - truncated history: the runners ran on a real but possibly
+  //                 incomplete list. A FAILURE is real; a CLEAN result is not
+  //                 authoritative.
+  //   unknown     - no usable information at all.
+  const firstRunExempt = exemptible && isGenuinelyFirstRun(opts);
+  const diffConfidence = diff.ok
+    ? (diff.truncatedHistory === true ? 'approximate' : 'exact')
+    : (firstRunExempt ? 'exact' : 'unknown');
+  const diffIndeterminate = diffConfidence !== 'exact';
 
   const cls = classify(files, config.runners);
 
@@ -1300,6 +1319,7 @@ function run(opts) {
     // because the repo is new" from "1 commit because the clone is truncated",
     // which repoHasHistory() alone can never do.
     diff_indeterminate: diffIndeterminate,
+    diff_confidence: diffConfidence,
     diff_base: opts.baseSha || null,
   };
   let verdictOut;
@@ -1383,6 +1403,7 @@ function run(opts) {
       // True when the merge base was unreachable because the clone is shallow, so
       // the range is the approximate two-dot one. A reader can then tell a
       // precise range from a best-effort one instead of assuming precision.
+      confidence: diffConfidence,
       truncated_history: diff.truncatedHistory === true,
       changed_file_count: files.length,
       indeterminate: diffIndeterminate,

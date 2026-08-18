@@ -549,10 +549,29 @@ function computeVerdict(input) {
   // the behaviour whether or not it wanted it. Scope switches belong to scope.
   if (input.diff_indeterminate === true) {
     const base = input.diff_base ? ` (base: ${input.diff_base})` : '';
-    const msg =
-      `the diff could not be resolved${base}, so fqe evaluated ZERO changed files. ` +
-      `Any runner gated on "when" was skipped. Check that the base ref exists in this ` +
-      `checkout (a repo whose default branch is "master" will not resolve "origin/main")`;
+    // THE MESSAGE MUST MATCH THE STATE. This flag used to mean exactly one thing,
+    // "zero information", so the sentence below could safely hardcode "evaluated
+    // ZERO changed files. Any runner gated on `when` was skipped." Then the flag
+    // grew a second meaning - an APPROXIMATE range, where the runners genuinely
+    // did run on a real (possibly incomplete) file list - and nothing revisited
+    // the prose. The result was a receipt asserting "evaluated ZERO changed
+    // files... skipped" two lines above `runners_fired: ["unit"]` and
+    // `changed_file_count: 1`. For a product whose whole claim is that the
+    // receipt says what happened, a self-contradicting receipt is the failure,
+    // even when the verdict itself is right.
+    //
+    // `diff_confidence` carries the distinction so each state gets a true
+    // sentence. It is read defensively: an older caller that sets only the
+    // boolean still gets the original wording.
+    const approximate = input.diff_confidence === 'approximate';
+    const msg = approximate
+      ? `the diff range is APPROXIMATE${base}: the clone's history is truncated, so fqe could not `
+        + `anchor the range at the merge base and fell back to comparing the two commits directly. `
+        + `The runners DID run, on a file list that may be incomplete - so a failure here is real, `
+        + `but a clean result is not authoritative. Fetch full history (fetch-depth: 0) to make it exact`
+      : `the diff could not be resolved${base}, so fqe evaluated ZERO changed files. `
+        + `Any runner gated on "when" was skipped. Check that the base ref exists in this `
+        + `checkout (a repo whose default branch is "master" will not resolve "origin/main")`;
     if (input.require_resolvable_diff === true) {
       hasFail = true;
       reasons.push(`BLOCKED (indeterminate diff): ${msg}`);

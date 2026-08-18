@@ -86,6 +86,49 @@ function explainReason(reason, ctx = {}) {
     };
   }
 
+  // Pattern 0c: the diff scope. This family had NO explainer coverage at all, so
+  // it rendered as UNKNOWN_REASON - literally "file an issue at github.com,
+  // this explainer hasn't been updated" - for a condition fqe understands
+  // completely and can tell you how to fix in one line. That was tolerable while
+  // it only fired on a genuinely misconfigured base ref; it stopped being
+  // tolerable once an under-fetched checkout (anything not using fqe's own
+  // fetch-depth: 0 scaffold) began producing it routinely.
+  m = reason.match(/^(?:BLOCKED \(indeterminate diff\): )?the diff range is APPROXIMATE(?: \(base: ([^)]*)\))?/);
+  if (m) {
+    return {
+      code: 'DIFF_RANGE_APPROXIMATE',
+      plain_english:
+        `fqe could not find the merge base between your branch and the base ref, because this ` +
+        `checkout's history is truncated (a shallow clone). It fell back to comparing the two ` +
+        `commits directly. Your runners DID run, so a failure reported here is real - but the ` +
+        `file list may be missing changes, so a clean result is not authoritative.`,
+      fix:
+        `Fetch full history in CI: set \`fetch-depth: 0\` on actions/checkout (fqe's own generated ` +
+        `workflow already does). On other CI systems, disable shallow cloning or fetch the base ` +
+        `branch's history. Once the merge base is reachable, the range becomes exact and this ` +
+        `message stops.`,
+      repro_command: repro,
+    };
+  }
+
+  m = reason.match(/^(?:BLOCKED \(indeterminate diff\): )?the diff could not be resolved(?: \(base: ([^)]*)\))?/);
+  if (m) {
+    const named = m[1] ? ` ("${m[1]}")` : '';
+    return {
+      code: 'DIFF_UNRESOLVED',
+      plain_english:
+        `fqe could not work out which files this change touches, so it evaluated ZERO files and ` +
+        `every runner gated on "when" sat out. Nothing was actually checked. A green result here ` +
+        `would mean "nothing was examined", not "nothing was wrong", which is why it is not green.`,
+      fix:
+        `Check the base ref${named} exists in this checkout: a repo whose default branch is ` +
+        `"master" will not resolve "origin/main". Make sure CI fetches enough history ` +
+        `(\`fetch-depth: 0\`) and that --base names a real commit reachable from here. If this is ` +
+        `a brand-new repo with a single commit, run without --base and fqe will stay quiet.`,
+      repro_command: repro,
+    };
+  }
+
   // Pattern 1: required runner did not run
   m = reason.match(/^required runner "([^"]+)" did not run$/);
   if (m) {
