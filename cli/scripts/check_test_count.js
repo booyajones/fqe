@@ -92,7 +92,28 @@ function realTestCount() {
  * finding.
  */
 function isNestedCheckout(dir) {
-  return fs.existsSync(path.join(dir, '.git'));
+  // Validate the marker rather than trusting its NAME. `existsSync` alone reads a
+  // stray file or empty directory called `.git` — a misplaced fixture, a debug
+  // artifact — as a checkout and prunes that whole subtree from the scan,
+  // silently. A guard quietly checking less while still reporting success is the
+  // defect this rule was added to fix, so it must not reintroduce it one level
+  // down. A worktree's `.git` is a file whose first line is `gitdir:`; a clone's
+  // is a directory containing `HEAD`. Anything else is not a checkout and gets
+  // scanned like the ordinary directory it is.
+  const marker = path.join(dir, '.git');
+  let st;
+  try {
+    st = fs.statSync(marker);
+  } catch (_) {
+    return false; // absent, or unreadable: not a checkout we can confirm
+  }
+  if (st.isDirectory()) return fs.existsSync(path.join(marker, 'HEAD'));
+  if (!st.isFile()) return false;
+  try {
+    return /^gitdir:/.test(fs.readFileSync(marker, 'utf8').trimStart());
+  } catch (_) {
+    return false;
+  }
 }
 
 function markdownFiles(dir, out = []) {
@@ -129,14 +150,27 @@ for (const file of markdownFiles(REPO)) {
     });
 }
 
-// A guard that inspected nothing must not report success. If the docs stopped
-// stating a count entirely that is a deliberate choice, but it should be made
-// deliberately, not discovered later as "the check has been vacuous for months."
-if (checked === 0) {
+/**
+ * The claims this check exists to verify: README's badge, README's status
+ * paragraph, SKILL.md's status paragraph.
+ *
+ * A `checked === 0` floor was the only one here, which meant losing two of the
+ * three still read as success — and `doc_accuracy.test.js` next door carries
+ * named MIN_PIN_CLAIMS / MIN_SIZE_CLAIMS floors for exactly that reason, with a
+ * comment saying a skip-path must not silently become "checked nothing." This
+ * file had the weaker half of that idea. Raising the floor to the real number
+ * makes a DROP loud rather than only a wipe-out; adding a claim is not blocked,
+ * since the floor is a minimum.
+ */
+const MIN_COUNT_CLAIMS = 3;
+
+if (checked < MIN_COUNT_CLAIMS) {
   console.error(
-    'check_test_count: found no test-count claim to verify. If the docs intentionally ' +
-      'no longer state a count, delete this check in the same commit rather than ' +
-      'leaving it green and vacuous.'
+    `check_test_count: only ${checked} test-count claim(s) found, expected at least ` +
+      `${MIN_COUNT_CLAIMS} (README badge, README status, SKILL.md status). A claim was ` +
+      'removed or reworded out of recognition, so this check is now verifying less than ' +
+      'it was written to. Restore it, or lower MIN_COUNT_CLAIMS in the same commit so the ' +
+      'reduction is a decision someone made on purpose rather than one this check hid.'
   );
   process.exit(1);
 }

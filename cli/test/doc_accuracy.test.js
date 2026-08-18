@@ -77,7 +77,28 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', '.fqe-out', 'out', '.stryker-
  * only ever asks about children.
  */
 function isNestedCheckout(dir) {
-  return fs.existsSync(path.join(dir, '.git'));
+  // Validate the marker rather than trusting its NAME. `existsSync` alone reads a
+  // stray file or empty directory called `.git` — a misplaced fixture, a debug
+  // artifact — as a checkout and prunes that whole subtree from the scan,
+  // silently. A guard quietly checking less while still reporting success is the
+  // defect this rule was added to fix, so it must not reintroduce it one level
+  // down. A worktree's `.git` is a file whose first line is `gitdir:`; a clone's
+  // is a directory containing `HEAD`. Anything else is not a checkout and gets
+  // scanned like the ordinary directory it is.
+  const marker = path.join(dir, '.git');
+  let st;
+  try {
+    st = fs.statSync(marker);
+  } catch (_) {
+    return false; // absent, or unreadable: not a checkout we can confirm
+  }
+  if (st.isDirectory()) return fs.existsSync(path.join(marker, 'HEAD'));
+  if (!st.isFile()) return false;
+  try {
+    return /^gitdir:/.test(fs.readFileSync(marker, 'utf8').trimStart());
+  } catch (_) {
+    return false;
+  }
 }
 /**
  * Files the repo scan does not read, and the only two reasons that is allowed.
@@ -1254,9 +1275,12 @@ test('the repo scan does not descend into a nested checkout', () => {
     fs.writeFileSync(path.join(wt, '.git'), 'gitdir: /somewhere/.git/worktrees/stale\n');
     fs.writeFileSync(path.join(wt, 'docs', 'worktree.md'), '# NOT in the working tree\n');
 
-    // A nested CLONE somewhere the name-based list does not cover: `.git` is a dir.
+    // A nested CLONE somewhere the name-based list does not cover: `.git` is a
+    // directory, and a real one always holds HEAD — which is what distinguishes it
+    // from the empty `.git` directory below that is not a checkout at all.
     const clone = path.join(dir, 'vendor', 'someone-elses-repo');
     fs.mkdirSync(path.join(clone, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(clone, '.git', 'HEAD'), 'ref: refs/heads/main\n');
     fs.writeFileSync(path.join(clone, 'nested.md'), '# NOT in the working tree\n');
 
     // Agent tool state that is NOT a checkout, so the rule above cannot see it and
@@ -1268,11 +1292,24 @@ test('the repo scan does not descend into a nested checkout', () => {
     fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{"model":"opus"}\n');
     fs.writeFileSync(path.join(dir, '.claude', 'skills', 'note.md'), '# tool state, not repo docs\n');
 
+    // Directories that merely CONTAIN something named `.git` without being a
+    // checkout. These must still be scanned: pruning them would be the same
+    // silent narrowing this rule exists to prevent, arrived at from the other
+    // side, and a doc guard that quietly reads fewer files still reports success.
+    const strayFile = path.join(dir, 'docs', 'stray-file');
+    fs.mkdirSync(strayFile, { recursive: true });
+    fs.writeFileSync(path.join(strayFile, '.git'), 'not a gitdir pointer\n');
+    fs.writeFileSync(path.join(strayFile, 'keep-a.md'), '# real doc\n');
+
+    const strayDir = path.join(dir, 'docs', 'stray-dir');
+    fs.mkdirSync(path.join(strayDir, '.git'), { recursive: true }); // empty: no HEAD
+    fs.writeFileSync(path.join(strayDir, 'keep-b.md'), '# real doc\n');
+
     const found = walk(dir).map((f) => path.relative(dir, f).split(path.sep).join('/'));
     assert.deepStrictEqual(
       found.sort(),
-      ['docs/real.md'],
-      `the scan must read only this working tree. Found: ${JSON.stringify(found)}`
+      ['docs/real.md', 'docs/stray-dir/keep-b.md', 'docs/stray-file/keep-a.md'],
+      `the scan must read this working tree and only this working tree. Found: ${JSON.stringify(found)}`
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
