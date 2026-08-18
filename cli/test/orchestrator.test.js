@@ -697,3 +697,33 @@ test('inline-list errors name the key and the line', () => {
     assert.equal(e.fqeConfigInvalid, true);
   }
 });
+
+test('parseConfigYaml throws on the inline empty require_for spelling too', () => {
+  // `require_for: []` reaches the same end state as the empty block form: valid
+  // config, rule gone, hasMoneyPolicy down a signal. The block form throwing
+  // while this one passed was an indefensible asymmetry.
+  assert.throws(() => parseConfigYaml([
+    'policy:', '  require_classes: ["unit"]', '  require_for: []',
+  ].join('\n')), /'require_for' at line 3 has no entries/);
+});
+
+test('a reserved-key error never prints a line number that cannot exist', () => {
+  // Three call sites passed a literal 0, producing "at line 0". parseRequireFor
+  // had the real lines available through its caller and simply was not given
+  // them; parseFlatMapBlock has none, so it omits the clause rather than faking
+  // one. Same degraded-error path that parsePolicyBlock's default once produced.
+  try {
+    parseConfigYaml(['mutation:', '  __proto__: x'].join('\n'));
+    assert.fail('expected a throw');
+  } catch (e) {
+    assert.doesNotMatch(e.message, /line 0/);
+    assert.doesNotMatch(e.message, /line undefined/);
+    assert.match(e.message, /reserved JavaScript property name/);
+  }
+  try {
+    parseConfigYaml(['policy:', '  require_for:', '    - __proto__: ["a"]'].join('\n'));
+    assert.fail('expected a throw');
+  } catch (e) {
+    assert.match(e.message, /at line 3/); // the real file line, not 0
+  }
+});

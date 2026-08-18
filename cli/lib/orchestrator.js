@@ -277,8 +277,13 @@ const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function assertSafeKey(key, whatItIs, lineNo) {
   if (UNSAFE_KEYS.has(key)) {
+    // `lineNo` is optional because parseFlatMapBlock genuinely has no line
+    // numbers to give. Omit the clause rather than print "at line 0", a line that
+    // cannot exist: the same degraded-error path that parsePolicyBlock's
+    // `lineNos = []` default produced, which was deleted rather than carried.
+    const at = Number.isInteger(lineNo) && lineNo > 0 ? ` at line ${lineNo}` : '';
     throw configParseError(
-      `config parse: ${whatItIs} '${key}' at line ${lineNo} is a reserved JavaScript ` +
+      `config parse: ${whatItIs} '${key}'${at} is a reserved JavaScript ` +
       `property name and cannot be used as a key. Rename it.`
     );
   }
@@ -342,7 +347,7 @@ function parseFlatMapBlock(lines) {
     if (val === '') {
       throw configParseError(`config parse: key '${key}' must have an inline value (e.g. ${key}: blocking)`);
     }
-    assertSafeKey(key, 'key', 0);
+    assertSafeKey(key, 'key');
     if (Object.prototype.hasOwnProperty.call(out, key)) {
       throw configParseError(
         `config parse: duplicate key '${key}' in this block: ${raw.trim()}. ` +
@@ -466,7 +471,7 @@ function parsePolicyBlock(lines, lineNos) {
           `The later block would silently replace the earlier one.`
         );
       }
-      const { items, next } = parseRequireFor(lines, i + 1);
+      const { items, next } = parseRequireFor(lines, i + 1, lineNos);
       // Fail closed on an empty block, for the reason the sibling branch below
       // already states: `require_for:` with no items (or with every item
       // commented out) parsed to `[]`, which validateConfig accepts and the
@@ -486,6 +491,21 @@ function parsePolicyBlock(lines, lineNos) {
       // that the verdict would then ignore.
       throw configParseError(`policy parse: key '${key}' must have an inline list value (e.g. ${key}: ["unit"])`);
     } else {
+      // `require_for: []` is the inline spelling of the empty block just above.
+      // Same end state: validateConfig accepts it, the verdict ignores it, the
+      // diff-conditional rule is gone and hasMoneyPolicy loses a signal. The
+      // author did type it, so it is legible rather than silent, but there is no
+      // "require nothing conditionally" that differs from omitting the key, and
+      // the block spelling throwing while this one passes is indefensible.
+      if (key === 'require_for') {
+        const parsedList = parseMaybeList(val, `policy.${key}, line ${lineNos[i]}`);
+        if (Array.isArray(parsedList) && parsedList.length === 0) {
+          throw configParseError(
+            `policy parse: 'require_for' at line ${lineNos[i]} has no entries. ` +
+            `Give it at least one '- when: [...]' item, or remove the key.`
+          );
+        }
+      }
       if (Object.prototype.hasOwnProperty.call(policy, key)) {
         throw configParseError(
           `policy parse: duplicate key '${key}' at line ${lineNos[i]}. ` +
@@ -503,7 +523,7 @@ function parsePolicyBlock(lines, lineNos) {
  * (indent 4) optionally followed by `classes: [...]` (indent 6).
  * @returns {{ items: object[], next: number }} next = index after the block
  */
-function parseRequireFor(lines, start) {
+function parseRequireFor(lines, start, lineNos = []) {
   const items = [];
   let i = start;
   let cur = null;
@@ -525,7 +545,7 @@ function parseRequireFor(lines, start) {
         // would make a diff-conditional money requirement vanish).
         throw configParseError(`policy parse: require_for key '${m[1]}' must have an inline list value`);
       }
-      assertSafeKey(m[1], 'require_for key', 0);
+      assertSafeKey(m[1], 'require_for key', lineNos[i]);
       cur[m[1]] = parseMaybeList(m[2], `require_for.${m[1]}`);
     } else {
       if (!cur) throw configParseError(`policy parse: require_for continuation without an item: ${line}`);
@@ -535,7 +555,7 @@ function parseRequireFor(lines, start) {
       // written without its leading `- ` disappeared: both keys overwrote the
       // first item's, the two entries merged into one, and the earlier `when`
       // (typically the payments rule) was gone with the config still valid.
-      assertSafeKey(m[1], 'require_for key', 0);
+      assertSafeKey(m[1], 'require_for key', lineNos[i]);
       if (Object.prototype.hasOwnProperty.call(cur, m[1])) {
         throw configParseError(
           `policy parse: duplicate key '${m[1]}' in one require_for entry: ${line.trim()}. ` +
