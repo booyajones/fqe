@@ -945,3 +945,53 @@ test('a block sequence under a flat-map key is named as one, not just "needs a v
     (e) => /must have an inline value/.test(e.message) && !/block sequence/.test(e.message)
   );
 });
+
+test("a doubled '' inside a single-quoted scalar does not end it", () => {
+  // YAML escapes a quote inside a single-quoted scalar by doubling it. Closing on
+  // the first of the pair left the scanner outside the string for the rest of the
+  // value, so the ` #` after it read as a comment and the value was truncated —
+  // silently, since `command` accepts any non-empty string. Found by review.
+  const r = parseConfigYaml([
+    'runners:', '  m:', "    command: 'echo it''s done # not a comment'",
+  ].join('\n')).runners.m;
+  assert.equal(r.command, "echo it''s done # not a comment");
+  // Byte-identical to what the parser produced before comment stripping existed:
+  // this function decides where a comment starts, it does not change the value.
+  // A real comment after the closing quote is still stripped.
+  assert.equal(
+    parseConfigYaml([
+      'runners:', '  m:', "    command: 'echo it''s done'   # a real comment",
+    ].join('\n')).runners.m.command,
+    "echo it''s done"
+  );
+  // And the same pair inside a flow list still splits into the elements written.
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  m:', "    args: ['it''s', b]   # note"].join('\n')).runners.m.args,
+    ["it''s", 'b']
+  );
+});
+
+test('a comma in a plain scalar is punctuation, not an element boundary', () => {
+  // The element-start rule belongs to flow lists. Applied to a plain scalar, an
+  // unmatched apostrophe just after a comma opened a quote that never closed, the
+  // unterminated-quote fallback handed the value back whole, and the trailing
+  // comment survived into it — the exact silent carry-through this fix removes.
+  assert.equal(
+    parseConfigYaml([
+      'runners:', '  m:', "    report: results,'twas green # all good",
+    ].join('\n')).runners.m.report,
+    "results,'twas green"
+  );
+  // Same shape on the policy path, where the value reaches computeRequiredClasses.
+  assert.equal(
+    parseConfigYaml([
+      'policy:', '  require_for:', '    - when: ["src/a"]', "      classes: money,'tis-important # note",
+    ].join('\n')).policy.require_for[0].classes,
+    "money,'tis-important"
+  );
+  // A genuine flow list keeps the element-start rule it needs.
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  m:', "    args: [a, 'b,c', d]   # note"].join('\n')).runners.m.args,
+    ['a', 'b,c', 'd']
+  );
+});

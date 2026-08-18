@@ -368,18 +368,36 @@ function blockShapeHint(trimmed, rawLine) {
  * and both messages name the key and the line.
  */
 function stripInlineComment(value) {
+  // The element-start rule belongs to flow lists and only to them. Applying it to
+  // a plain scalar treats an ordinary comma as an element boundary, so an
+  // unmatched apostrophe just after one (`report: results,'twas green # note`)
+  // opened a quote that never closed, the unterminated-quote fallback returned
+  // the value whole, and a real trailing comment survived into it. Both spellings
+  // predate this function — the comment was not stripped there before either — so
+  // this is the fix reaching a shape it had missed rather than a regression, but
+  // it is the same silent carry-through the function exists to remove.
+  const isFlowList = value.trimStart().startsWith('[');
   let quote = null;
   let atElementStart = true;
   for (let i = 0; i < value.length; i++) {
     const ch = value[i];
     if (quote) {
       if (ch === '\\' && quote === '"' && i + 1 < value.length) { i++; continue; }
+      // YAML escapes a quote inside a single-quoted scalar by doubling it. Closing
+      // on the first of the pair left the scanner OUTSIDE the string for the rest
+      // of the value, so `command: 'echo it''s done # not a comment'` had its tail
+      // read as unquoted, the ` #` taken for a comment, and the value truncated to
+      // `'echo it''s done` — with validateConfig accepting it, since `command` is
+      // any non-empty string. Found by review. This function does not collapse the
+      // pair (parseInlineScalar does not either, and changing what the value IS is
+      // not this function's job); it only has to know the scalar has not ended.
+      if (ch === "'" && quote === "'" && value[i + 1] === "'") { i++; continue; }
       if (ch === quote) { quote = null; atElementStart = false; }
       continue;
     }
     if ((ch === '"' || ch === "'") && atElementStart) { quote = ch; continue; }
     if (ch === '#' && (i === 0 || /\s/.test(value[i - 1]))) return value.slice(0, i).trimEnd();
-    if (ch === '[' || ch === ',') { atElementStart = true; continue; }
+    if (isFlowList && (ch === '[' || ch === ',')) { atElementStart = true; continue; }
     if (!/\s/.test(ch)) atElementStart = false;
   }
   if (quote) return value;
