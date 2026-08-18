@@ -608,3 +608,117 @@ test('the ONLY silent case is a genuinely new repo with no base named', () => {
   assert.strictEqual(isGenuinelyFirstRun({ repoDir: shallow }), false,
     'a shallow clone is not a first run');
 });
+
+/**
+ * ROUND 6. Five rounds hardened "the diff did not resolve". A six-lens
+ * adversarial sweep found the larger failure: THE DIFF RESOLVED, TO THE WRONG
+ * SCOPE, SILENTLY. No guard could catch it because nothing failed.
+ *
+ * `changedFiles()` fell back to `HEAD~1..HEAD` whenever no base was given - a
+ * guess at the pull request's range, wrong for every multi-commit PR. git
+ * succeeded, so diff.ok was true and the whole indeterminate-diff predicate was
+ * never consulted.
+ */
+function prRepo() {
+  const dir = tmpRepo();
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  fs.writeFileSync(path.join(dir, '.fqe.yml'),
+    'runners:\n  unit:\n    command: "node"\n    args: ["-e", "process.exit(1)"]\n    when: ["src/**"]\n');
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: dir, env });
+  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+
+  // PR commit 1 breaks src/. PR commit 2 touches only docs.
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'app.js'), 'REGRESSION\n');
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', 'pr c1: breaks src'], { cwd: dir, env });
+  fs.writeFileSync(path.join(dir, 'README.md'), 'docs\n');
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', 'pr c2: docs only'], { cwd: dir, env });
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  return { dir, base, head };
+}
+
+test('a multi-commit PR is gated over its WHOLE range when --base is given', () => {
+  const { dir, base, head } = prRepo();
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  assert.strictEqual(r.status, 2, `the break in PR commit 1 must be caught:\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /runners_fired: \["unit"\]/, 'the when-gated runner must have fired');
+});
+
+test('with NO --base the gate does not silently guess HEAD~1 and pass', () => {
+  const { dir, head } = prRepo();
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  // Previously: exit 0, PASS, runners_fired [] - because HEAD~1..HEAD covered
+  // only the docs commit. fqe cannot gate a range it was not given; saying so is
+  // the only honest outcome.
+  assert.notStrictEqual(r.status, 0,
+    `a run that was never told its range must not report clean:\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /indeterminate: true/, 'the receipt must say the scope was unknown');
+});
+
+test('--base given but EMPTY is rejected, not silently demoted to "no base"', () => {
+  const { dir, head } = prRepo();
+  for (const bad of ['', '   ']) {
+    const r = spawnSync(process.execPath,
+      [BIN, 'run', '--commit', head, '--base', bad, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+      { encoding: 'utf8', cwd: dir, timeout: 90000 });
+    assert.strictEqual(r.status, 1, `--base '${bad}' must be a hard error, not a silent scope change`);
+    assert.match(`${r.stdout}${r.stderr}`, /--base was given but is empty/);
+  }
+});
+
+test('the receipt records the scope the verdict is about', () => {
+  const { dir, base, head } = prRepo();
+  spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  // Without this a blind PASS and a genuinely clean PASS are byte-identical.
+  assert.match(yml, /diff_scope:/);
+  assert.match(yml, new RegExp(`base: ${base}`), 'the receipt must name the base it diffed against');
+  assert.match(yml, /changed_file_count: [12]/, 'the receipt must record how much it looked at');
+  assert.match(yml, /indeterminate: false/);
+});
+
+test('git REFUSING to answer is not mistaken for a brand-new repo', () => {
+  const { isGitRepo, isGenuinelyFirstRun } = require('../lib/orchestrator');
+  const { dir } = prRepo();
+  // A real repo whose git probes fail must still read as a repo, because the
+  // .git marker proves it is one. Simulated by pointing GIT_DIR at nothing,
+  // which is what a dubious-ownership refusal or a moved worktree looks like.
+  const prev = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(dir, 'no-such-git-dir');
+  try {
+    assert.strictEqual(isGitRepo(dir), true,
+      'git failing to answer must never be read as "there is no repo here"');
+    assert.strictEqual(isGenuinelyFirstRun({ repoDir: dir }), false,
+      'the most blind state fqe can be in must not receive the most trusting treatment');
+  } finally {
+    if (prev === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = prev;
+  }
+});
+
+test('an explicitly EMPTY FQE_CHANGED_FILES is never excused by repo history', () => {
+  // The caller asserting "my diff came back empty" is a CI signal. A git-history
+  // predicate about the checkout has no bearing on it and must not silence it.
+  const { dir, head } = prRepo();
+  const prev = process.env.FQE_CHANGED_FILES;
+  process.env.FQE_CHANGED_FILES = '';
+  try {
+    const r = spawnSync(process.execPath,
+      [BIN, 'run', '--commit', head, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+      { encoding: 'utf8', cwd: dir, timeout: 90000, env: { ...process.env, FQE_CHANGED_FILES: '' } });
+    assert.notStrictEqual(r.status, 0, 'an empty CI-supplied diff must not report clean');
+  } finally {
+    if (prev === undefined) delete process.env.FQE_CHANGED_FILES;
+    else process.env.FQE_CHANGED_FILES = prev;
+  }
+});

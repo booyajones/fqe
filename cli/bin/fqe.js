@@ -160,6 +160,15 @@ const SUBCOMMANDS = {
     if (!/^[a-f0-9]{40}$/.test(opts.commit)) {
       die(`run: --commit must be 40-char hex, got '${opts.commit}'`);
     }
+    // `--base ''` is a CI accident, not a request. An unset shell variable
+    // (`--base "$BASE_SHA"` with BASE_SHA empty) used to arrive here as an empty
+    // string, test falsy at every `if (baseSha)` downstream, and silently demote
+    // the run to "no base named". Reject it loudly: the caller clearly INTENDED
+    // to scope the run and their variable did not resolve.
+    if (opts.base !== undefined && String(opts.base).trim() === '') {
+      die('run: --base was given but is empty. A shell variable did not resolve. '
+        + 'Pass a real base ref, or omit --base entirely.');
+    }
     const result = orchestrator.run({
       commitSha: opts.commit,
       baseSha: opts.base,
