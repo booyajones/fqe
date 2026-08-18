@@ -42,6 +42,10 @@ const ALG = 'hmac-sha256';
 // scalars (strings, an integer, booleans, nulls) and round-trips faithfully.
 const SIGNED_FIELDS = Object.freeze(['schema_version', 'fqe_version', 'commit_sha', 'content_hash', 'inputs_hash', 'verdict', 'bypass', 'diff_scope']);
 
+// Every field name that has EVER been part of a signed tuple. Used to sanity-check
+// a receipt's self-declared `covers` before honouring it.
+const KNOWN_SIGNABLE = new Set(['schema_version', 'fqe_version', 'commit_sha', 'content_hash', 'inputs_hash', 'verdict', 'bypass', 'diff_scope']);
+
 /**
  * Deterministic JSON: object keys sorted recursively, so the same logical receipt always
  * serializes identically regardless of key insertion order.
@@ -59,10 +63,23 @@ function keyIdOf(key) {
   return crypto.createHash('sha256').update(String(key), 'utf8').digest('hex').slice(0, 12);
 }
 
-/** The payload that gets signed: the canonical SIGNED_FIELDS tuple (robust to round-trip). */
-function signedPayload(receipt) {
+/**
+ * The payload that gets signed.
+ *
+ * `fields` MUST be honoured when verifying an existing receipt, because the
+ * signed tuple can grow between versions. Adding `diff_scope` to SIGNED_FIELDS
+ * without this made every receipt signed by an earlier fqe verify as
+ * "signature mismatch (receipt was tampered...)" - a legitimate, untampered,
+ * in-retention artifact reported as forged, by the tool whose entire product is
+ * tamper-evidence, under a scaffold that keeps receipts for 365 days.
+ *
+ * `signature.covers` was already being WRITTEN for exactly this purpose and was
+ * never read back. It is now the authority on verify.
+ */
+function signedPayload(receipt, fields) {
+  const use = Array.isArray(fields) && fields.length ? fields : SIGNED_FIELDS;
   const o = {};
-  for (const k of SIGNED_FIELDS) o[k] = receipt[k] === undefined ? null : receipt[k];
+  for (const k of use) o[k] = receipt[k] === undefined ? null : receipt[k];
   return stableStringify(o);
 }
 
@@ -96,7 +113,16 @@ function verifyReceipt(receipt, key) {
   if (!sig || typeof sig !== 'object') return { ok: false, reason: 'no signature present' };
   if (sig.alg !== ALG) return { ok: false, reason: `unsupported signature alg '${sig.alg}'` };
   if (typeof key !== 'string' || key.length === 0) return { ok: false, reason: 'no verification key provided' };
-  const expected = crypto.createHmac('sha256', key).update(signedPayload(receipt), 'utf8').digest('hex');
+  // Verify over the field list the receipt was ACTUALLY signed with. Forging a
+  // shorter `covers` to dodge a field does not help an attacker: changing it
+  // changes the payload, and producing a matching MAC still requires the key.
+  // Every name must be one we know, so a malformed list cannot smuggle in
+  // arbitrary keys.
+  const covers = Array.isArray(sig.covers) && sig.covers.length
+    && sig.covers.every((f) => KNOWN_SIGNABLE.has(f))
+    ? sig.covers
+    : SIGNED_FIELDS;
+  const expected = crypto.createHmac('sha256', key).update(signedPayload(receipt, covers), 'utf8').digest('hex');
   const got = typeof sig.value === 'string' ? sig.value : '';
   const a = Buffer.from(expected, 'hex');
   const b = Buffer.from(got, 'hex');

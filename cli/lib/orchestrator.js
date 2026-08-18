@@ -464,28 +464,42 @@ function isGitRepo(repoDir) {
 }
 
 /**
- * Does `dir` ITSELF carry a `.git` marker?
+ * Is there a `.git` marker at `dir` or ABOVE it?
  *
- * Deliberately does NOT walk up. An earlier version did, and it reported "this
- * is a repo" for any scratch directory that happened to sit anywhere beneath an
- * unrelated checkout - a dotfiles-tracked home directory, a temp dir inside a
- * monorepo - purely from nesting. That turns a legitimate "nothing to diff"
- * silence into a false alarm decided by the machine's directory layout, and a
- * gate that cries wolf gets ignored, which is how the real signal gets missed.
+ * This walks up, and the previous attempt to stop it from walking up was wrong.
+ * `--repo-dir <repo>/src` is a documented, tested invocation, and a subdirectory
+ * legitimately has no `.git` of its own - so bounding the check to the directory
+ * itself meant a git failure inside a subdirectory was once again read as
+ * "brand-new repo" and produced a clean green. That is the exact hole this whole
+ * function was written to close, reopened one door over.
  *
- * Bounding to the directory itself still covers every case this exists for: a
- * dubious-ownership refusal, a broken GIT_DIR, git missing from PATH, and a
- * linked worktree whose main clone moved all leave `.git` right here, in the
- * directory fqe was pointed at.
+ * The false-alarm worry that motivated bounding it does not survive contact with
+ * the call site: hasGitMarker() runs ONLY when git failed to answer. If git is
+ * healthy, a scratch directory under an unrelated checkout gets `true` straight
+ * from `--is-inside-work-tree` and never reaches here. So the only case the walk
+ * can "wrongly" flag is one where git is ALSO broken, and being suspicious there
+ * is correct: fqe genuinely cannot tell what it is looking at.
  */
 function hasGitMarker(dir) {
   try {
-    return fs.existsSync(path.join(path.resolve(dir), '.git'));
+    let cur = path.resolve(dir);
+    for (;;) {
+      if (fs.existsSync(path.join(cur, '.git'))) return true;
+      const parent = path.dirname(cur);
+      if (parent === cur) return false;
+      cur = parent;
+    }
   } catch (_) {
     // Cannot even inspect the filesystem. Assume a repo so the caller takes the
     // suspicious branch rather than granting silence on an unreadable state.
     return true;
   }
+}
+
+/** The commit actually checked out in `repoDir`, or null if git cannot say. */
+function gitHeadOf(repoDir) {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoDir || process.cwd(), encoding: 'utf8' });
+  return r.status === 0 ? String(r.stdout).trim() : null;
 }
 
 function changedFiles({ baseSha, headSha, repoDir }) {
@@ -552,17 +566,53 @@ function changedFiles({ baseSha, headSha, repoDir }) {
     return { files: [], ok: false, reason: 'degenerate-range', source: 'git', declaredBase: baseSha };
   }
 
-  const r = spawnSync('git', ['diff', '--name-only', `${baseSha}..${headSha}`], { cwd, encoding: 'utf8' });
-  if (r.status !== 0) {
-    return { files: [], ok: false, reason: 'git-failed', source: 'git', declaredBase: baseSha };
+  // THE RANGE MUST BE MERGE-BASE ANCHORED (three-dot), NOT two-dot.
+  //
+  // `git diff base..head` compares two tree SNAPSHOTS. It answers "how do these
+  // two commits differ", not "what did this branch introduce". So when the base
+  // branch independently arrives at the same content the PR arrived at, the file
+  // DISAPPEARS from the diff even though the PR really changed it. Measured:
+  // fork has app.js "original"; the PR changes it to "BUGGY"; main independently
+  // also becomes "BUGGY". Two-dot returns ZERO files and the gate reports a
+  // clean, RESOLVED diff over a PR that changed gated code. Three-dot returns
+  // app.js. This is why GitHub's own "Files changed" view is three-dot - and the
+  // merge base was already being computed here, then thrown away.
+  const mb = spawnSync('git', ['merge-base', baseSha, headSha], { cwd, encoding: 'utf8' });
+  const mergeBase = mb.status === 0 ? String(mb.stdout).trim() : null;
+
+  if (!mergeBase) {
+    // "No merge base" has TWO very different causes and conflating them cost a
+    // real regression. On a SHALLOW clone it means the history was TRUNCATED,
+    // which says nothing about whether the branches are related - fetch-depth 1
+    // is the actions/checkout default, and shallow-fetching base and head
+    // separately is a common CI pattern. Treating that as unusable turned a run
+    // that previously CAUGHT a regression (FAIL, exit 2) into a FLAG, and FLAG
+    // maps to check_state: success, so it merges. Fall back to the two-dot diff
+    // there: approximate, but it is what caught the bug before, and a less
+    // precise range is not the same as no information.
+    if (repoIsShallow(cwd)) {
+      const rs = spawnSync('git', ['diff', '--name-only', `${baseSha}..${headSha}`], { cwd, encoding: 'utf8' });
+      if (rs.status !== 0) {
+        return { files: [], ok: false, reason: 'git-failed', source: 'git', declaredBase: baseSha };
+      }
+      return {
+        files: rs.stdout.split('\n').filter(Boolean),
+        ok: true,
+        reason: null,
+        source: 'git',
+        declaredBase: baseSha,
+        rangeStart: baseSha,
+        truncatedHistory: true,
+      };
+    }
+    // Not shallow: the histories genuinely share no ancestor, so a diff between
+    // them is not this pull request's change set and must not be shown as one.
+    return { files: [], ok: false, reason: 'no-merge-base', source: 'git', declaredBase: baseSha };
   }
 
-  // UNRELATED HISTORIES also "succeed". `git diff` happily compares two commits
-  // with no common ancestor, but the result is not the pull request's change
-  // set, so it must not be presented as one.
-  const mb = spawnSync('git', ['merge-base', baseSha, headSha], { cwd, encoding: 'utf8' });
-  if (mb.status !== 0) {
-    return { files: [], ok: false, reason: 'no-merge-base', source: 'git', declaredBase: baseSha };
+  const r = spawnSync('git', ['diff', '--name-only', `${mergeBase}..${headSha}`], { cwd, encoding: 'utf8' });
+  if (r.status !== 0) {
+    return { files: [], ok: false, reason: 'git-failed', source: 'git', declaredBase: baseSha };
   }
 
   return {
@@ -571,6 +621,8 @@ function changedFiles({ baseSha, headSha, repoDir }) {
     reason: null,
     source: 'git',
     declaredBase: baseSha,
+    rangeStart: mergeBase,
+    truncatedHistory: false,
   };
 }
 
@@ -1297,9 +1349,25 @@ function run(opts) {
       source: diff.source || 'git',
       base: diff.source === 'env' ? null : (opts.baseSha || null),
       declared_base: diff.declaredBase || null,
+      // The commit the diff ACTUALLY started from. For a normal run this is the
+      // merge base, not --base, and they differ whenever the base branch moved
+      // after the PR forked - which is most of the time. Recording only --base
+      // would describe a range that was never diffed.
+      range_start: diff.rangeStart || null,
+      // True when the merge base was unreachable because the clone is shallow, so
+      // the range is the approximate two-dot one. A reader can then tell a
+      // precise range from a best-effort one instead of assuming precision.
+      truncated_history: diff.truncatedHistory === true,
       changed_file_count: files.length,
       indeterminate: diffIndeterminate,
       unusable_reason: diff.reason || null,
+      // What was actually on disk when the runners executed. Runners run against
+      // the WORKING TREE, not against --commit, so when these differ the receipt
+      // is attesting a verdict for a commit whose tree was never the thing that
+      // was tested. Recorded rather than blocked: actions/checkout resolves a PR
+      // to a merge commit by default, so HEAD legitimately differs from
+      // head.sha on nearly every run, and failing on that would be pure noise.
+      tree_commit: gitHeadOf(repoDir),
     },
     human_review: humanReview,
   });

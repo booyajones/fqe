@@ -144,7 +144,7 @@ Bounded scope is a trust signal. fqe does not:
 
 2. **Bypass is a deliberate, audited act.** Every bypass writes to `bypass-tally.jsonl`, posts to a Check Run, gets archived in `audits/<sha>/`. Rolling rate above 10% in 14 days flips the `fqe/second-reviewer-required` check to FAIL, requiring an allowlisted second approver.
 
-3. **Engineers can read the source and run it locally.** No proprietary binaries. No closed-source dependency. `fqe explain` prints the audit. `fqe run --base origin/main --output ./out/` reproduces the CI behavior on your laptop.
+3. **Engineers can read the source and run it locally.** No proprietary binaries. No closed-source dependency. `fqe explain` prints the audit. `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/` reproduces the CI behavior on your laptop.
 
 ## See also
 

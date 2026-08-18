@@ -801,19 +801,26 @@ test('diff_scope is inside the signature, not merely alongside it', () => {
     `diff_scope must be signed; SIGNED_FIELDS = ${JSON.stringify(SIGNED_FIELDS)}`);
 });
 
-test('hasGitMarker does not escape into an unrelated ancestor repo', () => {
-  const { isGitRepo } = require('../lib/orchestrator');
-  // A plain scratch dir nested under an unrelated checkout is NOT a repo. An
-  // earlier version walked up the tree and said it was, purely from nesting,
-  // turning a legitimate silence into a false alarm decided by directory layout.
-  const outer = tmpRepo();
-  const nested = path.join(outer, 'scratch', 'deep');
-  fs.mkdirSync(nested, { recursive: true });
+test('a git failure inside a SUBDIRECTORY is still treated as suspicious', () => {
+  const { isGitRepo, isGenuinelyFirstRun } = require('../lib/orchestrator');
+  // `--repo-dir <repo>/src` is a documented invocation and a subdirectory has no
+  // `.git` of its own. Bounding the marker check to the directory itself meant a
+  // git failure there read as "brand-new repo" and produced a clean green - the
+  // exact hole this function exists to close, reopened one door over.
+  //
+  // The earlier version of this test was mislabeled: its "unrelated ancestor"
+  // was a genuine subdirectory of the repo it had just created, and it asserted
+  // false was correct for precisely the case that must be true.
+  const repo = tmpRepo();
+  const sub = path.join(repo, 'src');
+  fs.mkdirSync(sub, { recursive: true });
   const prev = process.env.GIT_DIR;
-  process.env.GIT_DIR = path.join(outer, 'no-such-git-dir');
+  process.env.GIT_DIR = path.join(repo, 'no-such-git-dir');
   try {
-    assert.strictEqual(isGitRepo(nested), false,
-      'nesting under an unrelated repo must not make a scratch dir "a repo"');
+    assert.strictEqual(isGitRepo(sub), true,
+      'a subdirectory of a real repo, with git unable to answer, must read as a repo');
+    assert.strictEqual(isGenuinelyFirstRun({ repoDir: sub }), false,
+      'a git failure must never be granted the brand-new-repo exemption');
   } finally {
     if (prev === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = prev;
   }
@@ -865,12 +872,169 @@ test('every documented `fqe run` invocation names a --base', () => {
     for (const m of text.matchAll(/fqe run ([^\n`]*)/g)) {
       const tail = m[1].split(/&&|\|\||[|;]/)[0];
       // Only real invocations. Prose like "`fqe run` writes the receipt" is a
-      // mention, not a command, and flagging it would be the cry-wolf failure
-      // this guard exists to prevent. A command always names --commit.
-      if (!/--commit\b/.test(tail)) continue;
-      if (!/--base\b/.test(tail)) offenders.push(`${path.relative(root, f)}: fqe run ${tail.trim().slice(0, 70)}`);
+      // mention, not a command. Distinguish by whether ANY flag follows - not by
+      // whether --commit does. Keying on --commit made the guard skip exactly
+      // the commands that were BROKEN for lack of it: README's local-dev line
+      // read `fqe run --base origin/main --output ./out/` and died with
+      // "missing required flag: --commit", and this guard waved it through as
+      // prose. An escape hatch shaped like the defect catches nothing.
+      if (!/--[a-z]/.test(tail)) continue;
+      const missing = ['commit', 'base'].filter((f) => !new RegExp(`--${f}\\b`).test(tail));
+      if (missing.length) {
+        offenders.push(`${path.relative(root, f)}: fqe run ${tail.trim().slice(0, 60)} [missing --${missing.join(', --')}]`);
+      }
     }
   }
   assert.deepStrictEqual(offenders, [],
     `these documented commands omit --base and no longer match what CI does:\n  ${offenders.join('\n  ')}`);
+});
+
+/**
+ * ROUND 8. Round 7's own fixes produced three of these five.
+ */
+
+test('the diff is merge-base anchored, so a PR change is not hidden by a convergent base', () => {
+  const dir = tmpRepo();
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const g = (...a) => execFileSync('git', a, { cwd: dir, env, encoding: 'utf8' });
+  fs.writeFileSync(path.join(dir, '.fqe.yml'),
+    'runners:\n  unit:\n    command: "node"\n    args: ["-e", "process.exit(1)"]\n    when: ["app.js"]\n');
+  fs.writeFileSync(path.join(dir, 'app.js'), 'original\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'fork');
+  const branch = g('rev-parse', '--abbrev-ref', 'HEAD').trim();
+
+  // The PR changes app.js.
+  g('checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(dir, 'app.js'), 'BUGGY\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'pr: change app.js');
+  const head = g('rev-parse', 'HEAD').trim();
+
+  // The base branch INDEPENDENTLY arrives at the same content.
+  g('checkout', '-q', branch);
+  fs.writeFileSync(path.join(dir, 'app.js'), 'BUGGY\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'base: same content by another route');
+  const base = g('rev-parse', 'HEAD').trim();
+
+  // Two-dot sees nothing here; three-dot sees app.js. The PR really changed it.
+  assert.strictEqual(execFileSync('git', ['diff', '--name-only', `${base}..${head}`], { cwd: dir, encoding: 'utf8' }).trim(), '',
+    'precondition: two-dot must be blind to this');
+
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  assert.strictEqual(r.status, 2,
+    `the PR changed a gated file; a snapshot comparison must not hide it:\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /runners_fired: \["unit"\]/);
+});
+
+test('the receipt records the range it actually diffed, not just --base', () => {
+  const { dir, base, head } = prRepo();
+  spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /range_start: [0-9a-f]{40}/, 'the merge base actually used must be recorded');
+  assert.match(yml, /truncated_history: false/);
+  assert.match(yml, /tree_commit: /, 'what was on disk when runners ran must be recorded');
+});
+
+test('a shallow clone with no reachable merge base is NOT downgraded to non-blocking', () => {
+  // repoIsShallow() already existed and the no-merge-base guard was not consulting
+  // it, so a run that previously CAUGHT a regression became a FLAG - and FLAG maps
+  // to check_state: success, i.e. it merges. fetch-depth 1 is the actions/checkout
+  // default and shallow-fetching base and head separately is a common CI pattern,
+  // so this is the ordinary case, not an exotic one.
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-origin-'));
+  const go = (...a) => execFileSync('git', a, { cwd: origin, env, encoding: 'utf8' });
+  execFileSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: origin });
+  for (const v of ['v1', 'v2', 'v3']) {
+    fs.appendFileSync(path.join(origin, 'src.js'), v + '\n');
+    go('add', '-A'); go('commit', '-q', '-m', v);
+  }
+  const base = go('rev-parse', 'HEAD').trim();
+  go('checkout', '-q', '-b', 'feature');
+  fs.appendFileSync(path.join(origin, 'src.js'), 'BROKEN\n');
+  go('add', '-A'); go('commit', '-q', '-m', 'pr breaks it');
+  const head = go('rev-parse', 'HEAD').trim();
+
+  // Shallow-fetch base and head INDEPENDENTLY: both commits present, no shared
+  // history reachable, so `git merge-base` fails purely from truncation.
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-shallowwork-'));
+  const gw = (...a) => execFileSync('git', a, { cwd: work, env, encoding: 'utf8' });
+  execFileSync('git', ['init', '-q', '.'], { cwd: work });
+  const url = 'file://' + origin.split(path.sep).join('/');
+  gw('fetch', '-q', '--depth', '1', url, base);
+  gw('fetch', '-q', '--depth', '1', url, head);
+  gw('checkout', '-q', head);
+
+  assert.strictEqual(gw('rev-parse', '--is-shallow-repository').trim(), 'true', 'precondition: shallow');
+  const mb = spawnSync('git', ['merge-base', base, head], { cwd: work, encoding: 'utf8' });
+  assert.notStrictEqual(mb.status, 0, 'precondition: merge-base must be unreachable from truncation');
+
+  fs.writeFileSync(path.join(work, '.fqe.yml'), [
+    'runners:',
+    '  unit:',
+    '    command: "node"',
+    '    args: ["-e", "process.exit(1)"]',
+    '    when: ["src.js"]',
+    '',
+  ].join('\n'));
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(work, 'out'), '--repo-dir', work],
+    { encoding: 'utf8', cwd: work, timeout: 90000 });
+
+  assert.strictEqual(r.status, 2,
+    `truncated history is not unrelated history; the regression must still block:
+${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(work, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /runners_fired: \["unit"\]/, 'the when-gated runner must still fire');
+  assert.match(yml, /truncated_history: true/, 'the receipt must say the range was approximate');
+});
+
+test('a receipt signed before diff_scope existed still verifies', () => {
+  const { signReceipt, verifyReceipt, SIGNED_FIELDS } = require('../lib/signature');
+  const KEY = 'k'.repeat(64);
+  const receipt = {
+    schema_version: 1, fqe_version: '0.18.19', commit_sha: 'a'.repeat(40),
+    content_hash: 'b'.repeat(64), inputs_hash: 'c'.repeat(64),
+    verdict: 'PASS', bypass: null,
+  };
+  // Simulate an archived receipt signed by an older fqe: no diff_scope key, and
+  // a `covers` list that predates it.
+  const legacy = SIGNED_FIELDS.filter((f) => f !== 'diff_scope');
+  const crypto = require('node:crypto');
+  const { stableStringify } = require('../lib/signature');
+  const o = {};
+  for (const k of legacy) o[k] = receipt[k] === undefined ? null : receipt[k];
+  const value = crypto.createHmac('sha256', KEY).update(stableStringify(o), 'utf8').digest('hex');
+  const archived = { ...receipt, signature: { alg: 'hmac-sha256', value, key_id: require('../lib/signature').keyIdOf(KEY), signed_at: null, covers: legacy } };
+
+  const v = verifyReceipt(archived, KEY);
+  assert.strictEqual(v.ok, true,
+    `a legitimate untampered receipt in its retention window must not be reported as forged: ${v.reason}`);
+
+  // And tampering a signed field must STILL fail.
+  const tampered = { ...archived, verdict: 'FAIL' };
+  assert.strictEqual(verifyReceipt(tampered, KEY).ok, false, 'tamper detection must survive the compatibility fix');
+});
+
+test('a forged narrower `covers` cannot strip a field out of the signature', () => {
+  const { signReceipt, verifyReceipt } = require('../lib/signature');
+  const KEY = 'k'.repeat(64);
+  const signed = signReceipt({
+    schema_version: 1, fqe_version: '0.18.19', commit_sha: 'a'.repeat(40),
+    content_hash: 'b'.repeat(64), inputs_hash: 'c'.repeat(64),
+    verdict: 'FAIL', bypass: null,
+    diff_scope: { source: 'git', base: 'x', changed_file_count: 3, indeterminate: false },
+  }, KEY);
+  // Attacker rewrites diff_scope AND shrinks covers to try to exclude it.
+  const forged = {
+    ...signed,
+    diff_scope: { source: 'git', base: 'x', changed_file_count: 0, indeterminate: false },
+    signature: { ...signed.signature, covers: signed.signature.covers.filter((f) => f !== 'diff_scope') },
+  };
+  assert.strictEqual(verifyReceipt(forged, KEY).ok, false,
+    'shrinking covers changes the payload; without the key the MAC cannot match');
 });
