@@ -12,7 +12,7 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { validateConfig } = require('../lib/config_schema');
 const { parseConfigYaml } = require('../lib/orchestrator');
-const { init, PAYMENTS_FQE_YML, armPaymentsTemplate } = require('../lib/init');
+const { init, PAYMENTS_FQE_YML, armPaymentsTemplate, ARM_BEGIN_RE, ARM_END_RE } = require('../lib/init');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-ms-'));
@@ -164,7 +164,13 @@ test('MS U3: the ARM markers uncomment into a valid, strict money config', () =>
   assert.equal(r.valid, true, `the ARMED template must validate:\n${r.errors.join('\n')}`);
   assert.deepEqual(Object.keys(armed.runners), ['money', 'contract']);
   assert.equal(armed.require_money_idempotency, true, 'ARM 1 must turn the idempotency requirement on');
-  assert.ok(armed.policy && Array.isArray(armed.policy.require_for), 'ARM 1 must turn the require_for policy on');
+  // policy.require_for is deliberately NOT part of arming: its globs name paths fqe cannot
+  // know, and a glob that matches nothing is a hard every-PR BLOCK. It ships as an OPTIONAL
+  // block OUTSIDE the ARM markers, so arming must leave it commented.
+  assert.equal(armed.policy, undefined,
+    'arming must NOT enable policy.require_for; its example globs would block every PR in a repo with a different layout');
+  assert.match(PAYMENTS_FQE_YML, /^# OPTIONAL, and NOT part of arming\./m,
+    'the require_for example must still ship, as an optional block');
   for (const name of ['money', 'contract']) {
     const cfg = armed.runners[name];
     assert.equal(cfg.always_run, true, `${name} must be always_run, not when-scoped`);
@@ -200,13 +206,18 @@ function armedTemplate() {
     .replace(/^ {4}inventory_cmd: .*$/gm, '    inventory_cmd: "echo 1"');
 }
 
-/** A real payments repo: every path the template's require_for names exists. */
+/**
+ * An ORDINARY payments repo: money code under src/payments and nothing else. Deliberately
+ * NOT one that happens to have every directory the template's old require_for example
+ * named. The earlier version of this seed created src/ledger and src/billing too, which
+ * is exactly what hid the dead-glob block: the armed template FAILed every PR in a repo
+ * that merely used a different layout, and no test could see it because every test repo
+ * had been built to match the template.
+ */
 const PAYMENTS_SEED = {
   'README.md': 'hello\n',
   'scripts/suite.js': SUITE,
   'src/payments/charge.js': 'function charge(cents) { return cents; }\n',
-  'src/ledger/post.js': 'function post(entry) { return entry; }\n',
-  'src/billing/invoice.js': 'function invoice(id) { return id; }\n',
 };
 
 test('MS U4: in a real payments repo, always_run runs the money suite on a docs-only PR and when-globs do not', () => {
@@ -261,13 +272,26 @@ test('MS U5: the armed template PASSes a pull request that changes the money pat
  * working, narrower gate. Prose about behaviour has to be pinned by the behaviour.
  */
 test('MS U6: ARM 2 alone is a working narrower gate; ARM 1 alone blocks every PR', () => {
+  // Derive the per-block markers from the EXPORTED regexes rather than retyping them.
+  // Hand-copied marker text would silently stop matching if init.js reworded the sentinel,
+  // and this helper would then quietly return a fully-commented config - testing something
+  // no human would ever produce.
+  const forBlock = (re, n) => {
+    const src = re.source.replace('\\d', String(n));
+    assert.notEqual(src, re.source, `expected a \\d placeholder in ${re.source}`);
+    return new RegExp(src);
+  };
   const onlyBlock = (n) => {
-    const out = []; let inside = false;
+    const begin = forBlock(ARM_BEGIN_RE, n);
+    const end = forBlock(ARM_END_RE, n);
+    const out = []; let inside = false; let sawBlock = false;
     for (const line of PAYMENTS_FQE_YML.split(/\r?\n/)) {
-      if (!inside && new RegExp(`^# >>> ARM ${n} of 2:.*>>>$`).test(line)) { inside = true; continue; }
-      if (inside && new RegExp(`^# <<< END ARM ${n} of 2 <<<$`).test(line)) { inside = false; continue; }
+      if (!inside && begin.test(line)) { inside = true; sawBlock = true; continue; }
+      if (inside && end.test(line)) { inside = false; continue; }
       out.push(inside ? line.replace(/^# ?/, '') : line);
     }
+    assert.ok(sawBlock, `ARM ${n} markers not found; the sentinel wording changed`);
+    assert.equal(inside, false, `ARM ${n} was opened and never closed`);
     return out.join('\n');
   };
 
@@ -297,4 +321,37 @@ test('MS U7: an unclosed ARM marker throws instead of uncommenting the rest of t
   const broken = PAYMENTS_FQE_YML.replace('# <<< END ARM 2 of 2 <<<\n', '');
   assert.notEqual(broken, PAYMENTS_FQE_YML, 'the end marker must actually have been removed');
   assert.throws(() => armPaymentsTemplate(broken), /opened and never closed/);
+});
+
+/**
+ * MS U8: the third "arms into a gate that cannot pass" case, found by review after U5
+ * closed the second. `policy.require_for` used to be part of ARM 1 with its `when` globs
+ * hardcoded to src/payments + src/ledger + src/billing. A repo with only src/payments -
+ * an ordinary layout - armed the template as instructed and then FAILed EVERY pull
+ * request, money or not, on `BLOCKED (dead policy glob)`, because
+ * require_money_policy_when_detected (live in this profile) makes that check strict.
+ *
+ * Every test above missed it because their repos were seeded to match the template's own
+ * globs. require_for is no longer part of arming; this pins both halves of that decision.
+ */
+test('MS U8: arming in a repo that lacks the template\'s example paths does not block, and the optional policy still guards', () => {
+  // Half 1: an ordinary layout (src/payments only) arms clean.
+  const repo = gitRepo({ ...PAYMENTS_SEED, '.fqe.yml': armedTemplate() });
+  const res = runGate(repo, { 'README.md': 'hello\nworld\n' });
+  assert.strictEqual(res.status, 0,
+    `arming must not depend on the repo having src/ledger and src/billing:\n${res.stdout}${res.stderr}`);
+  assert.ok(!reasonsOf(res.yml).some((r) => /dead policy glob/.test(r)),
+    `no dead-glob block may survive arming:\n${reasonsOf(res.yml).join('\n')}`);
+
+  // Half 2: the dead-glob guard itself is NOT gone. Turn the optional policy on with a
+  // glob this repo cannot satisfy and it must still BLOCK - that is what makes the
+  // warning above the optional block true rather than decorative.
+  const withPolicy = armedTemplate() +
+    '\npolicy:\n  require_for:\n    - when: ["src/ledger/**"]\n      classes: ["money"]\n';
+  const guarded = gitRepo({ ...PAYMENTS_SEED, '.fqe.yml': withPolicy });
+  const gres = runGate(guarded, { 'README.md': 'hello\nworld\n' });
+  assert.strictEqual(gres.status, 2,
+    `a dead require_for glob must still block:\n${gres.stdout}${gres.stderr}`);
+  assert.ok(reasonsOf(gres.yml).some((r) => /dead policy glob.*src\/ledger/.test(r)),
+    `and name the glob:\n${reasonsOf(gres.yml).join('\n')}`);
 });

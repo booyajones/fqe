@@ -101,27 +101,23 @@ const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init 
 #                                       requires, so arming does not fail validation.
 #
 # COMMENTED OUT ON PURPOSE: the money and contract runners call 'npm run test:money' and
-# 'npm run test:contract', and the policy globs name src/payments, src/ledger and
-# src/billing. fqe cannot know your scripts or your paths. Shipping them live blocks EVERY
+# 'npm run test:contract'. fqe cannot know your scripts. Shipping them live blocks EVERY
 # pull request in a repo that does not already have them - including the one that adds them.
 #
-# TO ARM THE MONEY GATE: uncomment BOTH marked blocks and point them at your real scripts
-# and paths. On Windows also restructure the command itself, not just its arguments (see
-# the note at the bottom). The two blocks are not symmetric:
-#   ARM 2 alone (the runners) is a WORKING gate, just a narrower one. A money-class runner
-#     arms the idempotency requirement by itself, so you get that for free. What you do
-#     NOT get is the path-to-class binding, so nothing demands money coverage on the
-#     ground that a money PATH changed.
-#   ARM 1 alone (the flags and the policy) BLOCKS EVERY PULL REQUEST, by design:
-#     require_money_idempotency on, with no runner that PROVES the invariant  = FAIL, every PR
-#     a policy.require_for glob that matches no file in the repo              = BLOCKED, every PR
-#       (deliberate: a typo'd money path would otherwise silently grant the loose bar)
+# TO ARM THE MONEY GATE: uncomment BOTH marked blocks and point the runners at your real
+# scripts. On Windows also restructure the command itself, not just its arguments (see the
+# note at the bottom). Nothing else needs editing: the armed runners are always_run, so
+# they do not name a single path, and there is no glob to get wrong.
 #
-# Every class you name in policy.require_for must have a runner that RAN AND PASSED, or the
-# gate FAILs on exactly the pull requests those globs cover - the money PRs. So require_for
-# below names only 'money', which ARM 2 provides. Adding "regression" there without also
-# adding a class:regression runner blocks every money PR; the commented line under it shows
-# the pairing. See docs/recipes/regression-golden.md.
+# The two blocks are not symmetric:
+#   ARM 2 alone (the runners) is a WORKING gate. A money-class runner arms the idempotency
+#     requirement by itself, so you get that for free. ARM 1 states it explicitly, which
+#     keeps the requirement on if the runners are ever renamed or removed.
+#   ARM 1 alone (the flag, no runner that can PROVE the invariant) BLOCKS EVERY PULL
+#     REQUEST, by design. Do not arm it on its own.
+#
+# There is deliberately NO policy.require_for in the armed default. See the OPTIONAL block
+# further down for why, and read its warning before you turn it on.
 #
 # Note 'always_run: true' on the runners, NOT 'when:' globs. In fqe, 'required: true' means
 # "this runner must fire on THIS pull request", and the validator forces every money or
@@ -152,21 +148,42 @@ mutation:
 
 # >>> ARM 1 of 2: uncomment every line between this marker and END ARM 1. >>>
 # require_money_idempotency: true
+# <<< END ARM 1 of 2 <<<
+
+# OPTIONAL, and NOT part of arming. policy.require_for binds a PATH to the test classes
+# that must have run and passed when that path changes. The armed runners above are
+# always_run, so the money and contract classes are already demanded on every pull
+# request; require_for adds nothing for them. It is worth turning on only to demand a
+# class the runners above do NOT provide - regression is the usual one.
+#
+# READ BOTH WARNINGS FIRST. Each one blocks EVERY pull request, not just money ones:
+#
+#   1. Every glob must match a real file in YOUR repo. A glob that matches nothing is
+#      BLOCKED (dead policy glob) under require_money_policy_when_detected, which is on
+#      above. That is deliberate - a typo'd money path would otherwise silently grant the
+#      loose bar - but it also fires for the ordinary case of "we do not happen to have a
+#      directory by that name". The three below are an EXAMPLE of the shape, not a
+#      default: a repo with src/payments but no src/ledger is blocked on every PR until
+#      the list matches its real layout.
+#
+#   2. Every class you name must have a runner that RAN AND PASSED, or the gate FAILs on
+#      exactly the pull requests those globs cover - the money PRs. Naming "regression"
+#      without also adding the class:regression runner below is the trap.
 #
 # policy:
 #   require_for:
-#     - when: ["src/payments/**", "src/ledger/**", "src/billing/**"]
-#       classes: ["money"]
-#       # Add "regression" to that list ONLY together with a class:regression runner, or
-#       # every money PR FAILs on "required test class regression has no runner that ran
-#       # and passed". docs/recipes/regression-golden.md has the fqe golden verify recipe:
-#       #   regression:
-#       #     command: "node"
-#       #     args: ["node_modules/.bin/fqe", "golden", "verify", "--manifest", "golden.yml", "--dir", "goldens"]
-#       #     always_run: true
-#       #     class: regression
-#       #     required: true
-# <<< END ARM 1 of 2 <<<
+#     - when: ["src/payments/**"]          # <- YOUR real money paths, all of them live
+#       classes: ["money", "regression"]   # <- only classes a runner below provides
+#
+#   regression:
+#     command: "node"
+#     args: ["node_modules/.bin/fqe", "golden", "verify", "--manifest", "golden.yml", "--dir", "goldens"]
+#     always_run: true
+#     class: regression
+#     required: true
+#
+# (the regression runner goes under runners:, the policy at the top level.)
+# See docs/recipes/regression-golden.md.
 
 # Your runners go under this key. Left empty, the gate runs and always passes.
 runners:
