@@ -107,6 +107,16 @@ function parseConfigYaml(text) {
       const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
       if (!m) throw new Error(`config parse: malformed top-level line ${i + 1}: ${line}`);
       current = m[1];
+      // Fail closed on a repeated top-level key. `result[current] = {}` overwrote,
+      // so a second `runners:` block silently deleted the first one whole — the
+      // v0.18.18 duplicate-key defect, reachable at the parser rather than only
+      // through the generator that used to emit it.
+      if (Object.prototype.hasOwnProperty.call(result, current)) {
+        throw new Error(
+          `config parse: duplicate top-level key '${current}' at line ${i + 1}. ` +
+          `The later block would silently replace the earlier one.`
+        );
+      }
       if (m[2] === '') {
         result[current] = {};
         if (current === 'policy') {
@@ -152,15 +162,36 @@ function parseConfigYaml(text) {
         const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
         if (!m) throw new Error(`config parse: malformed runner key line ${i + 1}: ${line}`);
         currentRunner = m[1];
+        if (Object.prototype.hasOwnProperty.call(result.runners, currentRunner)) {
+          throw new Error(
+            `config parse: duplicate runner '${currentRunner}' at line ${i + 1}. ` +
+            `The later definition would silently replace the earlier one.`
+          );
+        }
         result.runners[currentRunner] = {};
         if (m[2] !== '') {
           throw new Error(`config parse: runners.${currentRunner} must be a block`);
         }
       } else if (indent === 4 && currentRunner) {
         const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-        if (!m) throw new Error(`config parse: malformed runner field line ${i + 1}`);
+        if (!m) throw new Error(`config parse: malformed runner field line ${i + 1}: ${trimmed}`);
         const key = m[1];
         const val = m[2];
+        if (Object.prototype.hasOwnProperty.call(result.runners[currentRunner], key)) {
+          throw new Error(
+            `config parse: duplicate field '${key}' on runner '${currentRunner}' at line ${i + 1}. ` +
+            `The later value would silently replace the earlier one.`
+          );
+        }
+        // A block-scalar introducer (`key: |`) would otherwise parse to the
+        // one-character STRING "|" and the indented body below it would report a
+        // confusing indent error a line later. Reject it where the author wrote it.
+        if (/^[|>][-+]?$/.test(val.trim())) {
+          throw new Error(
+            `config parse: '${key}' at line ${i + 1} uses a YAML block scalar ('${val.trim()}'), ` +
+            `which is not read. Put multi-line text in its own file and reference it.`
+          );
+        }
         if (val.startsWith('[')) {
           result.runners[currentRunner][key] = JSON.parse(val);
         } else if (val === '' && key === 'args') {
@@ -186,13 +217,43 @@ function parseConfigYaml(text) {
           : 'runners';
         throw new Error(
           `config parse: malformed indent under ${what}, line ${i + 1} ` +
-          `(runner names must be indented exactly 2 spaces, fields exactly 4; ` +
-          `found ${indent}): ${trimmed}`
+          `(runner names must be indented exactly 2 spaces, fields exactly 4, ` +
+          `found ${indent}): ${trimmed}${blockShapeHint(trimmed)}`
         );
       }
+    } else {
+      // Fail closed. This is the same silent drop one branch over: an indented
+      // line reaching here belongs to a top-level key that takes no block, so
+      // nothing consumed it and the chain simply ended. A `version: 0.15` line
+      // placed between two runners reset `current`, and every runner after it
+      // vanished with validateConfig still reporting valid. `policy` and
+      // `mutation` never reach here, because their blocks are collected whole
+      // and `i` is advanced past them.
+      const owner = current ? `'${current}'` : 'no open key';
+      throw new Error(
+        `config parse: unexpected indented line ${i + 1} under ${owner}, ` +
+        `which takes no nested block: ${trimmed}`
+      );
     }
   }
   return result;
+}
+
+/**
+ * Name the real problem when a mis-indented line is actually a YAML block
+ * sequence or block scalar. Telling the author to re-indent a `- item` line to 4
+ * spaces sends them to a second, less clear error, because this parser reads
+ * inline flow lists only. `docs/writing-a-runner.md` shipped exactly this shape
+ * until v0.18.20, so adopters carry it.
+ */
+function blockShapeHint(trimmed) {
+  if (trimmed.startsWith('- ') || trimmed === '-') {
+    return ". This looks like a YAML block sequence; use inline-list syntax instead (e.g. args: [\"-e\", \"0\"]).";
+  }
+  if (/:\s*\|-?\s*$/.test(trimmed) || trimmed === '|' || trimmed === '|-') {
+    return '. This looks like a YAML block scalar, which is not read; put multi-line text in its own file and reference it.';
+  }
+  return '';
 }
 
 function parseInlineScalar(v) {
@@ -229,6 +290,12 @@ function parseFlatMapBlock(lines) {
     const val = m[2];
     if (val === '') {
       throw new Error(`config parse: key '${key}' must have an inline value (e.g. ${key}: blocking)`);
+    }
+    if (Object.prototype.hasOwnProperty.call(out, key)) {
+      throw new Error(
+        `config parse: duplicate key '${key}' in this block: ${raw.trim()}. ` +
+        `The later value would silently replace the earlier one.`
+      );
     }
     out[key] = parseMaybeList(val);
   }
@@ -300,6 +367,12 @@ function parsePolicyBlock(lines, lineNos = []) {
       // that the verdict would then ignore.
       throw new Error(`policy parse: key '${key}' must have an inline list value (e.g. ${key}: ["unit"])`);
     } else {
+      if (Object.prototype.hasOwnProperty.call(policy, key)) {
+        throw new Error(
+          `policy parse: duplicate key '${key}'${lineNos[i] ? ` at line ${lineNos[i]}` : ''}. ` +
+          `The later value would silently replace the earlier one.`
+        );
+      }
       policy[key] = parseMaybeList(val);
     }
   }
@@ -338,6 +411,16 @@ function parseRequireFor(lines, start) {
       if (!cur) throw new Error(`policy parse: require_for continuation without an item: ${line}`);
       const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
       if (!m) throw new Error(`policy parse: malformed require_for field: ${line}`);
+      // Fail closed on a repeated key inside one item. This is how a second entry
+      // written without its leading `- ` disappeared: both keys overwrote the
+      // first item's, the two entries merged into one, and the earlier `when`
+      // (typically the payments rule) was gone with the config still valid.
+      if (Object.prototype.hasOwnProperty.call(cur, m[1])) {
+        throw new Error(
+          `policy parse: duplicate key '${m[1]}' in one require_for entry: ${line.trim()}. ` +
+          `A new entry must start with '- '; without it the keys overwrite the previous entry.`
+        );
+      }
       if (m[2] === '') {
         // Fail closed: `when:` or `classes:` with no inline value must throw, not
         // become null and get silently dropped by computeRequiredClasses (which

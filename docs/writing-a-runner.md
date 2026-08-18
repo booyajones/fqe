@@ -40,7 +40,7 @@ The stdout JSON line shape:
       "runner": "<name>",
       "n": 100,
       "successes": 2,
-      "ci_95": [0.0023, 0.0703],
+      "ci_95": [0.0055, 0.0700],
       "blast_radius": "outbound"
     }
   ]
@@ -100,7 +100,7 @@ inlining it with `node -e`.
 const n = 100, successes = 2;
 // Wilson 95% CI math omitted for brevity. The fqe CLI has it built in:
 //   fqe wilson <successes> <n>
-const ci_95 = [0.0023, 0.0703];  // would normally compute
+const ci_95 = [0.0055, 0.0700];  // would normally compute
 console.log(JSON.stringify({
   runner: "outbound-eval",
   exit_code: 0,
@@ -112,7 +112,7 @@ console.log(JSON.stringify({
 }));
 ```
 
-The Wilson CI upper bound (0.0703) exceeds the canonical `outbound` threshold (0.05), so fqe will FLAG this PR. To check what would clear the threshold:
+The Wilson CI upper bound (0.0700) exceeds the canonical `outbound` threshold (0.05), so fqe will FLAG this PR. To check what would clear the threshold:
 
 ```bash
 fqe min-n 0.05

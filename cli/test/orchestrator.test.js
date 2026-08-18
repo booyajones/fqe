@@ -418,3 +418,149 @@ test('parseConfigYaml throws on a mis-indented class line (money protections wou
     '   class: money', // 3 spaces
   ].join('\n')), /malformed indent under runners\.money-check, line 7/);
 });
+
+// --- round 2: the sibling silent drops the first fix left open ---
+// An independent review found the same defect class one branch over. The first
+// fix added an `else` INSIDE the `current === 'runners'` branch, but the outer
+// if/else-if chain still had no final `else`, and every overwrite path was still
+// silent. All three were reproduced end-to-end before being closed.
+
+test('parseConfigYaml throws on a runner block after a top-level scalar key', () => {
+  // A `version:` line between two runners reset `current` to null, so every
+  // runner after it fell off the end of the chain. Measured: the money runner
+  // vanished and validateConfig reported valid.
+  assert.throws(() => parseConfigYaml([
+    'runners:',
+    '  lint:',
+    '    command: "node"',
+    '    always_run: true',
+    'version: 0.15',
+    '  money-check:',
+    '    command: "node"',
+    '    class: money',
+    '    required: true',
+  ].join('\n')), /unexpected indented line 6/);
+});
+
+test('parseConfigYaml throws on a duplicate top-level key', () => {
+  assert.throws(() => parseConfigYaml([
+    'runners:',
+    '  money:',
+    '    command: "node"',
+    'runners:',
+    '  lint:',
+    '    command: "node"',
+  ].join('\n')), /duplicate top-level key 'runners' at line 4/);
+});
+
+test('parseConfigYaml throws on a duplicate runner name', () => {
+  assert.throws(() => parseConfigYaml([
+    'runners:',
+    '  dup:',
+    '    command: "node"',
+    '    class: money',
+    '  dup:',
+    '    command: "echo"',
+  ].join('\n')), /duplicate runner 'dup' at line 5/);
+});
+
+test('parseConfigYaml throws on a duplicate runner field', () => {
+  assert.throws(() => parseConfigYaml([
+    'runners:',
+    '  a:',
+    '    command: "node"',
+    '    command: "echo"',
+  ].join('\n')), /duplicate field 'command' on runner 'a' at line 4/);
+});
+
+test('parseConfigYaml throws on a duplicate policy key', () => {
+  assert.throws(() => parseConfigYaml([
+    'policy:',
+    '  require_classes: ["money"]',
+    '  require_classes: ["lint"]',
+  ].join('\n')), /duplicate key 'require_classes' at line 3/);
+});
+
+test('parseConfigYaml throws on a duplicate mutation key', () => {
+  assert.throws(() => parseConfigYaml([
+    'mutation:',
+    '  policy: blocking',
+    '  policy: advisory',
+  ].join('\n')), /duplicate key 'policy'/);
+});
+
+test('parseConfigYaml throws on a require_for entry written without its dash', () => {
+  // The keys overwrote the previous entry, merging two rules into one and
+  // deleting the payments requirement with the config still valid.
+  assert.throws(() => parseConfigYaml([
+    'policy:',
+    '  require_for:',
+    '    - when: ["src/payments/**"]',
+    '      classes: ["money"]',
+    '      when: ["src/api/**"]',
+    '      classes: ["contract"]',
+  ].join('\n')), /duplicate key 'when' in one require_for entry/);
+});
+
+test('parse error names the block-sequence and block-scalar shapes by name', () => {
+  // Telling the author to re-indent a `- item` to 4 spaces sends them to a
+  // second, less clear error: this parser reads inline flow lists only.
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  a:', '    command: "node"', '    args:', '      - "-e"',
+  ].join('\n')), /YAML block sequence; use inline-list syntax/);
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  a:', '    command: "node"', '    script: |', '      body',
+  ].join('\n')), /uses a YAML block scalar/);
+});
+
+test('policy parse errors report the REAL file line, not the block index', () => {
+  // Pins the lineNos threading. Blank and comment lines are skipped during block
+  // collection, so block index and file line diverge here; a hardcoded offset
+  // passes the other fixtures but fails this one.
+  try {
+    parseConfigYaml([
+      'version: 0.15',      // 1
+      '',                   // 2
+      '# a comment',        // 3
+      'policy:',            // 4
+      '',                   // 5
+      '  # inner comment',  // 6
+      '  require_classes: ["unit"]', // 7
+      '',                   // 8
+      '   require_for:',    // 9  <- mis-indented, the throw
+    ].join('\n'));
+    assert.fail('expected a throw');
+  } catch (e) {
+    assert.match(e.message, /line 9/);
+  }
+});
+
+test('parseConfigYaml accepts comments and blank lines inside blocks (no false positives)', () => {
+  // The guards must not turn an ordinary commented config into a parse error.
+  const cfg = parseConfigYaml([
+    'version: 0.15',
+    'runners:',
+    '  # which suite this is',
+    '  unit:',
+    '',
+    '    command: "node"',
+    '    # inline note at field depth',
+    '    args: ["-e", "0"]',
+    '    always_run: true',
+    '',
+    'policy:',
+    '  # the static bar',
+    '  require_classes: ["unit"]',
+  ].join('\n'));
+  assert.equal(cfg.runners.unit.command, 'node');
+  assert.deepEqual(cfg.policy.require_classes, ['unit']);
+});
+
+test('parseConfigYaml behaves identically on CRLF input', () => {
+  const lines = [
+    'version: 0.15', 'runners:', '  unit:', '    command: "node"', '    always_run: true',
+  ];
+  assert.deepEqual(parseConfigYaml(lines.join('\r\n')), parseConfigYaml(lines.join('\n')));
+  const bad = ['runners:', '  unit:', '    command: "node"', '   required: true'];
+  assert.throws(() => parseConfigYaml(bad.join('\r\n')), /malformed indent under runners\.unit, line 4/);
+});
