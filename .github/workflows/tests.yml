@@ -16,11 +16,19 @@
 # all 773.)
 name: tests
 
+# The pull_request trigger takes no branch filter on purpose. It was
+# `branches: [main]`, which meant a PR based on another feature branch — the
+# normal shape for stacked work, and how the two recipe fixes reached review —
+# ran NEITHER the suite matrix NOR the doc test-count job, and still showed a
+# green checks list from the workflows that did run. That is the same defect
+# shape as the parser fixes in this release: a guard whose stated scope and
+# actual scope differ, reporting success over the range it never covered. The
+# comment at the top of this file already claimed "every push and PR"; this
+# makes the trigger match the claim.
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
