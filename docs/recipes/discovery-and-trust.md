@@ -48,13 +48,16 @@ runners:
     class: e2e
     when: ["legacy/**"]
     quarantined: true   # known-flaky, being fixed: a failure is a neutral FLAG, stays visible
+    quarantined_since: "2026-01-15"   # REQUIRED with quarantined; expires after quarantine_ttl_days (default 14)
 ```
 
 - `retries: N` re-runs a failed runner up to N times. If it fails then passes, fqe marks it
   FLAKY: a FLAG (loud, tracked), never a silent PASS, never a blocking FAIL.
 - `quarantined: true` makes a failing runner a neutral FLAG instead of a blocking FAIL. It
   stays in the receipt so the quarantine cannot become silently permanent. Un-quarantine it
-  once fixed.
+  once fixed. `quarantined_since` (an ISO date) is REQUIRED alongside it and is what makes
+  that guarantee real: the quarantine expires after `quarantine_ttl_days` (default 14) and
+  the runner goes back to blocking on its own. Without the date the config fails validation.
 
 Neither weakens a healthy runner: a non-quarantined runner that fails still FAILs.
 
