@@ -7,7 +7,7 @@
 In any git repo with a `main` or `master` branch:
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.20 fqe init
+npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe init
 ```
 
 This creates:
@@ -24,7 +24,7 @@ Commit and push these on a branch, open a PR, watch the workflow fire.
 ## Step 2: Configure your runners
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.20 fqe explain
+npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe explain
 ```
 
 Then open `.fqe.yml`. It ships with commented examples you adapt by hand:
@@ -62,17 +62,17 @@ First, install the CLI so you have an `fqe` binary on your PATH. Two options:
 ```bash
 # Option A: clone and link (recommended for iteration)
 git clone https://github.com/booyajones/fqe.git ~/.local/share/fqe
-cd ~/.local/share/fqe && git checkout fqe-v0.18.20
+cd ~/.local/share/fqe && git checkout fqe-v0.18.21
 npm link --prefix ~/.local/share/fqe/cli   # adds `fqe` to PATH
 
 # Option B: one-off via npx (no install, slower)
-alias fqe='npx --yes -p github:booyajones/fqe#fqe-v0.18.20 fqe'
+alias fqe='npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe'
 ```
 
 On **Windows**, both options above are Unix-only (`npm link` mutates your global prefix, and `alias` is a bash builtin that PowerShell rejects). Use a PowerShell function instead, or just type the full `npx` invocation:
 
 ```powershell
-function fqe { npx --yes -p github:booyajones/fqe#fqe-v0.18.20 fqe @args }
+function fqe { npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe @args }
 ```
 
 Then, from any repo with a `.fqe.yml`:
@@ -124,7 +124,7 @@ Empty `.fqe.yml` (or a `.fqe.yml` with all suggestions still commented out) mean
 For JS/TS repos that want the modern AI quality stack (Stryker mutation testing wired as a fqe runner, with Wilson-CI-bounded survival rate as the verdict), add the `--with-mutation` flag:
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.20 fqe init --with-mutation
+npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe init --with-mutation
 npm install --save-dev @stryker-mutator/core
 ```
 
