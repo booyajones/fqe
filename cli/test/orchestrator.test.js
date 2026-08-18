@@ -633,6 +633,10 @@ test('every parse throw is tagged fqeConfigInvalid', () => {
     ['policy:', '  require_for:'],
     ['policy:', '  require_for:', '    - when: ["a"]', '      classes: ["m"]', '      when: ["b"]'],
     ['mutation:', '  policy: blocking', '  policy: advisory'],
+    // The JSON/flow-list path: previously a bare JSON.parse, whose SyntaxError
+    // is untagged and names neither the key nor the line.
+    ['runners:', '  a:', '    command: "node"', '    args: [not, valid, json'],
+    ['policy:', '  require_classes: [oops'],
   ];
   for (const lines of bad) {
     try {

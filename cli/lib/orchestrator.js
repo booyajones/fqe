@@ -196,7 +196,13 @@ function parseConfigYaml(text) {
           );
         }
         if (val.startsWith('[')) {
-          result.runners[currentRunner][key] = JSON.parse(val);
+          // Was a bare JSON.parse, which threw an untagged SyntaxError naming
+          // neither the key nor the line ("Unexpected token 'i', ... is not valid
+          // JSON") and rejected the unquoted YAML-flow form that every other list
+          // in this parser accepts via parseMaybeList. docs/recipes/money-invariants.md
+          // ships `invariant: [idempotency, double-spend]`, so the parser and the
+          // shipped recipe disagreed; the parser was the odd one out.
+          result.runners[currentRunner][key] = parseFlowList(val);
         } else if (val === '' && key === 'args') {
           result.runners[currentRunner][key] = [];
         } else {
@@ -360,7 +366,7 @@ function parseMaybeList(val) {
 
 function parseFlowList(t) {
   if (!t.startsWith('[') || !t.endsWith(']')) {
-    throw configParseError(`policy parse: malformed inline list: ${t}`);
+    throw configParseError(`config parse: malformed inline list: ${t}`);
   }
   try {
     const j = JSON.parse(t);
