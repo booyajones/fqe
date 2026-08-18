@@ -119,7 +119,14 @@ function isNestedCheckout(dir) {
 function markdownFiles(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.isDirectory()) {
-      if (['.git', 'node_modules', '.stryker-tmp', 'out', '.claude'].includes(e.name)) continue;
+      // Kept in step with doc_accuracy.test.js's SKIP_DIRS. The two walk the same
+      // tree for the same purpose and their lists had drifted: this one was missing
+      // `.fqe-out` (fqe's own receipt output) and `reports` (junit/coverage output).
+      // Stated honestly, this closes no defect that reproduces today — a generated
+      // receipt was checked and carries no `N tests` string, so nothing in either
+      // directory currently trips this guard. It is parity, so that the next person
+      // adding an ignore to one list has an obvious reason to add it to both.
+      if (['.git', 'node_modules', '.stryker-tmp', 'out', '.claude', '.fqe-out', 'reports'].includes(e.name)) continue;
       const child = path.join(dir, e.name);
       if (isNestedCheckout(child)) continue;
       markdownFiles(child, out);
@@ -158,9 +165,19 @@ for (const file of markdownFiles(REPO)) {
  * three still read as success — and `doc_accuracy.test.js` next door carries
  * named MIN_PIN_CLAIMS / MIN_SIZE_CLAIMS floors for exactly that reason, with a
  * comment saying a skip-path must not silently become "checked nothing." This
- * file had the weaker half of that idea. Raising the floor to the real number
- * makes a DROP loud rather than only a wipe-out; adding a claim is not blocked,
- * since the floor is a minimum.
+ * file had the weaker half of that idea.
+ *
+ * This floor sits AT the current count, and those two sit deliberately BELOW
+ * theirs ("so ordinary doc edits do not trip it"). That is a real divergence and
+ * it is on purpose, because their reasoning does not carry at this size: they
+ * police 26 and 11 claims, where a margin of a few absorbs ordinary editing and
+ * still catches a collapse. There are exactly THREE claims here, so any margin
+ * at all licenses losing a third of the coverage silently — which is the failure
+ * this floor exists to make loud. The cost of the strict choice is that a reword
+ * which stops matching COUNT_RE (dropping the shields.io `tests-N` slug, or
+ * saying "921 checks") fails CI. That failure is loud, names the count it found,
+ * and says to lower this constant in the same commit — a visible decision, which
+ * is the whole point. Adding a claim is never blocked; this is a minimum.
  */
 const MIN_COUNT_CLAIMS = 3;
 

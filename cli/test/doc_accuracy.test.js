@@ -1315,3 +1315,51 @@ test('the repo scan does not descend into a nested checkout', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * The two doc guards share two pieces of logic by COPY: `isNestedCheckout` and
+ * the directory skip-list. `check_test_count.js` cannot `require` this file (a
+ * suite cannot spawn itself), and nothing in the suite reads that script at all,
+ * so a change to one copy and not the other is invisible to all 921 tests.
+ *
+ * That is not hypothetical. The two lists HAD drifted — `check_test_count.js`
+ * was missing `.fqe-out` and `reports` for six releases — and the fix for the
+ * nested-worktree bug had to be written into both files by hand, twice, in two
+ * separate commits. A shared rule that only convention keeps in step is the
+ * setup for exactly the sibling-miss this release kept finding. This is the
+ * cheapest thing that makes the next divergence loud instead of silent.
+ */
+test('both doc guards share one definition of "nested checkout" and one skip-list', () => {
+  const A = fs.readFileSync(path.join(REPO, 'cli', 'test', 'doc_accuracy.test.js'), 'utf8');
+  const B = fs.readFileSync(path.join(REPO, 'cli', 'scripts', 'check_test_count.js'), 'utf8');
+
+  const fnOf = (src, where) => {
+    const m = src.match(/function isNestedCheckout\(dir\) \{[\s\S]*?\n\}/);
+    assert.ok(m, `isNestedCheckout not found in ${where}; if it was renamed, update this guard`);
+    // Comments differ between the two files on purpose; compare the CODE.
+    return m[0]
+      .split('\n')
+      .map((l) => l.replace(/\/\/.*$/, '').trim())
+      .filter(Boolean)
+      .join('\n');
+  };
+  assert.equal(
+    fnOf(A, 'doc_accuracy.test.js'),
+    fnOf(B, 'check_test_count.js'),
+    'the two copies of isNestedCheckout have diverged. They decide what the doc ' +
+      'guards are allowed to read, so one being stricter than the other means the ' +
+      'two guards disagree about which files exist.'
+  );
+
+  const listOf = (src, re, where) => {
+    const m = src.match(re);
+    assert.ok(m, `skip-list not found in ${where}; if its shape changed, update this guard`);
+    return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort();
+  };
+  assert.deepStrictEqual(
+    listOf(A, /SKIP_DIRS = new Set\((\[[\s\S]*?\])\)/, 'doc_accuracy.test.js'),
+    listOf(B, /if \((\[[\s\S]*?\])\.includes\(e\.name\)\) continue;/, 'check_test_count.js'),
+    'the two skip-lists have diverged. Add the entry to both, or state in a comment ' +
+      'why one guard must read a directory the other must not.'
+  );
+});
