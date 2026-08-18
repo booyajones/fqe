@@ -1021,6 +1021,11 @@ test('a receipt signed before diff_scope existed still verifies', () => {
 });
 
 test('a forged narrower `covers` cannot strip a field out of the signature', () => {
+  // NOTE: this pins the strawman only. It stays green whether or not `covers` is
+  // honoured, because mutating covers AND diff_scope on a full-covers receipt
+  // breaks the MAC either way. The REAL hole needs no mutation of covers at all -
+  // a receipt whose covers legitimately predates a field never signed it - and
+  // that is covered by 'verification reports fields its signature never covered'.
   const { signReceipt, verifyReceipt } = require('../lib/signature');
   const KEY = 'k'.repeat(64);
   const signed = signReceipt({
@@ -1037,4 +1042,208 @@ test('a forged narrower `covers` cannot strip a field out of the signature', () 
   };
   assert.strictEqual(verifyReceipt(forged, KEY).ok, false,
     'shrinking covers changes the payload; without the key the MAC cannot match');
+});
+
+/**
+ * ROUND 9. All three of these came from round 8's own fixes.
+ */
+
+test('mergeBase == head is degenerate too, not just base == head', () => {
+  // Anchoring at the merge base created a SECOND way for the range to collapse
+  // that the declared-pair check cannot see: when head is an ANCESTOR of base,
+  // merge-base returns head, so the effective range is head..head and the diff
+  // is empty whatever changed. That is a stale re-run on an already-merged PR
+  // whose target branch moved past it - one click on "re-run jobs".
+  const dir = tmpRepo();
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const g = (...a) => execFileSync('git', a, { cwd: dir, env, encoding: 'utf8' });
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), [
+    'runners:',
+    '  unit:',
+    '    command: "node"',
+    '    args: ["-e", "process.exit(1)"]',
+    '    when: ["src.js"]',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(dir, 'src.js'), 'v1\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'c1');
+  const head = g('rev-parse', 'HEAD').trim();
+  fs.appendFileSync(path.join(dir, 'src.js'), 'v2\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'c2');
+  const base = g('rev-parse', 'HEAD').trim();
+
+  // Precondition: head really is an ancestor of base, and a gated file differs.
+  assert.strictEqual(spawnSync('git', ['merge-base', '--is-ancestor', head, base], { cwd: dir }).status, 0);
+  assert.notStrictEqual(
+    execFileSync('git', ['diff', '--name-only', `${base}..${head}`], { cwd: dir, encoding: 'utf8' }).trim(), '',
+    'precondition: a gated file genuinely differs between the two');
+
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  assert.notStrictEqual(r.status, 0,
+    `an empty effective range means "we learned nothing", not "nothing changed":\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /unusable_reason: degenerate-range/);
+});
+
+/** Shallow clone where base and head converge on identical content. */
+function shallowConvergent() {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-conv-'));
+  const go = (...a) => execFileSync('git', a, { cwd: origin, env, encoding: 'utf8' });
+  execFileSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: origin });
+  fs.writeFileSync(path.join(origin, 'app.js'), 'original\n');
+  go('add', '-A'); go('commit', '-q', '-m', 'fork');
+  go('checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(origin, 'app.js'), 'BUGGY\n');
+  go('add', '-A'); go('commit', '-q', '-m', 'pr: buggy');
+  const head = go('rev-parse', 'HEAD').trim();
+  go('checkout', '-q', 'main');
+  fs.writeFileSync(path.join(origin, 'app.js'), 'BUGGY\n');   // converges independently
+  go('add', '-A'); go('commit', '-q', '-m', 'main converges');
+  const base = go('rev-parse', 'HEAD').trim();
+
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-convwork-'));
+  const gw = (...a) => execFileSync('git', a, { cwd: work, env, encoding: 'utf8' });
+  execFileSync('git', ['init', '-q', '.'], { cwd: work });
+  const url = 'file://' + origin.split(path.sep).join('/');
+  gw('fetch', '-q', '--depth', '1', url, base);
+  gw('fetch', '-q', '--depth', '1', url, head);
+  gw('checkout', '-q', head);
+  return { work, base, head };
+}
+
+test('a truncated range is never reported as a confident clean scope', () => {
+  // The shallow fallback returns ok:true so the runners still fire - that part is
+  // right and removing it once turned a caught regression into a merge. But it
+  // also reported indeterminate:false, presenting an APPROXIMATE scope as an
+  // authoritative one, using the very two-dot comparison this codebase argues is
+  // unsafe. `truncated_history` was written to the receipt and read by nothing.
+  const { work, base, head } = shallowConvergent();
+  assert.strictEqual(execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: work, encoding: 'utf8' }).trim(), 'true');
+  assert.notStrictEqual(spawnSync('git', ['merge-base', base, head], { cwd: work }).status, 0,
+    'precondition: merge-base unreachable from truncation');
+  assert.strictEqual(execFileSync('git', ['diff', '--name-only', `${base}..${head}`], { cwd: work, encoding: 'utf8' }).trim(), '',
+    'precondition: two-dot is blind here because the content converged');
+
+  fs.writeFileSync(path.join(work, '.fqe.yml'), [
+    'runners:',
+    '  unit:',
+    '    command: "node"',
+    '    args: ["-e", "process.exit(1)"]',
+    '    when: ["app.js"]',
+    '',
+  ].join('\n'));
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(work, 'out'), '--repo-dir', work],
+    { encoding: 'utf8', cwd: work, timeout: 90000 });
+  assert.notStrictEqual(r.status, 0,
+    `a scope this approximate must not be presented as clean:\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(work, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /truncated_history: true/);
+  assert.match(yml, /indeterminate: true/, 'truncated_history must actually reach the verdict, not just the receipt');
+});
+
+test('a shallow clone with a DETECTABLE regression still blocks, not merely flags', () => {
+  // The other half of the same trade-off. Marking truncation indeterminate must
+  // not weaken the case where the fallback genuinely finds the bad file.
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-det-'));
+  const go = (...a) => execFileSync('git', a, { cwd: origin, env, encoding: 'utf8' });
+  execFileSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: origin });
+  for (const v of ['v1', 'v2', 'v3']) {
+    fs.appendFileSync(path.join(origin, 'src.js'), v + '\n');
+    go('add', '-A'); go('commit', '-q', '-m', v);
+  }
+  const base = go('rev-parse', 'HEAD').trim();
+  go('checkout', '-q', '-b', 'feature');
+  fs.appendFileSync(path.join(origin, 'src.js'), 'BROKEN\n');
+  go('add', '-A'); go('commit', '-q', '-m', 'breaks it');
+  const head = go('rev-parse', 'HEAD').trim();
+
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-detwork-'));
+  const gw = (...a) => execFileSync('git', a, { cwd: work, env, encoding: 'utf8' });
+  execFileSync('git', ['init', '-q', '.'], { cwd: work });
+  const url = 'file://' + origin.split(path.sep).join('/');
+  gw('fetch', '-q', '--depth', '1', url, base);
+  gw('fetch', '-q', '--depth', '1', url, head);
+  gw('checkout', '-q', head);
+  fs.writeFileSync(path.join(work, '.fqe.yml'), [
+    'runners:',
+    '  unit:',
+    '    command: "node"',
+    '    args: ["-e", "process.exit(1)"]',
+    '    when: ["src.js"]',
+    '',
+  ].join('\n'));
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(work, 'out'), '--repo-dir', work],
+    { encoding: 'utf8', cwd: work, timeout: 90000 });
+  assert.strictEqual(r.status, 2,
+    `a failing runner must still FAIL, not soften to FLAG:\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(work, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /runners_fired: \["unit"\]/);
+});
+
+test('verification reports fields its signature never covered', () => {
+  const S = require('../lib/signature');
+  const crypto = require('node:crypto');
+  const KEY = 'k'.repeat(64);
+  const base = {
+    schema_version: 1, fqe_version: '0.18.19', commit_sha: 'a'.repeat(40),
+    content_hash: 'b'.repeat(64), inputs_hash: 'c'.repeat(64), verdict: 'PASS', bypass: null,
+  };
+  // An archived receipt whose covers legitimately predates diff_scope.
+  const legacy = S.SIGNED_FIELDS.filter((f) => f !== 'diff_scope');
+  const o = {};
+  for (const k of legacy) o[k] = base[k] === undefined ? null : base[k];
+  const value = crypto.createHmac('sha256', KEY).update(S.stableStringify(o), 'utf8').digest('hex');
+  const archived = { ...base, signature: { alg: 'hmac-sha256', value, key_id: S.keyIdOf(KEY), signed_at: null, covers: legacy } };
+
+  // It still verifies (round 8's fix) and declares nothing unsigned, because the
+  // field is genuinely absent.
+  const clean = S.verifyReceipt(archived, KEY);
+  assert.strictEqual(clean.ok, true);
+  assert.deepStrictEqual(clean.unsigned_fields, []);
+
+  // Now bolt on a FABRICATED diff_scope, leaving the signature untouched. It
+  // verifies - it must, the signature is authentic for what it covers - but the
+  // caller has to be told the field is not authenticated. A bare ok:true here is
+  // what let a forged scope look verified.
+  const forged = { ...archived, diff_scope: { source: 'git', base: 'x', changed_file_count: 0, indeterminate: false } };
+  const v = S.verifyReceipt(forged, KEY);
+  assert.strictEqual(v.ok, true, 'the signature is authentic for the fields it covers');
+  assert.deepStrictEqual(v.unsigned_fields, ['diff_scope'],
+    'a field the MAC never covered must be reported, or a rewritten value reads as verified');
+});
+
+test('the verify CLI warns instead of printing a bare OK for an uncovered field', () => {
+  const S = require('../lib/signature');
+  const crypto = require('node:crypto');
+  const KEY = 'k'.repeat(64);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fqe-verifycli-'));
+  const { serializeReceipt } = require('../lib/receipt');
+  const base = {
+    schema_version: 1, fqe_version: '0.18.19', commit_sha: 'a'.repeat(40),
+    content_hash: 'b'.repeat(64), inputs_hash: 'c'.repeat(64), verdict: 'PASS', bypass: null,
+    runners: [], runners_fired: [], verdict_reasons: [],
+    diff_scope: { source: 'git', base: null, changed_file_count: 0, indeterminate: false },
+  };
+  const legacy = S.SIGNED_FIELDS.filter((f) => f !== 'diff_scope');
+  const o = {};
+  for (const k of legacy) o[k] = base[k] === undefined ? null : base[k];
+  const value = crypto.createHmac('sha256', KEY).update(S.stableStringify(o), 'utf8').digest('hex');
+  const receipt = { ...base, signature: { alg: 'hmac-sha256', value, key_id: S.keyIdOf(KEY), signed_at: null, covers: legacy } };
+  const p = path.join(dir, 'QA-RESULT.yml');
+  fs.writeFileSync(p, serializeReceipt(receipt).yaml);
+
+  const r = spawnSync(process.execPath, [BIN, 'receipt', 'verify', p], {
+    encoding: 'utf8', env: { ...process.env, FQE_SIGNING_KEY: KEY }, timeout: 30000,
+  });
+  const out = `${r.stdout}${r.stderr}`;
+  assert.match(out, /OK/, 'an authentic legacy receipt must still verify');
+  assert.match(out, /NOT authenticated/i,
+    `the reader must be told diff_scope was not covered:\n${out}`);
+  assert.match(out, /diff_scope/);
 });

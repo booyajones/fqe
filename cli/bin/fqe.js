@@ -548,7 +548,20 @@ const SUBCOMMANDS = {
         process.stderr.write(`receipt verify: FAILED — ${res.reason}\n`);
         process.exit(2);
       }
-      process.stdout.write(`receipt verify: OK (key_id ${res.key_id})\n`);
+      // A bare "OK" would let a reader assume every field is authenticated. For a
+      // receipt signed before a field joined the signed tuple, that field is
+      // present but was never in the MAC, so it can be rewritten freely and this
+      // command would still have printed OK. Name what was not covered.
+      const unsigned = Array.isArray(res.unsigned_fields) ? res.unsigned_fields : [];
+      if (unsigned.length) {
+        process.stdout.write(
+          `receipt verify: OK (key_id ${res.key_id}) — WARNING: signed by an older field set; `
+          + `${unsigned.join(', ')} ${unsigned.length === 1 ? 'is' : 'are'} present but NOT authenticated. `
+          + `Do not trust ${unsigned.length === 1 ? 'its value' : 'those values'}; re-sign with the current fqe to cover ${unsigned.length === 1 ? 'it' : 'them'}.\n`
+        );
+      } else {
+        process.stdout.write(`receipt verify: OK (key_id ${res.key_id})\n`);
+      }
       process.exit(0);
     } else {
       die(`unknown receipt subcommand: ${sub}`);

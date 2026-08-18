@@ -580,6 +580,19 @@ function changedFiles({ baseSha, headSha, repoDir }) {
   const mb = spawnSync('git', ['merge-base', baseSha, headSha], { cwd, encoding: 'utf8' });
   const mergeBase = mb.status === 0 ? String(mb.stdout).trim() : null;
 
+  // The degenerate check above compares the DECLARED pair. Anchoring the diff at
+  // the merge base introduces a second way for the range to collapse that
+  // baseId === headId cannot see: when head is an ANCESTOR of base, merge-base
+  // returns head itself, so the effective range is head..head and the diff is
+  // empty no matter what changed. That is a stale re-run on an already-merged PR
+  // whose target branch has moved past it - one click on GitHub's "re-run jobs".
+  // Measured: a repo where src.js genuinely differs between base and head
+  // returned PASS, exit 0, indeterminate: false. Check the EFFECTIVE range, not
+  // just the declared one.
+  if (mergeBase && headId && mergeBase === headId) {
+    return { files: [], ok: false, reason: 'degenerate-range', source: 'git', declaredBase: baseSha };
+  }
+
   if (!mergeBase) {
     // "No merge base" has TWO very different causes and conflating them cost a
     // real regression. On a SHALLOW clone it means the history was TRUNCATED,
@@ -1024,7 +1037,20 @@ function run(opts) {
   // one to silence it would suppress a CI signal with an unrelated fact about
   // the checkout.
   const exemptible = diff.reason !== 'env-empty';
-  const diffIndeterminate = !diff.ok && !(exemptible && isGenuinelyFirstRun(opts));
+  // A TRUNCATED range is not a trustworthy one. The shallow fallback deliberately
+  // returns ok:true so the two-dot file list still fires the runners and a real
+  // regression still blocks - that part is right, and removing it once turned a
+  // caught regression into a merge. But it was ALSO reporting indeterminate:false,
+  // i.e. presenting an approximate scope as a confident one, using the very
+  // two-dot comparison this file argues is unsafe. `truncated_history` was
+  // written to the receipt and read by nothing, which made it decoration.
+  //
+  // Both properties are needed and they are not in conflict: RUN on the
+  // best-effort file list (so failures are still caught), and mark the scope
+  // indeterminate (so a CLEAN result is not presented as authoritative). A
+  // failing runner still yields FAIL; only an otherwise-clean run gets flagged.
+  const diffIndeterminate = (!diff.ok && !(exemptible && isGenuinelyFirstRun(opts)))
+    || diff.truncatedHistory === true;
 
   const cls = classify(files, config.runners);
 

@@ -128,12 +128,32 @@ function verifyReceipt(receipt, key) {
   const b = Buffer.from(got, 'hex');
   const match = a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
   if (!match) return { ok: false, reason: 'signature mismatch (receipt was tampered, or signed with a different key)' };
+
+  // WHAT THE SIGNATURE DOES NOT COVER. Honouring `covers` fixes verification of
+  // receipts signed before a field existed, but it also means those receipts
+  // never had that field in their MAC - so it can be rewritten freely, with the
+  // signature block untouched, and still verify. Proven: a legacy-covers receipt
+  // with a fabricated diff_scope bolted on returns ok:true. No forgery of
+  // `covers` is needed, which is why "shrinking covers breaks the MAC" was never
+  // the relevant defence.
+  //
+  // The honest answer is not to fail the receipt (it IS authentic for what it
+  // covers) but to stop reporting a bare OK. A caller that trusts diff_scope
+  // must be able to see whether diff_scope was actually signed.
+  const unsigned = SIGNED_FIELDS.filter((f) => receipt[f] !== undefined && !covers.includes(f));
   // key_id is ALWAYS written by signReceipt, so its absence (or a wrong value) after parse is
   // itself a tamper signal. Check unconditionally (fail closed), do not skip when absent.
   if (sig.key_id !== keyIdOf(key)) {
     return { ok: false, reason: 'key_id missing or does not match the verification key' };
   }
-  return { ok: true, key_id: sig.key_id };
+  return {
+    ok: true,
+    key_id: sig.key_id,
+    covers: [...covers],
+    // Non-empty means the receipt carries these fields but its signature never
+    // authenticated them. Callers MUST NOT treat their values as trustworthy.
+    unsigned_fields: unsigned,
+  };
 }
 
 module.exports = { signReceipt, verifyReceipt, keyIdOf, stableStringify, ALG, SIGNED_FIELDS };
