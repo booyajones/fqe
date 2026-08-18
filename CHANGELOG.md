@@ -4,6 +4,15 @@ All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+### Fixed (doc guards)
+
+- **The doc guards read a second checkout of this repo and reported its contents as defects on main.** `.claude/worktrees/<name>/` is a full checkout created by the agent tooling this repo is developed with, and git does not list it as untracked, so `walk()` in `doc_accuracy.test.js` descended into it: 126 files of stale install pins, stale version badges and stale test-count claims became evidence. A worktree parked on an older branch made `npm test` report four doc-accuracy failures whose messages named ONLY paths inside it. `check_test_count.js` had the identical hole and reported three stale claims the same way.
+- **The direction of that failure is what makes it worth a fix rather than a note.** CI checks out clean and never saw it; a clean clone never saw it. So the failures appeared only to a developer running the suite locally, on a tree where nothing was actually wrong — a guard crying wolf, which is how a guard gets ignored on the day it is right. Every other guard in this release fires when something IS wrong; this one fired when nothing was.
+- Both are keyed on a `.git` entry now (a FILE for a worktree, a directory for a clone) rather than on directory names, so a nested checkout is excluded wherever it lives and whatever it is called. `.claude` also joins both name lists, for tool state that is not itself a checkout and so cannot be caught by that rule.
+- Fixed in both places in one commit on purpose. The two name lists had already drifted — `check_test_count.js` never had `.fqe-out` or `reports` — and fixing one sibling while leaving the other is the exact miss this release has now found four times.
+- `walk()` gains its first direct test, because the absence of this guard is invisible to CI: delete it and the suite stays green everywhere except a developer's own terminal. Both mechanisms are separately controlled — removing the nested-checkout rule turns the test red, and removing `.claude` from the list turns it red too, so neither is carried unexercised.
+
+
 ### Fixed (config parser, fail-closed)
 
 - **A line at the wrong indent under `runners:` was silently discarded.** The parser keyed on EXACT indent (2 = runner name, 4 = field) and let every other indent fall through both branches with no throw and no warning. `required: true` written with three spaces instead of four vanished, and `validateConfig` still reported `valid: true` — so the author believed the runner was required and the gate was quietly weaker than the config said. This is the same failure the sibling fix was written for: "a typo'd key would otherwise parse, disable a runner, and pass the gate green." Every indent other than 2 and 4 was affected, tabs included.
