@@ -2,7 +2,9 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
-## [Unreleased]
+## [0.18.20] - 2026-08-18
+
+Tag: `fqe-v0.18.20`.
 
 Ten review rounds against v0.18.19, all in one subsystem: **deciding which range to gate, and reporting that honestly.** Every round's fix produced the next round's defect, so the entries below are as much a record of what the fixes broke as of what they fixed. Nothing here is tagged yet.
 
@@ -51,7 +53,7 @@ Ten review rounds against v0.18.19, all in one subsystem: **deciding which range
 
 ## [0.18.19] - 2026-08-17
 
-Tag: `fqe-v0.18.19`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.
+Tag: `fqe-v0.18.20`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.
 
 ### Fixed (platform)
 
