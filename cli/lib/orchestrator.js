@@ -106,6 +106,10 @@ function parseConfigYaml(text) {
     if (indent === 0) {
       const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
       if (!m) throw configParseError(`config parse: malformed top-level line ${i + 1}: ${line}`);
+      // Strip before the emptiness test below, so `runners:  # your runners`
+      // opens a block instead of parsing to the string "# your runners" and
+      // taking every runner under it down with it.
+      const topVal = stripInlineComment(m[2]);
       current = m[1];
       assertSafeKey(current, 'top-level key', i + 1);
       // Fail closed on a repeated top-level key. `result[current] = {}` overwrote,
@@ -118,7 +122,7 @@ function parseConfigYaml(text) {
           `The later block would silently replace the earlier one.`
         );
       }
-      if (m[2] === '') {
+      if (topVal === '') {
         result[current] = {};
         if (current === 'policy') {
           // The line-by-line loop below only understands the `runners` shape.
@@ -155,7 +159,7 @@ function parseConfigYaml(text) {
           current = null;
         }
       } else {
-        result[current] = parseInlineScalar(m[2]);
+        result[current] = parseInlineScalar(topVal);
         current = null;
       }
     } else if (current === 'runners') {
@@ -171,14 +175,14 @@ function parseConfigYaml(text) {
           );
         }
         result.runners[currentRunner] = {};
-        if (m[2] !== '') {
+        if (stripInlineComment(m[2]) !== '') {
           throw configParseError(`config parse: runners.${currentRunner} must be a block`);
         }
       } else if (indent === 4 && currentRunner) {
         const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
         if (!m) throw configParseError(`config parse: malformed runner field line ${i + 1}: ${trimmed}`);
         const key = m[1];
-        const val = m[2];
+        const val = stripInlineComment(m[2]);
         assertSafeKey(key, `field on runner '${currentRunner}'`, i + 1);
         if (Object.prototype.hasOwnProperty.call(result.runners[currentRunner], key)) {
           throw configParseError(
@@ -312,6 +316,76 @@ function blockShapeHint(trimmed, rawLine) {
   return '';
 }
 
+/**
+ * Strip a trailing `# comment` from an inline VALUE, quote-aware.
+ *
+ * This parser has always honoured a whole-line comment (`if
+ * (line.trim().startsWith('#')) continue`) and never a trailing one, which is
+ * half of YAML's comment rule and the half authors reach for least. The cost was
+ * not one broken recipe but three different behaviours for one authoring
+ * mistake, measured across the 24 fqe-shaped config examples this repo ships in
+ * its own docs, 11 of which carry a trailing comment:
+ *
+ *   - on a list, a hard parse throw (`invariant: [idempotency, double-spend]
+ *     # what this runner proves` does not end with `]`);
+ *   - on a typed scalar, a validation error quoting the comment back at the
+ *     author (`'timeout_ms' must be a positive integer` for `timeout_ms: 300000
+ *     # 5 min`) — loud, but it names the type and not the real cause, and it is
+ *     what an adopter copying `node-web.md` or `playwright.md` got;
+ *   - on a free-form string, nothing at all: `command`, `report` and
+ *     `inventory_cmd` carry the comment into the value and `validateConfig`
+ *     returns `valid: true`. That one is silent at parse. It is NOT the
+ *     silent-pass class PR #27 closed — measured end-to-end, a corrupted
+ *     `report` path and a corrupted `command` each return exit 2 (FAIL) where
+ *     the clean config returns exit 0 — but a config that is wrong in a way
+ *     nothing reports until the runner spawns is still worth removing.
+ *
+ * `class:` is the one field where this could have stripped a money runner of its
+ * protections, the worst case of PR #27's defect. It cannot: an unknown class is
+ * rejected by name, so `class: money  # the money class` fails validation rather
+ * than quietly becoming a non-money runner. Stated because it was checked.
+ *
+ * Quote-awareness is the whole risk here, and it is why this takes the VALUE and
+ * not the line. Scanning from the start of the line would leave a quoted value's
+ * opening `"` un-recognised (the key's letters clear the element-start flag), so
+ * `report: "junit:a #b.xml"` would strip at the space and corrupt the value to
+ * `"junit:a` — turning a hard error into a silent corruption, which is precisely
+ * the defect this family of fixes exists to remove. Taking the value means its
+ * first character IS the start of a scalar.
+ *
+ * The rules are YAML's own: `#` opens a comment only at the start of the value
+ * or after whitespace (so `./run#1.sh` and `--tag=#42` keep their `#`), and
+ * never inside a quoted scalar. A quote opens a quoted scalar only at the start
+ * of an element — the value's first character, or just after `[` or `,` — which
+ * is the same rule `splitFlowElements` applies one function down, so an
+ * apostrophe in `[dont, it's, fine]` stays an apostrophe.
+ *
+ * An unterminated quote is returned untouched rather than guessed at: inventing
+ * a comment boundary inside a malformed value would replace a hard error with a
+ * silent truncation. The value still throws below — as a malformed list, since
+ * the untouched value no longer ends with `]`, rather than as the unterminated
+ * quote it is. That is the same error this shape threw before stripping existed,
+ * and both messages name the key and the line.
+ */
+function stripInlineComment(value) {
+  let quote = null;
+  let atElementStart = true;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (quote) {
+      if (ch === '\\' && quote === '"' && i + 1 < value.length) { i++; continue; }
+      if (ch === quote) { quote = null; atElementStart = false; }
+      continue;
+    }
+    if ((ch === '"' || ch === "'") && atElementStart) { quote = ch; continue; }
+    if (ch === '#' && (i === 0 || /\s/.test(value[i - 1]))) return value.slice(0, i).trimEnd();
+    if (ch === '[' || ch === ',') { atElementStart = true; continue; }
+    if (!/\s/.test(ch)) atElementStart = false;
+  }
+  if (quote) return value;
+  return value.trimEnd();
+}
+
 function parseInlineScalar(v) {
   const t = v.trim();
   if (t === '') return null;
@@ -332,7 +406,8 @@ function parseInlineScalar(v) {
  */
 function parseFlatMapBlock(lines) {
   const out = {};
-  for (const raw of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
     const t = raw.trim();
     const m = t.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
     if (!m) {
@@ -343,9 +418,25 @@ function parseFlatMapBlock(lines) {
       );
     }
     const key = m[1];
-    const val = m[2];
+    const val = stripInlineComment(m[2]);
     if (val === '') {
-      throw configParseError(`config parse: key '${key}' must have an inline value (e.g. ${key}: blocking)`);
+      // Name the block sequence when that is what follows, rather than asking for
+      // "an inline value" and leaving the author to guess that a list is allowed
+      // and that `- item` is not how to write one. `docs/recipes/mutation-advisory.md`
+      // shipped exactly this shape. The sibling throw below says all of this
+      // already, but only fires when the `- item` line is REACHED — and it was
+      // reached only because a trailing comment on the key line carried it past
+      // this branch. With that comment now stripped, the key line stops here, so
+      // the message that stops here has to carry the same explanation.
+      const next = lines.slice(i + 1).find((l) => l.trim() !== '' && !l.trim().startsWith('#'));
+      const isBlockSeq = next !== undefined && (next.trim().startsWith('- ') || next.trim() === '-');
+      throw configParseError(
+        `config parse: key '${key}' must have an inline value (e.g. ${key}: blocking)` +
+        (isBlockSeq
+          ? `. The '- ${next.trim().replace(/^-\s*/, '')}' line below it is a YAML block sequence, ` +
+            `which this block does not read; use inline-list syntax instead (e.g. ${key}: ["file:1:Mutator"]).`
+          : '')
+      );
     }
     assertSafeKey(key, 'key');
     if (Object.prototype.hasOwnProperty.call(out, key)) {
@@ -475,7 +566,7 @@ function parsePolicyBlock(lines, lineNos) {
     const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
     if (!m) throw configParseError(`policy parse: malformed line: ${line}`);
     const key = m[1];
-    const val = m[2];
+    const val = stripInlineComment(m[2]);
     assertSafeKey(key, 'policy key', lineNos[i]);
     if (key === 'require_for' && val === '') {
       // This branch assigns unconditionally, so it sat outside the duplicate
@@ -555,14 +646,15 @@ function parseRequireFor(lines, start, lineNos = []) {
       const after = trimmed.slice(2).trim();
       const m = after.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
       if (!m) throw configParseError(`policy parse: malformed require_for item: ${line}`);
-      if (m[2] === '') {
+      const itemVal = stripInlineComment(m[2]);
+      if (itemVal === '') {
         // Fail closed: `when:` or `classes:` with no inline value must throw, not
         // become null and get silently dropped by computeRequiredClasses (which
         // would make a diff-conditional money requirement vanish).
         throw configParseError(`policy parse: require_for key '${m[1]}' must have an inline list value`);
       }
       assertSafeKey(m[1], 'require_for key', lineNos[i]);
-      cur[m[1]] = parseMaybeList(m[2], `require_for.${m[1]}`);
+      cur[m[1]] = parseMaybeList(itemVal, `require_for.${m[1]}`);
     } else {
       if (!cur) throw configParseError(`policy parse: require_for continuation without an item: ${line}`);
       const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
@@ -578,13 +670,14 @@ function parseRequireFor(lines, start, lineNos = []) {
           `A new entry must start with '- '; without it the keys overwrite the previous entry.`
         );
       }
-      if (m[2] === '') {
+      const fieldVal = stripInlineComment(m[2]);
+      if (fieldVal === '') {
         // Fail closed: `when:` or `classes:` with no inline value must throw, not
         // become null and get silently dropped by computeRequiredClasses (which
         // would make a diff-conditional money requirement vanish).
         throw configParseError(`policy parse: require_for key '${m[1]}' must have an inline list value`);
       }
-      cur[m[1]] = parseMaybeList(m[2], `require_for.${m[1]}`);
+      cur[m[1]] = parseMaybeList(fieldVal, `require_for.${m[1]}`);
     }
   }
   return { items, next: i };

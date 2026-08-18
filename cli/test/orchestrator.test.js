@@ -763,3 +763,185 @@ test('a quote is only special at the START of a list element', () => {
     ['jest', '--x=p,l']
   );
 });
+
+// ---------------------------------------------------------------------------
+// Trailing inline comments (the money-invariants.md recipe failure).
+//
+// This parser honoured a whole-line `#` comment and never a trailing one, half
+// of YAML's rule. Across the 24 fqe-shaped config examples this repo ships in
+// its own docs, 11 carry a trailing comment, and one authoring mistake produced
+// three different outcomes: a parse throw on a list, a validation error naming
+// the wrong cause on a typed scalar, and nothing at all on a free-form string.
+// ---------------------------------------------------------------------------
+
+test('a trailing comment after an inline list is stripped (the reported repro)', () => {
+  // docs/recipes/money-invariants.md ships exactly this line. The unquoted flow
+  // form was already accepted; the comment is what made it not end with `]`.
+  assert.deepEqual(
+    parseConfigYaml([
+      'runners:', '  m:', '    invariant: [idempotency, double-spend]   # what this runner proves',
+    ].join('\n')).runners.m.invariant,
+    ['idempotency', 'double-spend']
+  );
+});
+
+test('a trailing comment is stripped from a typed scalar, not carried into it', () => {
+  // `timeout_ms: 300000   # 5 min` parsed to a STRING and failed validation with
+  // "must be a positive integer" — a message about the type, not about the
+  // comment. node-web.md, playwright.md, python-api.md, financial-model.md,
+  // partner-contract.md and ai-test-generation.md all shipped this shape.
+  const r = parseConfigYaml([
+    'runners:', '  m:',
+    '    command: node',
+    '    timeout_ms: 300000   # 5 min',
+    '    required: false   # advisory until stable',
+    '    retries: 2          # re-run on failure',
+  ].join('\n')).runners.m;
+  assert.equal(r.timeout_ms, 300000);
+  assert.equal(r.required, false);
+  assert.equal(r.retries, 2);
+});
+
+test('a trailing comment is stripped from a free-form string field', () => {
+  // The silent one: `command` and `report` carried the comment into the value
+  // and validateConfig returned valid: true.
+  const r = parseConfigYaml([
+    'runners:', '  m:',
+    '    command: python  # runs pytest',
+    '    report: junit:inv.xml   # the junit report',
+    '    inventory_cmd: python -m pytest --collect-only -q   # how many tests exist',
+  ].join('\n')).runners.m;
+  assert.equal(r.command, 'python');
+  assert.equal(r.report, 'junit:inv.xml');
+  assert.equal(r.inventory_cmd, 'python -m pytest --collect-only -q');
+});
+
+test('a trailing comment is stripped at top level, on policy and on mutation', () => {
+  const cfg = parseConfigYaml([
+    'require_money_idempotency: true   # no green without a passing invariant test',
+    'mutation:',
+    '  mode: advisory          # advisory (FLAG) -> blocking (FAIL) once ratcheted',
+    '  threshold: 70           # minimum kill rate %',
+    '  allowlist: ["a.ts:1:M"]   # equivalent mutants',
+    'policy:',
+    '  require_classes: ["money"]   # money must always run',
+    '  require_for:',
+    '    - when: ["src/payments/**"]   # the money paths',
+    '      classes: ["money"]          # get the strict bar',
+  ].join('\n'));
+  assert.equal(cfg.require_money_idempotency, true);
+  assert.equal(cfg.mutation.mode, 'advisory');
+  assert.equal(cfg.mutation.threshold, 70);
+  assert.deepEqual(cfg.mutation.allowlist, ['a.ts:1:M']);
+  assert.deepEqual(cfg.policy.require_classes, ['money']);
+  assert.deepEqual(cfg.policy.require_for, [{ when: ['src/payments/**'], classes: ['money'] }]);
+});
+
+test('a comment after a block-opening key still opens the block', () => {
+  // `runners:  # your runners` used to parse to the STRING "# your runners",
+  // which reset `current` and made every runner under it throw.
+  const cfg = parseConfigYaml([
+    'runners:   # the runners for this repo',
+    '  m:   # the money runner',
+    '    command: node',
+  ].join('\n'));
+  assert.deepEqual(Object.keys(cfg.runners), ['m']);
+  assert.equal(cfg.runners.m.command, 'node');
+});
+
+test('a # that is not a comment is left alone (false-positive controls)', () => {
+  // YAML opens a comment only at the start of a value or after whitespace, and
+  // never inside a quoted scalar. Getting this wrong would turn a hard error
+  // into a silent corruption, which is the defect this family exists to remove.
+  const q = parseConfigYaml([
+    'runners:', '  m:', '    report: "junit:a #b.xml"',
+  ].join('\n')).runners.m;
+  assert.equal(q.report, 'junit:a #b.xml', 'a quoted value must keep its " #"');
+
+  const bare = parseConfigYaml([
+    'runners:', '  m:', '    command: ./run#1.sh',
+  ].join('\n')).runners.m;
+  assert.equal(bare.command, './run#1.sh', 'a # not preceded by whitespace is not a comment');
+
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  m:', '    args: ["--tag=#42", "b"]'].join('\n')).runners.m.args,
+    ['--tag=#42', 'b']
+  );
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  m:', '    args: ["a #b", "c"]'].join('\n')).runners.m.args,
+    ['a #b', 'c'],
+    'a quoted list element must keep its " #"'
+  );
+});
+
+test('an apostrophe does not open a quote that swallows a real comment', () => {
+  // splitFlowElements' element-start rule has to hold in the comment scanner too.
+  // Treating the apostrophe in `it's` as an opening quote would leave the scanner
+  // inside a string for the rest of the value and the trailing comment would
+  // survive into the last element. Kept apart from the false-positive controls
+  // above because this line has a comment to strip and those lines do not.
+  assert.deepEqual(
+    parseConfigYaml(['runners:', '  m:', "    args: [dont, it's, fine]   # ordinary apostrophe"].join('\n')).runners.m.args,
+    ['dont', "it's", 'fine']
+  );
+});
+
+test('an unterminated quote is still a malformed list, not a comment site', () => {
+  // Guessing a comment boundary inside a malformed value would replace a hard
+  // error with a silent truncation, so the value is handed on exactly as
+  // written. That means this shape reports as a malformed list (the untouched
+  // value does not end with `]`) rather than as an unterminated quote — the
+  // same error, verbatim, that it threw before comment stripping existed.
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  m:', "    args: [a, 'oops]   # trailing comment",
+  ].join('\n')), /malformed inline list at runners\.m\.args, line 3/);
+  // And with no trailing text the precise message is still the one that fires.
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  m:', "    args: [a, 'oops]",
+  ].join('\n')), /unterminated single quote/);
+});
+
+test('a comment-only value is empty, and still fails closed where it must', () => {
+  // `required: # oops` is `required:` with a comment. It must not become the
+  // truthy string "# oops", and the empty value it becomes must still be caught.
+  const r = parseConfigYaml([
+    'runners:', '  m:', '    command: node', '    required: # oops',
+  ].join('\n')).runners.m;
+  assert.equal(r.required, null);
+  // The blocks that demand an inline value still throw for it.
+  assert.throws(() => parseConfigYaml([
+    'mutation:', '  mode: # oops',
+  ].join('\n')), /must have an inline value/);
+  assert.throws(() => parseConfigYaml([
+    'policy:', '  require_classes: # oops',
+  ].join('\n')), /must have an inline list value/);
+  assert.throws(() => parseConfigYaml([
+    'policy:', '  require_for:', '    - when: # oops',
+  ].join('\n')), /must have an inline list value/);
+});
+
+test('a block sequence under a flat-map key is named as one, not just "needs a value"', () => {
+  // docs/recipes/mutation-advisory.md shipped `allowlist:` + `- "file:1:Mutator"`.
+  // The message that names the block sequence used to fire only when the `- item`
+  // line was reached, which happened only because a trailing comment on the key
+  // line carried it past the empty-value branch. Comment stripping means the key
+  // line now stops first, so the empty-value branch has to explain it too — and
+  // the shape WITHOUT a comment, which always stopped there, gets it for the
+  // first time.
+  for (const yml of [
+    ['mutation:', '  allowlist:', '    - "a.ts:1:M"'],
+    ['mutation:', '  allowlist:   # equivalent mutants', '    - "a.ts:1:M"'],
+  ]) {
+    assert.throws(
+      () => parseConfigYaml(yml.join('\n')),
+      /YAML block sequence, which this block does not read; use inline-list syntax instead \(e\.g\. allowlist: \["file:1:Mutator"\]\)/,
+      `block-sequence hint missing for:\n${yml.join('\n')}`
+    );
+  }
+  // A key that is genuinely empty, with no block sequence under it, keeps the
+  // short message rather than being told about a `- item` line that is not there.
+  assert.throws(
+    () => parseConfigYaml(['mutation:', '  mode:', '  threshold: 70'].join('\n')),
+    (e) => /must have an inline value/.test(e.message) && !/block sequence/.test(e.message)
+  );
+});
