@@ -2,6 +2,34 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [Unreleased]
+
+### Fixed (config parser, fail-closed)
+
+- **A line at the wrong indent under `runners:` was silently discarded.** The parser keyed on EXACT indent (2 = runner name, 4 = field) and let every other indent fall through both branches with no throw and no warning. `required: true` written with three spaces instead of four vanished, and `validateConfig` still reported `valid: true` — so the author believed the runner was required and the gate was quietly weaker than the config said. This is the same failure the sibling fix was written for: "a typo'd key would otherwise parse, disable a runner, and pass the gate green." Every indent other than 2 and 4 was affected, tabs included.
+- **The worst case was a mis-indented `class:` line, which stripped a money runner of every money protection.** v0.15 makes money and contract runners safe by default: such a runner is FORCED to be `required`, reconciled, strict-coverage and junit-reporting, and loosening any of it fails validation. All of that keys on the `class` field, so a one-space typo on `class: money` deleted the class and every one of those rules stopped applying at once, with nothing reporting it. Measured end-to-end through the real binary on v0.18.20: the runner fires as an ordinary runner and `fqe run` returns **verdict PASS, exit 0**, with the receipt recording `runners_fired: ["money-check"]` and `verdict_reasons: []`.
+- Scoped honestly, because the money class is not defenceless everywhere: a mis-indented `required: true` on a runner that still carries `class: money` IS caught, since the money rule demands `required === true` and an absent field fails it. The silent-pass cases are a dropped `required` on a non-money runner, a dropped `class`, and a dropped runner name.
+- **A mis-indented runner NAME emptied `runners` entirely.** `unit:` at three spaces produced `runners: {}`, which validates clean even alongside `policy: require_classes: ["money"]`, and `require_nonempty_gate` is opt-in, so the default outcome was a gate that ran nothing.
+- **A runner field before any runner name** (indent 4 with no name opened) was discarded the same way. It now throws.
+- **The `policy:` block had the identical shape.** `indent !== 2` hit a bare `continue`, so a mis-indented `require_for:` silently dropped a diff-conditional money requirement while the config parsed and validated clean. The nested lines under a well-formed `require_for` are consumed by `parseRequireFor`, which advances the cursor past them, so any line reaching that branch was mis-indented by definition. It now throws with the real file line number.
+- Every parse error names the line number, the offending text, and the indent found.
+
+### Changed (behavior)
+
+- **This turns configs that previously parsed into hard parse errors.** A repo carrying a mis-indented runner or policy line has been running a gate weaker than its config claimed; that config now fails to parse instead of silently dropping the line. This is the intended direction (fail closed), but it is a breaking change for any such repo. The fix is to correct the indentation the error message points at: runner names exactly 2 spaces, runner fields exactly 4, policy keys exactly 2.
+- Swept every fixture, template, doc example and recipe in this repo before making it throw. All four `fqe init` variants (default, `--payments`, `--with-mutation`, `--with-qodo`) generate configs that parse clean. One doc was affected and is fixed below. Two recipe examples (`money-invariants.md`, `mutation-advisory.md`) already failed to parse on v0.18.20 for unrelated reasons and are unchanged by this release.
+
+### Fixed (docs)
+
+- **`docs/writing-a-runner.md` documented a runner whose script was silently thrown away.** The `outbound-eval` example passed `args:` as a YAML block sequence with a `|` block scalar, which this parser has never supported: it parsed to `args: []`, so the documented runner would have run bare `node`, read an empty stdin, exited 0, and passed green as a REQUIRED runner while executing none of the example's code. The example now uses the inline-list form the neighbouring examples use and puts the script in its own file, with a note that block sequences and block scalars are not read.
+- `CHANGELOG.md`: the `[0.18.19]` section claimed `Tag: fqe-v0.18.20`, contradicting its own header. v0.18.20's release commit find-replaced the version too broadly.
+- `SKILL.md`: the Status paragraph credited v0.18.20 with the four platform defects that were v0.18.19's, from the same over-broad find-replace, and v0.18.20's own ten-round diff-scope work had no sentence at all. Both corrected.
+
+### Notes
+
+- 872 tests (was 862). The ten new cases cover every indent that previously fell through, on both the runner-name and runner-field axes, plus tabs, the field-before-name case, the dropped-`class` case, the policy axis, and a positive control asserting canonical indentation still parses.
+- Negative-controlled individually, in line with this repo's convention. Disabling the `runners:` guard alone turns exactly the seven runner tests red and leaves both policy tests and the positive control green; disabling the `policy:` guard alone turns exactly the two policy tests red and leaves the other twenty-seven green. Each guard was proven load-bearing on its own rather than as a batch.
+
 ## [0.18.20] - 2026-08-18
 
 Tag: `fqe-v0.18.20`.
@@ -53,7 +81,7 @@ Ten review rounds against v0.18.19, all in one subsystem: **deciding which range
 
 ## [0.18.19] - 2026-08-17
 
-Tag: `fqe-v0.18.20`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.
+Tag: `fqe-v0.18.19`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.
 
 ### Fixed (platform)
 

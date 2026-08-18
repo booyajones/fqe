@@ -280,3 +280,141 @@ test('computeContentHash: changes when file content changes', () => {
   const h2 = orchestrator.computeContentHash(['a.txt'], dir);
   assert.notEqual(h1, h2);
 });
+
+const { parseConfigYaml } = orchestrator;
+
+// --- v0.18.21: fail closed on a mis-indented line under `runners:`/`policy:` ---
+// The parser keyed on EXACT indent (2 = runner name, 4 = field) and let every
+// other indent fall through both branches, silently discarding the line. A
+// one-space typo on `required: true` produced a runner the author believed was
+// required, and validateConfig still called the config valid. A mis-indented
+// runner NAME emptied `runners` entirely, so the gate went green protecting
+// nothing. Same shape in parsePolicyBlock, where `indent !== 2` hit `continue`
+// and a mis-indented `require_for:` dropped a diff-conditional money rule.
+
+test('parseConfigYaml throws on a runner field indented 3 (the reported repro)', () => {
+  assert.throws(() => parseConfigYaml([
+    'version: 0.15',
+    'runners:',
+    '  unit:',
+    '    command: "node"',
+    '    always_run: true',
+    '   required: true', // 3 spaces: one short
+  ].join('\n')), /malformed indent under runners\.unit, line 6/);
+});
+
+test('parseConfigYaml throws on a runner field at every non-4 indent', () => {
+  for (const n of [1, 3, 5, 6, 7, 8]) {
+    assert.throws(() => parseConfigYaml([
+      'runners:',
+      '  unit:',
+      '    command: "node"',
+      `${' '.repeat(n)}required: true`,
+    ].join('\n')), /malformed indent under runners\.unit/, `indent ${n} must throw`);
+  }
+});
+
+test('parseConfigYaml throws on a TAB-indented runner field', () => {
+  assert.throws(() => parseConfigYaml([
+    'runners:',
+    '  unit:',
+    '    command: "node"',
+    '\trequired: true',
+  ].join('\n')), /malformed indent under runners\.unit/);
+});
+
+test('parseConfigYaml throws on a runner NAME at a non-2 indent', () => {
+  // Worse than a dropped field: the whole runner vanished and `runners: {}`
+  // validates clean, so the gate had nothing to run and still passed.
+  for (const n of [1, 3, 5, 6]) {
+    assert.throws(() => parseConfigYaml([
+      'runners:',
+      `${' '.repeat(n)}unit:`,
+      '    command: "node"',
+    ].join('\n')), /malformed indent under runners/, `runner name at indent ${n} must throw`);
+  }
+});
+
+test('parseConfigYaml throws on a runner field before any runner name', () => {
+  assert.throws(() => parseConfigYaml([
+    'runners:',
+    '    command: "node"',
+  ].join('\n')), /has no runner to attach to/);
+});
+
+test('parseConfigYaml throws on a mis-indented policy key', () => {
+  for (const n of [1, 3, 4]) {
+    assert.throws(() => parseConfigYaml([
+      'policy:',
+      `${' '.repeat(n)}require_classes: ["unit"]`,
+    ].join('\n')), /malformed indent under policy/, `policy key at indent ${n} must throw`);
+  }
+});
+
+test('parseConfigYaml throws on a mis-indented require_for (money rule would vanish)', () => {
+  assert.throws(() => parseConfigYaml([
+    'policy:',
+    '  require_classes: ["unit"]',
+    '   require_for:', // 3 spaces: the money rule silently disappeared
+    '     - when: ["src/payments/**"]',
+    '       classes: ["money"]',
+  ].join('\n')), /malformed indent under policy, line 3/);
+});
+
+test('parseConfigYaml still accepts canonical indentation (no false positives)', () => {
+  const cfg = parseConfigYaml([
+    'version: 0.15',
+    'runners:',
+    '  unit:',
+    '    command: "node"',
+    '    args: ["-e", "0"]',
+    '    when: ["src/**"]',
+    '    class: unit',
+    '    required: true',
+    '  money:',
+    '    command: "npm"',
+    '    args: []',
+    '    always_run: true',
+    'policy:',
+    '  require_classes: ["unit"]',
+    '  require_for:',
+    '    - when: ["src/payments/**"]',
+    '      classes: ["money", "regression"]',
+    'mutation:',
+    '  policy: blocking',
+  ].join('\n'));
+  assert.equal(cfg.runners.unit.required, true);
+  assert.deepEqual(cfg.runners.unit.args, ['-e', '0']);
+  assert.equal(cfg.runners.money.always_run, true);
+  assert.deepEqual(cfg.runners.money.args, []);
+  assert.deepEqual(cfg.policy.require_classes, ['unit']);
+  assert.deepEqual(cfg.policy.require_for[0].classes, ['money', 'regression']);
+  assert.equal(cfg.mutation.policy, 'blocking');
+});
+
+test('parse error names the offending line and text, not just a line number', () => {
+  try {
+    parseConfigYaml(['runners:', '  unit:', '    command: "node"', '   required: true'].join('\n'));
+    assert.fail('expected a throw');
+  } catch (e) {
+    assert.match(e.message, /line 4/);
+    assert.match(e.message, /required: true/);
+    assert.match(e.message, /found 3/);
+  }
+});
+
+test('parseConfigYaml throws on a mis-indented class line (money protections would vanish)', () => {
+  // The worst instance of this defect. v0.15 forces a money/contract runner to be
+  // required + reconciled + strict-coverage + junit-reporting, and all of it keys
+  // on `class`. Dropping that one line silently removed every money rule at once,
+  // and `fqe run` returned verdict PASS exit 0 with the runner reported as fired.
+  assert.throws(() => parseConfigYaml([
+    'version: 0.15',
+    'runners:',
+    '  money-check:',
+    '    command: "node"',
+    '    args: ["-e", "0"]',
+    '    always_run: true',
+    '   class: money', // 3 spaces
+  ].join('\n')), /malformed indent under runners\.money-check, line 7/);
+});

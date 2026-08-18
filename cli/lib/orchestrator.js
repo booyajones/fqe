@@ -114,14 +114,16 @@ function parseConfigYaml(text) {
           // Collect the whole nested policy block (all following indent>0 lines)
           // and hand it to a dedicated parser.
           const block = [];
+          const blockLineNos = [];
           let j = i + 1;
           for (; j < lines.length; j++) {
             const l = lines[j];
             if (l.trim() === '' || l.trim().startsWith('#')) continue;
             if (l.length - l.trimStart().length === 0) break;
             block.push(l);
+            blockLineNos.push(j + 1); // 1-based file line, for parse errors
           }
-          result.policy = parsePolicyBlock(block);
+          result.policy = parsePolicyBlock(block, blockLineNos);
           i = j - 1; // resume at the next top-level line (the loop does i++)
           current = null;
         } else if (current === 'mutation') {
@@ -166,6 +168,27 @@ function parseConfigYaml(text) {
         } else {
           result.runners[currentRunner][key] = parseInlineScalar(val);
         }
+      } else if (indent === 4) {
+        // indent 4 with no runner opened yet: a field before its runner name.
+        throw new Error(
+          `config parse: runner field at line ${i + 1} has no runner to attach to ` +
+          `(a runner name must come first, indented exactly 2 spaces): ${trimmed}`
+        );
+      } else {
+        // Fail closed. Every other indent used to fall through BOTH branches and
+        // be silently discarded — no throw, no warning. A one-space typo on
+        // `required: true` produced a runner the author believed was required and
+        // that validateConfig still called valid; a mis-indented runner NAME
+        // emptied `runners` entirely and the gate went green protecting nothing.
+        // This is the same fail-closed treatment a typo'd key already gets.
+        const what = currentRunner
+          ? `runners.${currentRunner}`
+          : 'runners';
+        throw new Error(
+          `config parse: malformed indent under ${what}, line ${i + 1} ` +
+          `(runner names must be indented exactly 2 spaces, fields exactly 4; ` +
+          `found ${indent}): ${trimmed}`
+        );
       }
     }
   }
@@ -244,12 +267,24 @@ function parseFlowList(t) {
  * Anything malformed throws (fail closed). Unknown keys are passed through so
  * config_schema.validateConfig rejects them with a clear message.
  */
-function parsePolicyBlock(lines) {
+function parsePolicyBlock(lines, lineNos = []) {
   const policy = {};
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const indent = line.length - line.trimStart().length;
-    if (indent !== 2) continue; // deeper lines are consumed by their parent key
+    if (indent !== 2) {
+      // Fail closed, same reason as the runners block. A well-formed policy never
+      // reaches here: `require_for`'s nested lines are consumed by parseRequireFor,
+      // which advances `i` past them. So any line that lands here is mis-indented,
+      // and `continue` silently discarded it — a `require_for:` one space off
+      // dropped a diff-conditional money requirement while the config still
+      // parsed and validated clean.
+      const at = lineNos[i] ? `line ${lineNos[i]}` : 'line';
+      throw new Error(
+        `policy parse: malformed indent under policy, ${at} ` +
+        `(policy keys must be indented exactly 2 spaces; found ${indent}): ${line.trim()}`
+      );
+    }
     const trimmed = line.trim();
     const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
     if (!m) throw new Error(`policy parse: malformed line: ${line}`);
