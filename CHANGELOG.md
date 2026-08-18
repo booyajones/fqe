@@ -2,6 +2,43 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [Unreleased]
+
+The payments scaffold, over five review rounds. Not tagged.
+
+### Fixed
+
+
+
+- **`fqe init --payments` generated a config that could not pass ANY pull request.** The money and contract runners shipped LIVE and `when`-scoped to `src/payments/**`, `src/ledger/**`, `src/billing/**`. But in fqe `required: true` means "this runner must fire on THIS pull request" (see docs/troubleshooting.md), and the validator FORCES every money/contract runner to be required. So any PR whose diff missed those globs FAILED with `required runner "money" did not run`. On top of that, the scaffold's `policy.require_for` globs named paths a repo may not have, and a dead `require_for` glob is itself a BLOCK under the `require_money_policy_when_detected: true` the same scaffold sets, and `require_money_idempotency: true` FAILs while no runner exists to prove the invariant. A fresh `git init` + `fqe init --payments` + a one-line README commit returned exit 2 with six blocking reasons.
+
+  This was NOT confined to fresh repos: a repo that already has `src/payments/`, `src/ledger/` and `src/billing/` — so every glob is live and every dead-glob signal is silent — still failed a docs-only PR on `required runner "money" did not run`. The profile was unusable everywhere.
+
+  The money/contract runners, `policy.require_for` and `require_money_idempotency` now ship COMMENTED OUT behind `ARM 1 of 2` / `ARM 2 of 2` markers, the way the default scaffold ships its runner examples. What stays LIVE is `require_money_policy_when_detected: true`, so the profile keeps its teeth: the first pull request that adds money-looking code with no armed policy still FAILs, and the reason names the cause. The armed template uses `always_run: true` instead of `when` globs, matching `docs/recipes/money-invariants.md` — under fqe's `required` semantics that is the only self-consistent shape for a money runner, and a change outside `src/payments` that breaks a payment is exactly what the money suite must catch.
+
+  Pre-existing since v0.15.0. Found by an independent review checking that the payments scaffold still RUNS: the only test on it asserted that it VALIDATES, which it did. Validates and usable are different claims and only the first was tested.
+
+- **The armed payments template FAILed every money pull request, on a second cause.** Its `policy.require_for` declared `classes: ["money", "regression"]` while the template provides no `class: regression` runner, so verdict Pass 5 blocked with `required test class "regression" has no runner that ran and passed` on exactly the pull requests the profile exists to guard. `require_for` now names only `money`, which the template's runners satisfy, with the `regression` pairing (class list plus a `fqe golden verify` runner, per docs/recipes/regression-golden.md) spelled out in a comment beneath it. Also pre-existing since v0.15.0.
+
+  Found by review of the first fix in this entry. The four tests written for that fix all diffed `README.md` only, so none of them ever exercised a money-path PR — the same "I tested the case I imagined" gap, on the axis of *which files the pull request touches*. `MS U5` closes it.
+
+- **The armed template FAILed every pull request in a repo with an ordinary directory layout.** `policy.require_for`'s `when` globs were hardcoded to `src/payments/**`, `src/ledger/**`, `src/billing/**`. A repo with only `src/payments/` armed the template exactly as instructed, wired real passing scripts, and then got `BLOCKED (dead policy glob)` on **every** pull request, money-related or not — `require_money_policy_when_detected` (live in this profile) makes that check a FAIL rather than a FLAG. Third instance of the same shape, and the one the earlier tests were structurally blind to: every test repo had been seeded to match the template's own globs.
+
+  Both optional pieces carry their own `>>> OPTIONAL n of 2 ... >>>` sentinels, and one position-based `uncommentBlocks()` now backs both `armPaymentsTemplate()` and the new `enableOptionalPolicy()`. The first version of the test that covered this uncommented by matching a hand-listed set of YAML key names; review broke it by adding one plausible field (`report:`) to the template, and the test still passed while that line stayed commented — a green over a config no human would produce. Uncommenting is a property of *where* a line is, never of what it says. `MS U9` now also asserts that no line inside either optional block survives commented, which is exactly what the key-name version could not check.
+
+  `appendRunnerBlock` now emits a blank line before an appended block. `\s*$` eats the template's trailing newline, and the payments template ends with a commented-out runner example, so `--with-mutation` was landing a live `stryker-mutation:` on the line immediately after the inert example — it read as part of it. `MS U10` pins it: through `init()` for the case the CLI actually generates, and by driving `appendRunnerBlock` directly for all three of its branches.
+
+  The optional `require_for` example ships as two pieces, each positioned so that uncommenting it *where it sits* lands it at the right level — the policy at the top level, the regression runner under `runners:`. The earlier single-block form put the runner inside the `policy:` stanza when uncommented the way a person selects a visual block; that threw rather than silently dropping the runner, so it was fail-loud, but the reader's only protection was a prose line sitting inside the very block they were selecting. Prose is not a mechanism. `MS U9` pins the mechanism.
+
+  `policy.require_for` is no longer part of arming. The armed runners are `always_run`, so the money and contract classes are already demanded on every PR and `require_for` added nothing for them. It now ships as an OPTIONAL block *outside* the ARM markers — so arming leaves it commented — carrying both warnings that make it usable: every glob must match a real file in your repo, and every class named must have a runner that provides it. `MS U8` pins both halves: an ordinary layout arms clean, and a dead glob still blocks when you do turn the policy on. The shared test seed is now an ordinary layout (`src/payments/` only), so this class of defect cannot hide behind a purpose-built repo again.
+
+- **The scaffold header claimed arming only part of the template "stops the gate".** False for ARM 2: a money-class runner arms the idempotency requirement by itself (`orchestrator.js`), so uncommenting just the runners yields a working, narrower gate — with no `require_for` path binding, and nothing saying so. The header now states both halves accurately and `MS U6` pins them. `armPaymentsTemplate()` also now throws on an unclosed ARM marker (it previously uncommented the rest of the file and failed later in the YAML parser — fail-loud by accident, not by construction), and the header's money-keyword list was missing three real stems and implied the detector is exhaustive when it is a heuristic that misses e.g. `src/txn/`.
+### Notes
+
+- 872 tests (+10 over v0.18.20). Every fix below was negative-controlled individually: reverted alone, in a scratch copy, to confirm one specific test goes red, then restored byte-identical.
+- The payments-scaffold rounds added 10 tests (MS U1-U10). `MS U1` drives the real binary through `fqe init --payments` in a fresh git repo and asserts a non-payments PR reaches a non-FAIL verdict — the gap the old test left open. `MS U2` asserts the inert scaffold still BLOCKS the first PR that adds money code, so the fix cannot be "remove the gate". `MS U3` uncomments the shipped template through the ARM markers and validates it, so the commented block cannot rot into a config that fails the moment somebody arms it. `MS U4` runs both shapes in a repo that HAS the money paths and pins the contrast: `always_run` PASSes a docs-only PR, `when`-globs FAIL it. `MS U5` arms the template and opens a pull request that CHANGES `src/payments/**` — the axis U1–U4 all missed. `MS U6` pins both halves of the partial-arm claim in the header. `MS U7` pins the unclosed-marker throw. `MS U8` arms in a repo that does NOT have the template's example directories. `MS U9` uncomments each OPTIONAL piece where it sits and checks it lands at the right level.
+- `MS I2` was asserting `/class: money/` against the generated file. That regex is satisfied by the commented line `#     class: money` just as well as by a live runner, so it would have kept passing while measuring nothing. It now asserts on live lines and on the parsed runner map.
+
 ## [0.18.20] - 2026-08-18
 
 Tag: `fqe-v0.18.20`.
@@ -50,6 +87,7 @@ Ten review rounds against v0.18.19, all in one subsystem: **deciding which range
 
 - 862 tests. Every fix in this range was negative-controlled **individually** — reverted alone, in a scratch copy, to confirm a specific test goes red. Batch-controlling hid two hollow tests of my own, both of which passed with their fix reverted.
 - A green suite was never the evidence here. 808, 826, 839, 846 and 851 passing tests each accompanied a product with a live silent-PASS defect.
+
 
 ## [0.18.19] - 2026-08-17
 
