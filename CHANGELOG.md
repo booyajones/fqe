@@ -2,6 +2,23 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [Unreleased]
+
+### Fixed
+
+- **`fqe init --payments` generated a config that could not pass ANY pull request.** The money and contract runners shipped LIVE and `when`-scoped to `src/payments/**`, `src/ledger/**`, `src/billing/**`. But in fqe `required: true` means "this runner must fire on THIS pull request" (see docs/troubleshooting.md), and the validator FORCES every money/contract runner to be required. So any PR whose diff missed those globs FAILED with `required runner "money" did not run`. On top of that, the scaffold's `policy.require_for` globs named paths a repo may not have, and a dead `require_for` glob is itself a BLOCK under the `require_money_policy_when_detected: true` the same scaffold sets, and `require_money_idempotency: true` FAILs while no runner exists to prove the invariant. A fresh `git init` + `fqe init --payments` + a one-line README commit returned exit 2 with six blocking reasons.
+
+  This was NOT confined to fresh repos: a repo that already has `src/payments/`, `src/ledger/` and `src/billing/` — so every glob is live and every dead-glob signal is silent — still failed a docs-only PR on `required runner "money" did not run`. The profile was unusable everywhere.
+
+  The money/contract runners, `policy.require_for` and `require_money_idempotency` now ship COMMENTED OUT behind `ARM 1 of 2` / `ARM 2 of 2` markers, the way the default scaffold ships its runner examples. What stays LIVE is `require_money_policy_when_detected: true`, so the profile keeps its teeth: the first pull request that adds money-looking code with no armed policy still FAILs, and the reason names the cause. The armed template uses `always_run: true` instead of `when` globs, matching `docs/recipes/money-invariants.md` — under fqe's `required` semantics that is the only self-consistent shape for a money runner, and a change outside `src/payments` that breaks a payment is exactly what the money suite must catch.
+
+  Pre-existing since v0.15.0. Found by an independent review checking that the payments scaffold still RUNS: the only test on it asserted that it VALIDATES, which it did. Validates and usable are different claims and only the first was tested.
+
+### Notes
+
+- 812 tests (+4). `MS U1` drives the real binary through `fqe init --payments` in a fresh git repo and asserts a non-payments PR reaches a non-FAIL verdict — the gap the old test left open. `MS U2` asserts the inert scaffold still BLOCKS the first PR that adds money code, so the fix cannot be "remove the gate". `MS U3` uncomments the shipped template through the ARM markers and validates it, so the commented block cannot rot into a config that fails the moment somebody arms it. `MS U4` runs both shapes in a repo that HAS the money paths and pins the contrast: `always_run` PASSes a docs-only PR, `when`-globs FAIL it.
+- `MS I2` was asserting `/class: money/` against the generated file. That regex is satisfied by the commented line `#     class: money` just as well as by a live runner, so it would have kept passing while measuring nothing. It now asserts on live lines and on the parsed runner map.
+
 ## [0.18.19] - 2026-08-17
 
 Tag: `fqe-v0.18.19`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.

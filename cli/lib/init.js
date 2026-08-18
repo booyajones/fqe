@@ -55,14 +55,72 @@ const QODO_RUNNER_BLOCK = `
 // MS (v0.15): the PAYMENTS profile (fqe init --payments). Money repos are strict by
 // default: every money/contract runner is locked to the safe configuration fqe enforces
 // (required, coverage evidence, reconcile, strict_coverage, blocking mutation, no
-// quarantine). Loosening any of it FAILS validation loudly. This scaffold validates clean.
+// quarantine). Loosening any of it FAILS validation loudly.
+//
+// Since 2026-08-17: the money/contract runners ship COMMENTED OUT, behind the ARM markers.
+// They used to ship live, and that made the profile unusable: fqe's `required: true`
+// means "this runner must fire on THIS pull request" (docs/troubleshooting.md), the
+// validator FORCES every money/contract runner to be required, and those runners were
+// scoped with `when: ["src/payments/**", ...]`. So every pull request whose diff missed
+// those globs FAILED with "required runner money did not run" - a docs-only PR, in a
+// fresh repo AND in a real payments repo that already has src/payments. Add the dead
+// require_for globs (BLOCKED under require_money_policy_when_detected) and the
+// require_money_idempotency flag with no runner to prove it, and `fqe init --payments`
+// produced a config that could not pass any pull request at all.
+//
+// What is live now is the part that works in ANY repo, and it still has teeth:
+// require_money_policy_when_detected FAILS the first PR that adds money-looking code
+// with no money policy configured, which is the cue to arm the template.
+//
+// The armed runners use `always_run: true`, not `when:` globs, matching
+// docs/recipes/money-invariants.md. Under fqe's `required` semantics that is the only
+// self-consistent shape for a money runner, and it is right on its own merits: a change
+// OUTSIDE src/payments that breaks a payment is exactly the one the money suite must catch.
+//
+// ARM_BEGIN_RE / ARM_END_RE below are the sentinels a human (and money_strict.test.js)
+// uses to uncomment the template. Keep them in sync with the text.
 const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init --payments)
-# Money repos are strict by default. The money/contract runners below are locked to the
-# safe configuration fqe enforces. Loosening any of them FAILS validation loudly (the
-# gate refuses to run); it does not silently weaken. Add your own unit/lint runners too.
+#
+# This profile ships ARMED BUT INERT. It is a TEMPLATE, not a finished gate.
+#
+# LIVE right now, in any repo:
+#   require_money_policy_when_detected  the first pull request that adds money-LOOKING
+#                                       code (a payments / ledger / billing / settlement
+#                                       / invoice / payout path, or debit, credit, settle,
+#                                       reconcil, idempoten, chargeback, remittance in a
+#                                       source file) FAILS with "money-looking code is
+#                                       present but no money policy is configured". That
+#                                       is your cue to arm the template below.
+#   mutation                            blocking, already inside the caps a money policy
+#                                       requires, so arming does not fail validation.
+#
+# COMMENTED OUT ON PURPOSE: the money and contract runners call 'npm run test:money' and
+# 'npm run test:contract', and the policy globs name src/payments, src/ledger and
+# src/billing. fqe cannot know your scripts or your paths. Shipping them live blocks EVERY
+# pull request in a repo that does not already have them - including the one that adds them.
+#
+# TO ARM THE MONEY GATE: uncomment BOTH marked blocks, together, and point them at your
+# real scripts and paths. Arming only part of it does not weaken the gate, it stops it:
+#   require_money_idempotency on, with no runner that PROVES the invariant  = FAIL, every PR
+#   a policy.require_for glob that matches no file in the repo              = BLOCKED, every PR
+#     (deliberate: a typo'd money path would otherwise silently grant the loose bar)
+#
+# Note 'always_run: true' on the runners, NOT 'when:' globs. In fqe, 'required: true' means
+# "this runner must fire on THIS pull request", and the validator forces every money or
+# contract runner to be required - so a 'when'-scoped money runner FAILS every pull request
+# whose diff misses its globs. always_run is also correct on its own merits: a change
+# OUTSIDE src/payments that breaks a payment is exactly what the money suite must catch.
+# Same shape as docs/recipes/money-invariants.md.
+#
+# Money strictness is not negotiable once armed. A money/contract runner must be required,
+# must declare a junit report, must reconcile, must set strict_coverage, and can never be
+# quarantined. Loosening any of it FAILS validation loudly; the gate refuses to run rather
+# than silently weaken on a money path. Add your own unit/lint runners too.
+#
+# On Windows, "command: npm" does not start (npm is npm.cmd and fqe spawns without a
+# shell). Use command: "cmd", args: ["/c", "npm", "run", "test:money"] there.
 
 version: 0.15
-require_money_idempotency: true
 require_money_policy_when_detected: true
 
 mutation:
@@ -71,39 +129,70 @@ mutation:
   min_mutants: 1
   max_suppression_ratio: 0.5
 
-policy:
-  require_for:
-    - when: ["src/payments/**", "src/ledger/**", "src/billing/**"]
-      classes: ["money", "regression"]
+# >>> ARM 1 of 2: uncomment every line between this marker and END ARM 1. >>>
+# require_money_idempotency: true
+#
+# policy:
+#   require_for:
+#     - when: ["src/payments/**", "src/ledger/**", "src/billing/**"]
+#       classes: ["money", "regression"]
+# <<< END ARM 1 of 2 <<<
 
+# Your runners go under this key. Left empty, the gate runs and always passes.
 runners:
-  money:
-    command: "npm"
-    args: ["run", "test:money"]
-    when: ["src/payments/**", "src/ledger/**", "src/billing/**"]
-    class: money
-    required: true
-    report: "junit:reports/money-junit.xml"
-    inventory_cmd: "npm run test:money -- --listTests --silent | grep -c ."
-    inventory_format: count
-    reconcile: true
-    strict_coverage: true
-    min_tests: 1
-    invariant: ["idempotency", "no-negative-balance"]
-
-  contract:
-    command: "npm"
-    args: ["run", "test:contract"]
-    when: ["src/payments/**", "contracts/**"]
-    class: contract
-    required: true
-    report: "junit:reports/contract-junit.xml"
-    inventory_cmd: "npm run test:contract -- --listTests --silent | grep -c ."
-    inventory_format: count
-    reconcile: true
-    strict_coverage: true
-    min_tests: 1
+# >>> ARM 2 of 2: uncomment every line between this marker and END ARM 2. >>>
+#   money:
+#     command: "npm"
+#     args: ["run", "test:money"]
+#     always_run: true
+#     class: money
+#     required: true
+#     report: "junit:reports/money-junit.xml"
+#     inventory_cmd: "npm run test:money -- --listTests --silent | grep -c ."
+#     inventory_format: count
+#     reconcile: true
+#     strict_coverage: true
+#     min_tests: 1
+#     invariant: ["idempotency", "no-negative-balance"]
+#
+#   contract:
+#     command: "npm"
+#     args: ["run", "test:contract"]
+#     always_run: true
+#     class: contract
+#     required: true
+#     report: "junit:reports/contract-junit.xml"
+#     inventory_cmd: "npm run test:contract -- --listTests --silent | grep -c ."
+#     inventory_format: count
+#     reconcile: true
+#     strict_coverage: true
+#     min_tests: 1
+# <<< END ARM 2 of 2 <<<
 `;
+
+// The ARM sentinels, exported so a test can uncomment the template exactly the way the
+// README tells a human to, and prove the commented-out block is still a valid config.
+// A template nobody validates rots into one that fails the moment somebody arms it.
+const ARM_BEGIN_RE = /^# >>> ARM \d of 2:.*>>>$/;
+const ARM_END_RE = /^# <<< END ARM \d of 2 <<<$/;
+
+/**
+ * Uncomment the ARM-marked blocks of a payments scaffold. Strips a leading '# ' (or a
+ * bare '#') from every line between the markers and drops the marker lines themselves.
+ * This is the mechanical form of the instruction printed in the scaffold header.
+ * @param {string} yml
+ * @returns {string}
+ */
+function armPaymentsTemplate(yml) {
+  const out = [];
+  let inside = false;
+  for (const line of String(yml).split('\n')) {
+    if (!inside && ARM_BEGIN_RE.test(line)) { inside = true; continue; }
+    if (inside && ARM_END_RE.test(line)) { inside = false; continue; }
+    out.push(inside ? line.replace(/^# ?/, '') : line);
+  }
+  return out.join('\n');
+}
 
 const FILES = {
   '.fqe.yml': `# Finexio Quality Engine - repo config
@@ -741,4 +830,7 @@ module.exports = {
   MUTATION_RUNNER_BLOCK,
   QODO_RUNNER_BLOCK,
   PAYMENTS_FQE_YML,
+  armPaymentsTemplate,
+  ARM_BEGIN_RE,
+  ARM_END_RE,
 };
