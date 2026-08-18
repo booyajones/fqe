@@ -463,16 +463,24 @@ function isGitRepo(repoDir) {
   return hasGitMarker(cwd);
 }
 
-/** Walk up from `dir` looking for a `.git` file or directory. */
+/**
+ * Does `dir` ITSELF carry a `.git` marker?
+ *
+ * Deliberately does NOT walk up. An earlier version did, and it reported "this
+ * is a repo" for any scratch directory that happened to sit anywhere beneath an
+ * unrelated checkout - a dotfiles-tracked home directory, a temp dir inside a
+ * monorepo - purely from nesting. That turns a legitimate "nothing to diff"
+ * silence into a false alarm decided by the machine's directory layout, and a
+ * gate that cries wolf gets ignored, which is how the real signal gets missed.
+ *
+ * Bounding to the directory itself still covers every case this exists for: a
+ * dubious-ownership refusal, a broken GIT_DIR, git missing from PATH, and a
+ * linked worktree whose main clone moved all leave `.git` right here, in the
+ * directory fqe was pointed at.
+ */
 function hasGitMarker(dir) {
   try {
-    let cur = path.resolve(dir);
-    for (;;) {
-      if (fs.existsSync(path.join(cur, '.git'))) return true;
-      const parent = path.dirname(cur);
-      if (parent === cur) return false;
-      cur = parent;
-    }
+    return fs.existsSync(path.join(path.resolve(dir), '.git'));
   } catch (_) {
     // Cannot even inspect the filesystem. Assume a repo so the caller takes the
     // suspicious branch rather than granting silence on an unreadable state.
@@ -492,7 +500,21 @@ function changedFiles({ baseSha, headSha, repoDir }) {
     // `reason` matters downstream: an EXPLICIT but empty override is the caller
     // asserting a diff it could not compute, which can never be excused by a
     // git-history check. Only a git-side absence is ever exemptible.
-    return { files: envFiles, ok: envFiles.length > 0, reason: envFiles.length ? null : 'env-empty' };
+    // `source` is load-bearing for the RECEIPT, not just for logic. When the file
+    // list comes from the environment, this run did NOT diff against --base even
+    // if one was passed - so a receipt reporting that base as the scope would be
+    // asserting a provenance that never happened. Measured: a correct --base plus
+    // FQE_CHANGED_FILES naming a nonexistent path produced PASS with a real base
+    // SHA and changed_file_count: 1 in the receipt, which reads as a legitimate
+    // git-verified clean run. The field added to make a blind PASS visible was
+    // lending it credibility instead.
+    return {
+      files: envFiles,
+      ok: envFiles.length > 0,
+      reason: envFiles.length ? null : 'env-empty',
+      source: 'env',
+      declaredBase: baseSha || null,
+    };
   }
   // NO SILENT FALLBACK TO HEAD~1.
   //
@@ -508,16 +530,48 @@ function changedFiles({ baseSha, headSha, repoDir }) {
   // what ok:false means, so say so and let the caller's qualifier decide whether
   // it deserves silence (a genuinely first run) or a flag.
   if (!baseSha || !headSha) {
-    return { files: [], ok: false, reason: 'no-base' };
+    return { files: [], ok: false, reason: 'no-base', source: 'git', declaredBase: null };
   }
-  const r = spawnSync('git', ['diff', '--name-only', `${baseSha}..${headSha}`], {
-    cwd: repoDir || process.cwd(),
-    encoding: 'utf8',
-  });
+  const cwd = repoDir || process.cwd();
+
+  // A DEGENERATE RANGE SUCCEEDS. `git diff X..X` exits 0 with zero files, so
+  // diff.ok is true, diff_indeterminate is false, and every when-gated runner
+  // sits out over a receipt that looks perfectly clean. Measured: a real
+  // regression, `--base HEAD --commit HEAD` -> PASS, exit 0,
+  // changed_file_count: 0, indeterminate: false. base == head is never a real
+  // pull request; it is a CI race on base.sha/head.sha, a self-targeting PR, or
+  // a rebase in flight. Zero files here means "we learned nothing", not "nothing
+  // changed", and only the first of those is safe to report as clean.
+  const rev = (ref) => {
+    const p = spawnSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd, encoding: 'utf8' });
+    return p.status === 0 ? String(p.stdout).trim() : null;
+  };
+  const baseId = rev(baseSha);
+  const headId = rev(headSha);
+  if (baseId && headId && baseId === headId) {
+    return { files: [], ok: false, reason: 'degenerate-range', source: 'git', declaredBase: baseSha };
+  }
+
+  const r = spawnSync('git', ['diff', '--name-only', `${baseSha}..${headSha}`], { cwd, encoding: 'utf8' });
   if (r.status !== 0) {
-    return { files: [], ok: false, reason: 'git-failed' };
+    return { files: [], ok: false, reason: 'git-failed', source: 'git', declaredBase: baseSha };
   }
-  return { files: r.stdout.split('\n').filter(Boolean), ok: true, reason: null };
+
+  // UNRELATED HISTORIES also "succeed". `git diff` happily compares two commits
+  // with no common ancestor, but the result is not the pull request's change
+  // set, so it must not be presented as one.
+  const mb = spawnSync('git', ['merge-base', baseSha, headSha], { cwd, encoding: 'utf8' });
+  if (mb.status !== 0) {
+    return { files: [], ok: false, reason: 'no-merge-base', source: 'git', declaredBase: baseSha };
+  }
+
+  return {
+    files: r.stdout.split('\n').filter(Boolean),
+    ok: true,
+    reason: null,
+    source: 'git',
+    declaredBase: baseSha,
+  };
 }
 
 function classify(files, runnersConfig) {
@@ -1235,9 +1289,17 @@ function run(opts) {
     // was never told what to diff against, which is exactly the state that used
     // to be indistinguishable from a clean one.
     diff_scope: {
-      base: opts.baseSha || null,
+      // WHERE the file list came from. `base` is what was ACTUALLY diffed
+      // against, so it is null whenever the list came from FQE_CHANGED_FILES -
+      // reporting the passed --base there would assert a diff that never ran.
+      // `declared_base` keeps the ignored value visible for audit rather than
+      // dropping it.
+      source: diff.source || 'git',
+      base: diff.source === 'env' ? null : (opts.baseSha || null),
+      declared_base: diff.declaredBase || null,
       changed_file_count: files.length,
       indeterminate: diffIndeterminate,
+      unusable_reason: diff.reason || null,
     },
     human_review: humanReview,
   });

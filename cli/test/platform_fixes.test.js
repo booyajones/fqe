@@ -709,16 +709,168 @@ test('git REFUSING to answer is not mistaken for a brand-new repo', () => {
 test('an explicitly EMPTY FQE_CHANGED_FILES is never excused by repo history', () => {
   // The caller asserting "my diff came back empty" is a CI signal. A git-history
   // predicate about the checkout has no bearing on it and must not silence it.
-  const { dir, head } = prRepo();
+  //
+  // MUST use a repo where isGenuinelyFirstRun() would otherwise be TRUE. The
+  // first version used prRepo() (3 commits), where repoHasHistory() alone
+  // already returns false - so the `exemptible` qualifier was never reached and
+  // the test passed with the fix reverted. It pinned both ends and never tested
+  // the join.
+  const dir = tmpRepo(); // single commit => isGenuinelyFirstRun() is true here
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), [
+    'runners: {}',
+    'policy:',
+    '  require_for:',
+    '    - when: ["src/**"]',
+    '      classes: ["unit"]',
+    '',
+  ].join('\n'));
   const prev = process.env.FQE_CHANGED_FILES;
   process.env.FQE_CHANGED_FILES = '';
   try {
     const r = spawnSync(process.execPath,
       [BIN, 'run', '--commit', head, '--output', path.join(dir, 'out'), '--repo-dir', dir],
       { encoding: 'utf8', cwd: dir, timeout: 90000, env: { ...process.env, FQE_CHANGED_FILES: '' } });
-    assert.notStrictEqual(r.status, 0, 'an empty CI-supplied diff must not report clean');
+    assert.notStrictEqual(r.status, 0,
+      'an empty CI-supplied diff must not report clean, even on a repo the first-run qualifier would otherwise excuse');
   } finally {
     if (prev === undefined) delete process.env.FQE_CHANGED_FILES;
     else process.env.FQE_CHANGED_FILES = prev;
   }
+});
+
+/**
+ * ROUND 7. Round 6 removed the HEAD~1 guess but left two more ways for a diff to
+ * "succeed" while telling fqe nothing, and its own new receipt field made one of
+ * them look MORE credible.
+ */
+
+test('base == commit is a degenerate range, not a clean run', () => {
+  const { dir, head } = prRepo();
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', head, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  // `git diff X..X` exits 0 with zero files, so diff.ok was true, the guard never
+  // fired, and a real regression passed. base == head is a CI race or a
+  // self-targeting PR - never a real pull request.
+  assert.notStrictEqual(r.status, 0,
+    `zero files from a degenerate range means "we learned nothing", not "nothing changed":\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /unusable_reason: degenerate-range/);
+});
+
+test('a base with no common ancestor is not presented as the PR change set', () => {
+  const { dir } = prRepo();
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  // An orphan branch shares no history with HEAD. `git diff` still succeeds.
+  const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  execFileSync('git', ['checkout', '-q', '--orphan', 'unrelated'], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'orphan'], { cwd: dir, env });
+  const orphan = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  execFileSync('git', ['checkout', '-q', branch], { cwd: dir });
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', orphan, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  assert.notStrictEqual(r.status, 0, `unrelated histories produce a diff that is not the PR's change set:\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /unusable_reason: no-merge-base/);
+});
+
+test('the receipt never claims a base it did not actually diff against', () => {
+  const { dir, base, head } = prRepo();
+  // A correct --base AND an env-supplied file list. The env list wins, so no
+  // diff against that base ever ran - and the receipt must not imply one did.
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--base', base, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000, env: { ...process.env, FQE_CHANGED_FILES: 'docs/nope.md' } });
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.match(yml, /source: env/, 'the receipt must name where the file list came from');
+  assert.match(yml, /base: null/, 'no git diff ran, so no base was diffed against');
+  assert.match(yml, new RegExp(`declared_base: ${base}`), 'the ignored --base stays visible for audit');
+  assert.ok(r.status === 0 || r.status === 3, 'the CI trust boundary itself is unchanged; only the record is honest now');
+});
+
+test('diff_scope is inside the signature, not merely alongside it', () => {
+  const { SIGNED_FIELDS } = require('../lib/signature');
+  // The field exists to distinguish "clean because nothing was wrong" from
+  // "clean because nothing was evaluated". Unsigned, anyone who can rewrite a
+  // receipt after signing can forge exactly that claim.
+  assert.ok(SIGNED_FIELDS.includes('diff_scope'),
+    `diff_scope must be signed; SIGNED_FIELDS = ${JSON.stringify(SIGNED_FIELDS)}`);
+});
+
+test('hasGitMarker does not escape into an unrelated ancestor repo', () => {
+  const { isGitRepo } = require('../lib/orchestrator');
+  // A plain scratch dir nested under an unrelated checkout is NOT a repo. An
+  // earlier version walked up the tree and said it was, purely from nesting,
+  // turning a legitimate silence into a false alarm decided by directory layout.
+  const outer = tmpRepo();
+  const nested = path.join(outer, 'scratch', 'deep');
+  fs.mkdirSync(nested, { recursive: true });
+  const prev = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(outer, 'no-such-git-dir');
+  try {
+    assert.strictEqual(isGitRepo(nested), false,
+      'nesting under an unrelated repo must not make a scratch dir "a repo"');
+  } finally {
+    if (prev === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = prev;
+  }
+});
+
+test('the adjacent guards share the qualified value (this had zero coverage)', () => {
+  // Reverting computeRequiredClasses/detectMoneyPaths to the raw !diff.ok left
+  // all 839 tests green while provably changing behaviour. Pin the difference:
+  // on a genuinely first run, require_for must NOT be force-activated.
+  const dir = tmpRepo(); // 1 commit, no base => isGenuinelyFirstRun() is true
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), [
+    'runners: {}',
+    'policy:',
+    '  require_for:',
+    '    - when: ["src/**"]',
+    '      classes: ["money"]',
+    '',
+  ].join('\n'));
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  const r = spawnSync(process.execPath,
+    [BIN, 'run', '--commit', head, '--output', path.join(dir, 'out'), '--repo-dir', dir],
+    { encoding: 'utf8', cwd: dir, timeout: 90000 });
+  assert.notStrictEqual(r.status, 2,
+    `a genuinely first run must not be hard-blocked by an adjacent guard the main one exonerates:\n${r.stdout}${r.stderr}`);
+  const yml = fs.readFileSync(path.join(dir, 'out', 'QA-RESULT.yml'), 'utf8');
+  assert.doesNotMatch(yml, /required test class "money"/,
+    'require_for must not be force-activated on a run the guard deliberately excused');
+});
+
+test('every documented `fqe run` invocation names a --base', () => {
+  // Removing the HEAD~1 guess changed what a no-base run does, so any doc still
+  // showing one now teaches a command that reports a different verdict reason
+  // than CI. A behaviour change without a docs sweep is how the last six rounds
+  // each shipped something half-done.
+  const root = path.join(__dirname, '..', '..');
+  const files = [];
+  const walk = (p) => {
+    if (!fs.existsSync(p)) return;
+    const st = fs.statSync(p);
+    if (st.isDirectory()) { for (const e of fs.readdirSync(p)) walk(path.join(p, e)); }
+    else if (/\.md$/.test(p)) files.push(p);
+  };
+  walk(path.join(root, 'docs'));
+  ['README.md', 'SKILL.md'].forEach((f) => walk(path.join(root, f)));
+
+  const offenders = [];
+  for (const f of files) {
+    const text = fs.readFileSync(f, 'utf8').replace(/\\\r?\n\s*/g, ' ');
+    for (const m of text.matchAll(/fqe run ([^\n`]*)/g)) {
+      const tail = m[1].split(/&&|\|\||[|;]/)[0];
+      // Only real invocations. Prose like "`fqe run` writes the receipt" is a
+      // mention, not a command, and flagging it would be the cry-wolf failure
+      // this guard exists to prevent. A command always names --commit.
+      if (!/--commit\b/.test(tail)) continue;
+      if (!/--base\b/.test(tail)) offenders.push(`${path.relative(root, f)}: fqe run ${tail.trim().slice(0, 70)}`);
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    `these documented commands omit --base and no longer match what CI does:\n  ${offenders.join('\n  ')}`);
 });

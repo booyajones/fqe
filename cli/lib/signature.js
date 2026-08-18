@@ -35,7 +35,12 @@ const ALG = 'hmac-sha256';
 // object (or null), so it round-trips faithfully. verdict_reasons and runners are NOT signed:
 // they are human-readable evidence, reproducible by re-running fqe, and signing nested numeric
 // arrays risks YAML round-trip drift. The recipe documents this scope explicitly.
-const SIGNED_FIELDS = Object.freeze(['schema_version', 'fqe_version', 'commit_sha', 'content_hash', 'inputs_hash', 'verdict', 'bypass']);
+// `diff_scope` IS signed. It is the field that distinguishes "clean because
+// nothing was wrong" from "clean because nothing was evaluated", so leaving it
+// outside the MAC would let anyone who can rewrite a receipt after signing forge
+// exactly the claim it exists to make. Like `bypass`, it is a small object of
+// scalars (strings, an integer, booleans, nulls) and round-trips faithfully.
+const SIGNED_FIELDS = Object.freeze(['schema_version', 'fqe_version', 'commit_sha', 'content_hash', 'inputs_hash', 'verdict', 'bypass', 'diff_scope']);
 
 /**
  * Deterministic JSON: object keys sorted recursively, so the same logical receipt always
