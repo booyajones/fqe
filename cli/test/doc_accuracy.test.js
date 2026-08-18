@@ -54,7 +54,31 @@ const DOC_EXTS = new Set(['.md', '.yml', '.yaml', '.template', '.js', '.json']);
 // scanning it could report a stale pin sourced from a directory that is not part of
 // the working tree at all. Cheap insurance, since a local `npx stryker run` before
 // `npm test` is a workflow this repo documents.
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.fqe-out', 'out', '.stryker-tmp', 'reports']);
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.fqe-out', 'out', '.stryker-tmp', 'reports', '.claude']);
+
+/**
+ * A nested CHECKOUT is not part of this working tree either, and that is the
+ * general form of the rule the list above was approximating by name.
+ *
+ * `.claude/worktrees/<name>/` is a full second checkout of this same repository,
+ * created by the agent tooling this repo is developed with, and git does not
+ * report it as untracked. A worktree parked on an older branch therefore fed 126
+ * files' worth of stale pins, stale version badges and stale test-count claims
+ * into every scan below, so `npm test` reported four doc-accuracy failures that
+ * named only paths inside it. CI never saw them (it checks out clean) and a
+ * clean clone never saw them, which made them look like real drift on main to
+ * anyone reading a local run — the reverse of the usual failure, and a guard
+ * that cries wolf gets ignored exactly when it is right.
+ *
+ * Keyed on a `.git` entry rather than on directory names, so a nested clone or
+ * worktree anywhere is excluded whatever it is called. A worktree's `.git` is a
+ * FILE and a clone's is a directory, hence `existsSync` rather than a type test.
+ * The repo root is never tested against this rule: `walk` starts inside it and
+ * only ever asks about children.
+ */
+function isNestedCheckout(dir) {
+  return fs.existsSync(path.join(dir, '.git'));
+}
 /**
  * Files the repo scan does not read, and the only two reasons that is allowed.
  *
@@ -199,7 +223,9 @@ function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name)) continue;
-      walk(path.join(dir, entry.name), out);
+      const child = path.join(dir, entry.name);
+      if (isNestedCheckout(child)) continue;
+      walk(child, out);
     } else if (DOC_EXTS.has(path.extname(entry.name))) {
       const full = path.join(dir, entry.name);
       if (!EXCLUDE_FILES.has(full)) out.push(full);
@@ -1202,4 +1228,53 @@ test('prose "current release" labels match the package.json version', () => {
     );
   }
   assert.deepStrictEqual(wrong, [], `stale current-release label(s):\n  ${wrong.join('\n  ')}`);
+});
+
+test('the repo scan does not descend into a nested checkout', () => {
+  // Every guard in this file reads whatever `walk` returns, so a second checkout
+  // inside the tree silently becomes evidence. `.claude/worktrees/<name>/` is
+  // exactly that — a full checkout of this repo made by the agent tooling it is
+  // developed with, which git does not report as untracked. Parked on an older
+  // branch it fed 126 files of stale pins and stale counts into the scan, and
+  // `npm test` reported four failures naming only paths inside it. CI could not
+  // see it (clean checkout) and neither could a clean clone, so the failures read
+  // as real drift on main to anyone running locally.
+  //
+  // Pinned here because that asymmetry is what makes it dangerous: delete the
+  // guard and CI stays green, so nothing outside a developer's own terminal
+  // would ever report the regression.
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fqe-walk-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'docs', 'real.md'), '# in the working tree\n');
+
+    // A git WORKTREE: `.git` is a file pointing at the parent's metadata.
+    const wt = path.join(dir, '.claude', 'worktrees', 'stale');
+    fs.mkdirSync(path.join(wt, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: /somewhere/.git/worktrees/stale\n');
+    fs.writeFileSync(path.join(wt, 'docs', 'worktree.md'), '# NOT in the working tree\n');
+
+    // A nested CLONE somewhere the name-based list does not cover: `.git` is a dir.
+    const clone = path.join(dir, 'vendor', 'someone-elses-repo');
+    fs.mkdirSync(path.join(clone, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(clone, 'nested.md'), '# NOT in the working tree\n');
+
+    // Agent tool state that is NOT a checkout, so the rule above cannot see it and
+    // the `.claude` entry in SKIP_DIRS is what excludes it. Asserted because an
+    // entry on that list which no test exercises is indistinguishable from one
+    // that could be deleted, and this whole file exists to stop guards from
+    // quietly measuring nothing.
+    fs.mkdirSync(path.join(dir, '.claude', 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{"model":"opus"}\n');
+    fs.writeFileSync(path.join(dir, '.claude', 'skills', 'note.md'), '# tool state, not repo docs\n');
+
+    const found = walk(dir).map((f) => path.relative(dir, f).split(path.sep).join('/'));
+    assert.deepStrictEqual(
+      found.sort(),
+      ['docs/real.md'],
+      `the scan must read only this working tree. Found: ${JSON.stringify(found)}`
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

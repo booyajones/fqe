@@ -78,11 +78,30 @@ function realTestCount() {
   return Number(m[1]);
 }
 
+/**
+ * Same rule as `doc_accuracy.test.js`, and here for the same reason: a nested
+ * CHECKOUT is not part of this working tree, so its docs are not claims this
+ * repo is making. `.claude/worktrees/<name>/` is a full second checkout made by
+ * the agent tooling this repo is developed with, and git does not report it as
+ * untracked, so a worktree parked on an older branch reported its stale counts
+ * as stale claims on main. Keyed on a `.git` entry (a FILE for a worktree, a
+ * directory for a clone) rather than on names, so it holds wherever the checkout
+ * lives. The two guards were fixed together: the name lists had already drifted
+ * apart — this one never had `.fqe.yml`'s `reports` or `.fqe-out` — and fixing
+ * one sibling while leaving the other is the exact miss this release keeps
+ * finding.
+ */
+function isNestedCheckout(dir) {
+  return fs.existsSync(path.join(dir, '.git'));
+}
+
 function markdownFiles(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.isDirectory()) {
-      if (['.git', 'node_modules', '.stryker-tmp', 'out'].includes(e.name)) continue;
-      markdownFiles(path.join(dir, e.name), out);
+      if (['.git', 'node_modules', '.stryker-tmp', 'out', '.claude'].includes(e.name)) continue;
+      const child = path.join(dir, e.name);
+      if (isNestedCheckout(child)) continue;
+      markdownFiles(child, out);
     } else if (e.name.endsWith('.md') && e.name !== 'CHANGELOG.md') {
       out.push(path.join(dir, e.name));
     }
