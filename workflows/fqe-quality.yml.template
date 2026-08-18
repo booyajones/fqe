@@ -174,9 +174,15 @@ jobs:
           name: qa-receipt-${{ github.event.pull_request.head.sha }}
           # Both files: machine-readable YAML for downstream workflows,
           # human-readable markdown for PR comments.
+          # runner-*.log carries what the receipt's evidence_paths names and what
+          # the explainer tells you to download. Without it the receipt points at
+          # files no reader can reach.
+          # (Keep this comment ABOVE `path:` — inside a `|` block scalar a '#'
+          # line is literal text, not a comment, and would be uploaded as a glob.)
           path: |
             out/QA-RESULT.yml
             out/QA-RESULT.md
+            out/runner-*.log
           retention-days: 90
 
       - name: Determine fqe/pass state from verdict

@@ -173,6 +173,12 @@ function buildReceipt(ctx) {
     verdict_reasons: ctx.verdict_reasons || [],
     bypass: ctx.bypass || null,
     evidence_paths: ctx.evidence_paths || [],
+    // WHAT WAS ACTUALLY EVALUATED. Without this a receipt cannot distinguish
+    // "0 files because nothing changed" from "0 files because the diff broke",
+    // so a blind PASS and a genuinely clean PASS were byte-identical after the
+    // fact. For a tamper-evident record whose whole claim is that it says what
+    // happened, that omission is the product failing at its own thesis.
+    diff_scope: ctx.diff_scope || null,
     // v0.10: instruments the near-autonomy DoD. Counts the items a human must look
     // at this run (flags, flaky/quarantined runners, unwired suites, AI drafts) and
     // an estimated minutes, so the "3-6 team-hours/week" target is observed, not asserted.

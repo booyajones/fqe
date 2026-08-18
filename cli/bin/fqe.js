@@ -153,12 +153,21 @@ const SUBCOMMANDS = {
   },
 
   run(args) {
-    // fqe run [--full|--quick] --commit <sha> --output <dir> [--config <.fqe.yml>] [--base <sha>]
+    // fqe run --commit <sha> --output <dir> [--config <.fqe.yml>] [--base <sha>]
     // Composes verified pieces. Returns verdict + writes QA-RESULT.{yml,md}.
     const opts = parseFlags(args);
     requireFlags(opts, ['commit', 'output']);
     if (!/^[a-f0-9]{40}$/.test(opts.commit)) {
       die(`run: --commit must be 40-char hex, got '${opts.commit}'`);
+    }
+    // `--base ''` is a CI accident, not a request. An unset shell variable
+    // (`--base "$BASE_SHA"` with BASE_SHA empty) used to arrive here as an empty
+    // string, test falsy at every `if (baseSha)` downstream, and silently demote
+    // the run to "no base named". Reject it loudly: the caller clearly INTENDED
+    // to scope the run and their variable did not resolve.
+    if (opts.base !== undefined && String(opts.base).trim() === '') {
+      die('run: --base was given but is empty. A shell variable did not resolve. '
+        + 'Pass a real base ref, or omit --base entirely.');
     }
     const result = orchestrator.run({
       commitSha: opts.commit,
@@ -539,7 +548,20 @@ const SUBCOMMANDS = {
         process.stderr.write(`receipt verify: FAILED — ${res.reason}\n`);
         process.exit(2);
       }
-      process.stdout.write(`receipt verify: OK (key_id ${res.key_id})\n`);
+      // A bare "OK" would let a reader assume every field is authenticated. For a
+      // receipt signed before a field joined the signed tuple, that field is
+      // present but was never in the MAC, so it can be rewritten freely and this
+      // command would still have printed OK. Name what was not covered.
+      const unsigned = Array.isArray(res.unsigned_fields) ? res.unsigned_fields : [];
+      if (unsigned.length) {
+        process.stdout.write(
+          `receipt verify: OK (key_id ${res.key_id}) — WARNING: signed by an older field set; `
+          + `${unsigned.join(', ')} ${unsigned.length === 1 ? 'is' : 'are'} present but NOT authenticated. `
+          + `Do not trust ${unsigned.length === 1 ? 'its value' : 'those values'}; re-sign with the current fqe to cover ${unsigned.length === 1 ? 'it' : 'them'}.\n`
+        );
+      } else {
+        process.stdout.write(`receipt verify: OK (key_id ${res.key_id})\n`);
+      }
       process.exit(0);
     } else {
       die(`unknown receipt subcommand: ${sub}`);
@@ -1019,25 +1041,37 @@ const SUBCOMMANDS = {
  * gate, and a misconfigured gate must never silently pass.
  */
 const KNOWN_FLAGS = {
-  run: ['commit', 'output', 'base', 'config', 'pr', 'repo-dir'],
-  init: ['dir', 'force', 'actor', 'with-mutation', 'with-qodo', 'payments'],
+  // The three no-argument subcommands. They were omitted here because the
+  // derivation only recognised `name(args) {`, so assertKnownFlags returned
+  // early and `fqe version --anything` was silently accepted - the same
+  // swallow-the-typo defect this map exists to close, in the commands the
+  // guard could not see. An empty list means "takes no flags", not "unchecked".
+  version: [],
+  thresholds: [],
+  help: [],
   explain: ['dir', 'json'],
-  validate: ['config'],
+  init: ['actor', 'dir', 'force', 'payments', 'with-mutation', 'with-qodo'],
   verdict: [],
-  'oracle-guard': ['changed', 'base', 'head', 'include-tests', 'block', 'repo-dir'],
-  'bypass-check': ['comments', 'head', 'allowed', 'allowlist-file', 'now'],
-  uat: ['spec', 'results', 'strict', 'json'],
-  golden: ['manifest', 'dir', 'json'],
-  'qa-report': ['receipt', 'json', 'gate'],
+  run: ['base', 'commit', 'config', 'output', 'pr', 'repo-dir'],
+  validate: ['config', 'dir'],
+  discover: ['config', 'dir', 'strict'],
+  baseline: ['count', 'spec'],
+  'oracle-guard': ['base', 'block', 'changed', 'head', 'include-tests', 'repo-dir'],
+  'bypass-check': ['allowed', 'allowlist-file', 'comments', 'head', 'now'],
+  uat: ['json', 'results', 'spec', 'strict'],
+  golden: ['dir', 'json', 'manifest', 'repo-dir'],
+  'qa-report': ['gate', 'json', 'receipt'],
+  receipt: ['actor', 'allowlist-version', 'commit', 'events-url', 'output', 'pr', 'require-signature', 'requester-source', 'run-id'],
+  scorecard: ['dir', 'format'],
+  'bypass-tally': ['actor', 'commit', 'format', 'pr', 'state-dir', 'window-days'],
+  status: ['check', 'commit', 'description', 'dry-run', 'output-text', 'repo', 'state'],
+  'coverage-ratchet': ['baseline', 'bump', 'patch', 'patch-threshold', 'report'],
+  'mutation-gate': ['changed', 'killed', 'min-mutants', 'report', 'surviving', 'threshold'],
   'spec-mutate': ['report', 'threshold'],
   trace: ['matrix'],
   reconcile: ['ledger'],
-  scorecard: ['dir', 'json'],
-  status: ['check', 'commit', 'state', 'description', 'output-text', 'repo', 'dry-run'],
-  receipt: ['commit', 'pr', 'actor', 'requester-source', 'events-url', 'allowlist-version', 'output'],
-  'bypass-tally': ['state-dir', 'pr', 'commit', 'actor', 'window-days', 'format'],
-  'coverage-ratchet': ['report', 'baseline', 'patch-threshold'],
-  'mutation-gate': ['report', 'threshold', 'changed'],
+  wilson: [],
+  'min-n': [],
 };
 
 function assertKnownFlags(sub, args) {
@@ -1125,4 +1159,8 @@ function main() {
   }
 }
 
-main();
+// Run when invoked as a program; stay inert when required, so tests can assert
+// against the real KNOWN_FLAGS map instead of a copy that drifts from it.
+if (require.main === module) main();
+
+module.exports = { KNOWN_FLAGS };

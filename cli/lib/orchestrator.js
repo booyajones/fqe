@@ -351,6 +351,157 @@ function computeRequiredClasses(policy, files, diffIndeterminate = false) {
  * payments change pass with no money test). The caller fails closed on !ok.
  * @returns {{ files: string[], ok: boolean }}
  */
+/**
+ * Does this repo have enough history that a diff SHOULD be computable?
+ *
+ * Distinguishes "the diff failed because there is nothing to diff" (a genuinely
+ * fresh repo with a single commit: legitimate, silent) from "the diff failed
+ * even though history exists" (a real signal).
+ *
+ * IMPORTANT: this answer is AMBIGUOUS on its own and must never be the only
+ * qualifier. It cannot tell a fresh repo from a SHALLOW CLONE: `actions/checkout`
+ * defaults to fetch-depth 1, and `git clone --depth 1` of a 500-commit repo
+ * reports exactly 1 commit here. Pair it with repoIsShallow(), which resolves
+ * exactly that ambiguity.
+ *
+ * Fails SAFE toward silence: if we cannot even count commits, do not raise.
+ */
+function repoHasHistory(repoDir) {
+  const r = spawnSync('git', ['rev-list', '--count', '-n', '2', 'HEAD'], {
+    cwd: repoDir || process.cwd(),
+    encoding: 'utf8',
+  });
+  if (r.status !== 0) return false;
+  return parseInt(String(r.stdout).trim(), 10) > 1;
+}
+
+/**
+ * Is this a SHALLOW clone (history deliberately truncated)?
+ *
+ * This is the fact that makes repoHasHistory() usable. A shallow clone reports
+ * 1 commit no matter how old the repo is, so "1 commit" alone can mean either
+ * "genuinely brand new" (silence is correct) or "500 commits I am not allowed to
+ * see" (silence is a receipt reporting clean over a diff that never resolved).
+ * `fetch-depth: 1` is the DEFAULT for actions/checkout, so the second case is
+ * the common one in CI, not the exotic one.
+ *
+ * Fails SAFE toward SUSPICION: if we cannot determine depth, assume shallow, so
+ * an unknown state raises rather than silently passing. The cost of a false
+ * alarm is an engineer reading one extra line; the cost of false silence is a
+ * merged PR nothing checked.
+ */
+function repoIsShallow(repoDir) {
+  const cwd = repoDir || process.cwd();
+  const r = spawnSync('git', ['rev-parse', '--is-shallow-repository'], { cwd, encoding: 'utf8' });
+  if (r.status === 0) {
+    const out = String(r.stdout).trim();
+    if (out === 'true') return true;
+    if (out === 'false') return false;
+  }
+  // git < 2.15 has no --is-shallow-repository. The marker file predates it and
+  // is authoritative, so fall back to it before giving up.
+  const g = spawnSync('git', ['rev-parse', '--git-dir'], { cwd, encoding: 'utf8' });
+  if (g.status === 0) {
+    const gitDir = String(g.stdout).trim();
+    try {
+      return fs.existsSync(path.resolve(cwd, gitDir, 'shallow'));
+    } catch (_) { /* fall through to the safe default */ }
+  }
+  return true; // undeterminable depth -> treat as history-blind, never as fresh
+}
+
+/**
+ * Is this the ONE case where an unresolvable diff deserves silence?
+ *
+ * Exactly one: a genuinely brand-new repository, where the caller named no base,
+ * so there is legitimately nothing to diff against. Every other shape of
+ * "the diff did not resolve" is a real signal and must surface.
+ *
+ * All three conditions are required, and each closes a hole a previous version
+ * shipped:
+ *   - no base named     : naming a base that does not resolve is always an error
+ *   - not shallow       : a truncated clone is history-blind, not history-free
+ *   - <= 1 commit       : with the two above, this now genuinely means "new"
+ *
+ * @returns {boolean} true only when silence is provably correct
+ */
+function isGenuinelyFirstRun(opts) {
+  if (opts && opts.baseSha) return false;
+  const repoDir = opts && opts.repoDir;
+  // Not a git repo at all is a DIFFERENT state from a truncated one. There is no
+  // history here to be blind to and no diff was ever possible, which is the
+  // documented "empty config / always_run only" case. Treating it as suspicious
+  // would flag every non-git invocation. A CI checkout that failed is still
+  // covered, because the generated workflow always names a --base.
+  if (!isGitRepo(repoDir)) return true;
+  if (repoIsShallow(repoDir)) return false;
+  return !repoHasHistory(repoDir);
+}
+
+/**
+ * Is this directory inside a git work tree at all?
+ *
+ * CRITICAL: "git said no" and "git could not answer" are DIFFERENT states and
+ * must not collapse. The first version returned false for both, and false is the
+ * branch that GRANTS SILENCE - so every git failure (a dubious-ownership refusal,
+ * a broken GIT_DIR, git missing from PATH, a linked worktree whose main clone
+ * moved) was read as "brand-new repo" and minted a clean green receipt. That is
+ * the most blind state fqe can be in, and it was getting the most trusting
+ * treatment. It also re-opened the shallow-clone hole through a second door.
+ *
+ * A `.git` entry at or above the directory means this is MEANT to be a repo, so
+ * a failure to read it is suspicious rather than evidence of newness. Keying on
+ * the filesystem marker instead of parsing git's stderr keeps this stable across
+ * git versions and locales.
+ */
+function isGitRepo(repoDir) {
+  const cwd = repoDir || process.cwd();
+  const r = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd, encoding: 'utf8' });
+  if (r.status === 0 && String(r.stdout).trim() === 'true') return true;
+  // git did not confirm. If a .git marker exists anyway, git FAILED rather than
+  // reported absence, so take the suspicious branch.
+  return hasGitMarker(cwd);
+}
+
+/**
+ * Is there a `.git` marker at `dir` or ABOVE it?
+ *
+ * This walks up, and the previous attempt to stop it from walking up was wrong.
+ * `--repo-dir <repo>/src` is a documented, tested invocation, and a subdirectory
+ * legitimately has no `.git` of its own - so bounding the check to the directory
+ * itself meant a git failure inside a subdirectory was once again read as
+ * "brand-new repo" and produced a clean green. That is the exact hole this whole
+ * function was written to close, reopened one door over.
+ *
+ * The false-alarm worry that motivated bounding it does not survive contact with
+ * the call site: hasGitMarker() runs ONLY when git failed to answer. If git is
+ * healthy, a scratch directory under an unrelated checkout gets `true` straight
+ * from `--is-inside-work-tree` and never reaches here. So the only case the walk
+ * can "wrongly" flag is one where git is ALSO broken, and being suspicious there
+ * is correct: fqe genuinely cannot tell what it is looking at.
+ */
+function hasGitMarker(dir) {
+  try {
+    let cur = path.resolve(dir);
+    for (;;) {
+      if (fs.existsSync(path.join(cur, '.git'))) return true;
+      const parent = path.dirname(cur);
+      if (parent === cur) return false;
+      cur = parent;
+    }
+  } catch (_) {
+    // Cannot even inspect the filesystem. Assume a repo so the caller takes the
+    // suspicious branch rather than granting silence on an unreadable state.
+    return true;
+  }
+}
+
+/** The commit actually checked out in `repoDir`, or null if git cannot say. */
+function gitHeadOf(repoDir) {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoDir || process.cwd(), encoding: 'utf8' });
+  return r.status === 0 ? String(r.stdout).trim() : null;
+}
+
 function changedFiles({ baseSha, headSha, repoDir }) {
   if (process.env.FQE_CHANGED_FILES !== undefined) {
     // FQE_CHANGED_FILES is a TRUSTED CI override: the workflow computes the
@@ -360,16 +511,135 @@ function changedFiles({ baseSha, headSha, repoDir }) {
     // "nothing changed" — otherwise clearing the var would silently dodge every
     // diff-conditional policy (require_for). Fail closed on the empty case.
     const envFiles = process.env.FQE_CHANGED_FILES.split(/[\s,]+/).filter(Boolean);
-    return { files: envFiles, ok: envFiles.length > 0 };
+    // `reason` matters downstream: an EXPLICIT but empty override is the caller
+    // asserting a diff it could not compute, which can never be excused by a
+    // git-history check. Only a git-side absence is ever exemptible.
+    // `source` is load-bearing for the RECEIPT, not just for logic. When the file
+    // list comes from the environment, this run did NOT diff against --base even
+    // if one was passed - so a receipt reporting that base as the scope would be
+    // asserting a provenance that never happened. Measured: a correct --base plus
+    // FQE_CHANGED_FILES naming a nonexistent path produced PASS with a real base
+    // SHA and changed_file_count: 1 in the receipt, which reads as a legitimate
+    // git-verified clean run. The field added to make a blind PASS visible was
+    // lending it credibility instead.
+    return {
+      files: envFiles,
+      ok: envFiles.length > 0,
+      reason: envFiles.length ? null : 'env-empty',
+      source: 'env',
+      declaredBase: baseSha || null,
+    };
   }
-  const args = baseSha && headSha
-    ? ['diff', '--name-only', `${baseSha}..${headSha}`]
-    : ['diff', '--name-only', 'HEAD~1', 'HEAD'];
-  const r = spawnSync('git', args, { cwd: repoDir || process.cwd(), encoding: 'utf8' });
+  // NO SILENT FALLBACK TO HEAD~1.
+  //
+  // This used to diff HEAD~1..HEAD whenever no base was given, which is a GUESS
+  // at the pull request's scope, and it is wrong for every multi-commit PR.
+  // Measured: a 3-commit PR whose break is in commit 1 and whose commit 2 was
+  // docs-only returned PASS, exit 0, runners_fired: [] - the guessed range
+  // covered only the docs commit. git SUCCEEDED, so diff.ok was true and the
+  // whole indeterminate-diff guard never even ran. Five rounds of hardening
+  // "the diff did not resolve" could not see this: nothing failed.
+  //
+  // fqe cannot gate a range it was not given. Not knowing the scope is exactly
+  // what ok:false means, so say so and let the caller's qualifier decide whether
+  // it deserves silence (a genuinely first run) or a flag.
+  if (!baseSha || !headSha) {
+    return { files: [], ok: false, reason: 'no-base', source: 'git', declaredBase: null };
+  }
+  const cwd = repoDir || process.cwd();
+
+  // A DEGENERATE RANGE SUCCEEDS. `git diff X..X` exits 0 with zero files, so
+  // diff.ok is true, diff_indeterminate is false, and every when-gated runner
+  // sits out over a receipt that looks perfectly clean. Measured: a real
+  // regression, `--base HEAD --commit HEAD` -> PASS, exit 0,
+  // changed_file_count: 0, indeterminate: false. base == head is never a real
+  // pull request; it is a CI race on base.sha/head.sha, a self-targeting PR, or
+  // a rebase in flight. Zero files here means "we learned nothing", not "nothing
+  // changed", and only the first of those is safe to report as clean.
+  const rev = (ref) => {
+    const p = spawnSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd, encoding: 'utf8' });
+    return p.status === 0 ? String(p.stdout).trim() : null;
+  };
+  const baseId = rev(baseSha);
+  const headId = rev(headSha);
+  if (baseId && headId && baseId === headId) {
+    return { files: [], ok: false, reason: 'degenerate-range', source: 'git', declaredBase: baseSha };
+  }
+
+  // THE RANGE MUST BE MERGE-BASE ANCHORED (three-dot), NOT two-dot.
+  //
+  // `git diff base..head` compares two tree SNAPSHOTS. It answers "how do these
+  // two commits differ", not "what did this branch introduce". So when the base
+  // branch independently arrives at the same content the PR arrived at, the file
+  // DISAPPEARS from the diff even though the PR really changed it. Measured:
+  // fork has app.js "original"; the PR changes it to "BUGGY"; main independently
+  // also becomes "BUGGY". Two-dot returns ZERO files and the gate reports a
+  // clean, RESOLVED diff over a PR that changed gated code. Three-dot returns
+  // app.js. This is why GitHub's own "Files changed" view is three-dot - and the
+  // merge base was already being computed here, then thrown away.
+  const mb = spawnSync('git', ['merge-base', baseSha, headSha], { cwd, encoding: 'utf8' });
+  const mergeBase = mb.status === 0 ? String(mb.stdout).trim() : null;
+
+  // The degenerate check above compares the DECLARED pair. Anchoring the diff at
+  // the merge base introduces a second way for the range to collapse that
+  // baseId === headId cannot see: when head is an ANCESTOR of base, merge-base
+  // returns head itself, so the effective range is head..head and the diff is
+  // empty no matter what changed. That is a stale re-run on an already-merged PR
+  // whose target branch has moved past it - one click on GitHub's "re-run jobs".
+  // Measured: a repo where src.js genuinely differs between base and head
+  // returned PASS, exit 0, indeterminate: false. Check the EFFECTIVE range, not
+  // just the declared one.
+  if (mergeBase && headId && mergeBase === headId) {
+    // Distinct from the declared-pair case above, and worth its own label: this
+    // is a PR with nothing ahead of its base (stale re-run after the branch
+    // merged, or a branch that never got a commit), not a self-targeting pair.
+    return { files: [], ok: false, reason: 'head-is-ancestor-of-base', source: 'git', declaredBase: baseSha };
+  }
+
+  if (!mergeBase) {
+    // "No merge base" has TWO very different causes and conflating them cost a
+    // real regression. On a SHALLOW clone it means the history was TRUNCATED,
+    // which says nothing about whether the branches are related - fetch-depth 1
+    // is the actions/checkout default, and shallow-fetching base and head
+    // separately is a common CI pattern. Treating that as unusable turned a run
+    // that previously CAUGHT a regression (FAIL, exit 2) into a FLAG, and FLAG
+    // maps to check_state: success, so it merges. Fall back to the two-dot diff
+    // there: approximate, but it is what caught the bug before, and a less
+    // precise range is not the same as no information.
+    if (repoIsShallow(cwd)) {
+      const rs = spawnSync('git', ['diff', '--name-only', `${baseSha}..${headSha}`], { cwd, encoding: 'utf8' });
+      if (rs.status !== 0) {
+        return { files: [], ok: false, reason: 'git-failed', source: 'git', declaredBase: baseSha };
+      }
+      return {
+        files: rs.stdout.split('\n').filter(Boolean),
+        ok: true,
+        reason: null,
+        source: 'git',
+        declaredBase: baseSha,
+        rangeStart: baseSha,
+        truncatedHistory: true,
+      };
+    }
+    // Not shallow: the histories genuinely share no ancestor, so a diff between
+    // them is not this pull request's change set and must not be shown as one.
+    return { files: [], ok: false, reason: 'no-merge-base', source: 'git', declaredBase: baseSha };
+  }
+
+  const r = spawnSync('git', ['diff', '--name-only', `${mergeBase}..${headSha}`], { cwd, encoding: 'utf8' });
   if (r.status !== 0) {
-    return { files: [], ok: false };
+    return { files: [], ok: false, reason: 'git-failed', source: 'git', declaredBase: baseSha };
   }
-  return { files: r.stdout.split('\n').filter(Boolean), ok: true };
+
+  return {
+    files: r.stdout.split('\n').filter(Boolean),
+    ok: true,
+    reason: null,
+    source: 'git',
+    declaredBase: baseSha,
+    rangeStart: mergeBase,
+    truncatedHistory: false,
+  };
 }
 
 function classify(files, runnersConfig) {
@@ -586,8 +856,21 @@ function runOne(name, cfg, ctx) {
   // given a chance, so it reports ran:false, which Pass 1 of the verdict already
   // treats as a hard FAIL for a required runner. Same blocking outcome, honest
   // reason, and the reason string now names the real cause.
+  // A TIMEOUT IS NOT A SPAWN FAILURE. Node sets `error` on spawnSync when the
+  // child "failed OR timed out" (ETIMEDOUT, status:null, signal:'SIGTERM'), so
+  // keying neverStarted off `error` alone reports a suite that genuinely ran for
+  // five minutes as never having started — reintroducing the exact lie this block
+  // exists to remove. Every runner carries a timeout (DEFAULT_TIMEOUT_MS), so
+  // that misclassification is reachable on any slow suite, not a corner case.
+  //
+  // So: decide on positive EVIDENCE OF EXECUTION, never on the presence of an
+  // error object. A killing signal, a real exit code, any output, or a timeout
+  // all prove the process ran. Only the total absence of all four is "never
+  // started", which is what ENOENT/EACCES/EPERM actually look like.
   const spawnError = r && r.error ? r.error : null;
-  const neverStarted = !!spawnError || (finalCode === null && !r.signal && !(r.stdout || r.stderr));
+  const timedOut = !!spawnError && spawnError.code === 'ETIMEDOUT';
+  const ranEvidence = timedOut || !!r.signal || finalCode !== null || !!(r.stdout || r.stderr);
+  const neverStarted = !ranEvidence;
   const spawnHint = spawnError && spawnError.code === 'ENOENT' && process.platform === 'win32'
     ? ' On Windows, npm/npx/yarn/pnpm are .cmd shims and cannot be spawned directly:'
       + ' use command: "cmd" with args: ["/c", "npm", "test"].'
@@ -610,6 +893,11 @@ function runOne(name, cfg, ctx) {
     required: cfg.required === true,
     class: cfg.class,
     ran: !neverStarted,
+    // A timeout still BLOCKS (Pass 2 fails closed on a non-numeric exit_code),
+    // but it must block for the true reason. Carry it so the receipt says
+    // "timed out after Nms" instead of "produced no numeric exit_code".
+    timed_out: timedOut || undefined,
+    timeout_ms: timedOut ? (cfg.timeout_ms || DEFAULT_TIMEOUT_MS) : undefined,
     spawn_failed: neverStarted || undefined,
     spawn_error: neverStarted
       ? ((spawnError ? (spawnError.code || spawnError.message) : 'process produced no exit code, no signal and no output')
@@ -665,6 +953,7 @@ function computeContentHash(files, repoDir) {
  */
 function writeRunnerLogs(results, outputDir) {
   const paths = [];
+  const usedStems = new Set();
   if (!outputDir) return paths;
   for (const r of results || []) {
     const body = [
@@ -683,7 +972,20 @@ function writeRunnerLogs(results, outputDir) {
     // Skip only runners that produced nothing at all AND started fine; a spawn
     // failure has no output but is exactly the case worth writing down.
     if (!r.stdout && !r.stderr && r.ran !== false) continue;
-    const file = path.join(outputDir, `runner-${String(r.name).replace(/[^A-Za-z0-9._-]/g, '_')}.log`);
+    // The sanitizer is NOT injective: `unit/fast` and `unit_fast` both collapse
+    // to `runner-unit_fast.log`, so the second write silently overwrote the
+    // first and evidence_paths listed the same path twice, showing one runner's
+    // output under another's name. .fqe.yml keys are free-form, so this is
+    // reachable. In a file whose entire purpose is evidence, a collision is a
+    // correctness bug, not a cosmetic one. Disambiguate on collision.
+    let stem = `runner-${String(r.name).replace(/[^A-Za-z0-9._-]/g, '_')}`;
+    if (usedStems.has(stem)) {
+      let n = 2;
+      while (usedStems.has(`${stem}-${n}`)) n++;
+      stem = `${stem}-${n}`;
+    }
+    usedStems.add(stem);
+    const file = path.join(outputDir, `${stem}.log`);
     try {
       fs.mkdirSync(outputDir, { recursive: true });
       fs.writeFileSync(file, body, 'utf8');
@@ -725,6 +1027,49 @@ function run(opts) {
     repoDir,
   });
   const files = diff.files;
+
+  // ONE qualified answer to "was the diff usable?", computed once and shared.
+  // The three consumers below used to disagree: this one applied the
+  // isGenuinelyFirstRun qualifier while computeRequiredClasses and
+  // detectMoneyPaths took the RAW !diff.ok, so the exact state the main guard
+  // deliberately exonerated (a genuinely new repo) was still hard-blocked by an
+  // adjacent guard, and vice versa. A single value cannot contradict itself.
+  // The first-run exemption applies ONLY to a git-side absence. An explicitly
+  // supplied but EMPTY FQE_CHANGED_FILES is the caller telling us its own diff
+  // came back empty; a git-history predicate has no bearing on that, and using
+  // one to silence it would suppress a CI signal with an unrelated fact about
+  // the checkout.
+  const exemptible = diff.reason !== 'env-empty';
+  // A TRUNCATED range is not a trustworthy one. The shallow fallback deliberately
+  // returns ok:true so the two-dot file list still fires the runners and a real
+  // regression still blocks - that part is right, and removing it once turned a
+  // caught regression into a merge. But it was ALSO reporting indeterminate:false,
+  // i.e. presenting an approximate scope as a confident one, using the very
+  // two-dot comparison this file argues is unsafe. `truncated_history` was
+  // written to the receipt and read by nothing, which made it decoration.
+  //
+  // Both properties are needed and they are not in conflict: RUN on the
+  // best-effort file list (so failures are still caught), and mark the scope
+  // indeterminate (so a CLEAN result is not presented as authoritative). A
+  // failing runner still yields FAIL; only an otherwise-clean run gets flagged.
+  //
+  // THREE STATES, not two. A boolean forced "approximate" and "no information"
+  // to share one label, and every consumer that rendered that label into English
+  // then told the reader the wrong thing. Compute the distinction once, here, and
+  // pass it down; `diffIndeterminate` stays as the derived boolean the gating
+  // logic wants, so no consumer changes behaviour, but the prose layer can now
+  // say something true.
+  //
+  //   exact       - merge-base anchored, or a CI-supplied file list. Trustworthy.
+  //   approximate - truncated history: the runners ran on a real but possibly
+  //                 incomplete list. A FAILURE is real; a CLEAN result is not
+  //                 authoritative.
+  //   unknown     - no usable information at all.
+  const firstRunExempt = exemptible && isGenuinelyFirstRun(opts);
+  const diffConfidence = diff.ok
+    ? (diff.truncatedHistory === true ? 'approximate' : 'exact')
+    : (firstRunExempt ? 'exact' : 'unknown');
+  const diffIndeterminate = diffConfidence !== 'exact';
 
   const cls = classify(files, config.runners);
 
@@ -858,7 +1203,7 @@ function run(opts) {
     }
   }
 
-  const requiredClasses = computeRequiredClasses(config.policy, files, !diff.ok);
+  const requiredClasses = computeRequiredClasses(config.policy, files, diffIndeterminate);
 
   // Inter-suite discovery: detect frameworks present that no declared runner covers.
   // Fail-loud (FLAG, or FAIL under require_all_suites_wired). A discovery CRASH must
@@ -877,7 +1222,7 @@ function run(opts) {
   // contract-only repo over money paths would escape Pass 8 AND A4 (policy_configured).
   const hasMoneyClassRunner = Object.values(runnersObj).some((c) => isMoneyClass(c));
   const changedContents = readChangedFileContents(files, repoDir);
-  const moneyDetect = detectMoneyPaths({ changedFiles: files, fileContents: changedContents, diffIndeterminate: !diff.ok });
+  const moneyDetect = detectMoneyPaths({ changedFiles: files, fileContents: changedContents, diffIndeterminate });
   const moneySignal = {
     detected: moneyDetect.detected,
     indeterminate: moneyDetect.indeterminate,
@@ -917,6 +1262,8 @@ function run(opts) {
         // This mapping is where the detail was being dropped.
         spawn_failed: r.spawn_failed === true || undefined,
         spawn_error: r.spawn_error,
+        timed_out: r.timed_out === true || undefined,
+        timeout_ms: r.timeout_ms,
       };
     }),
     adversarial_stats: adversarialStats,
@@ -930,6 +1277,10 @@ function run(opts) {
     // was not set explicitly (contract-only does not arm it; that is not money movement).
     require_money_idempotency: config.require_money_idempotency === true || hasMoneyClassRunner,
     require_money_policy_when_detected: config.require_money_policy_when_detected === true,
+    // Without this line the switch verdict.js reads is undefined on every real
+    // run, so the indeterminate-diff guard could FLAG but never block - which is
+    // how giving it "its own switch" quietly disarmed it everywhere.
+    require_resolvable_diff: config.require_resolvable_diff === true,
     require_nonempty_gate: config.require_nonempty_gate === true,
     money_signal: moneySignal,
     dead_require_for_globs: deadRequireForGlobs,
@@ -940,12 +1291,35 @@ function run(opts) {
     // git errors, the diff comes back empty, no `when`-gated runner fires, and
     // the gate returns PASS over a typo. Surfacing it here means a run that
     // scoped itself to nothing can never look like a clean run.
-    // Only when a base was EXPLICITLY given and did not resolve. Without this
-    // qualifier every legitimate first-run flags: a fresh repo with one commit
-    // has no HEAD~1, the default diff fails, and the gate would cry wolf on the
-    // most common newcomer path. The dangerous case is narrower and is exactly
-    // this: you named a base, and it was not there.
-    diff_indeterminate: !diff.ok && !!opts.baseSha,
+    // Fires when the diff could not be resolved AND the repo actually has a
+    // history to diff against.
+    //
+    // The first version qualified on `!!opts.baseSha`, to avoid crying wolf on a
+    // fresh single-commit repo. That disarmed it exactly where adopters run it:
+    // the workflow `fqe init` generates calls `fqe run --commit ... --output out/`
+    // with NO `--base`, so opts.baseSha was undefined and the generated gate kept
+    // swallowing an unresolvable diff, which is the whole defect. Key on the
+    // repo instead of on the flag: a repo with more than one commit CAN produce a
+    // diff, so failing to is a real signal; a first-commit repo genuinely cannot.
+    // SILENCE MUST BE EARNED. An unresolved diff raises unless we can positively
+    // prove the one case where silence is right: a genuinely new repo, with no
+    // base named, that simply has nothing to diff against yet.
+    //
+    // Written this way round because the previous two attempts both framed it as
+    // "raise IF ..." and both shipped a hole. The first keyed on `!!opts.baseSha`
+    // and missed a repo with history and no base. The second keyed on
+    // `repoHasHistory()` and was defeated by a shallow clone. The third was the
+    // union of those two, which still collapsed to `repoHasHistory()` alone
+    // whenever `--base` was omitted - and `--base` is optional in fqe's own help
+    // text - so a shallow checkout with no base still reported PASS over zero
+    // evaluated files. Each time the defect was a case the condition never
+    // considered, so the condition now enumerates the ONLY safe case instead.
+    //
+    // repoIsShallow() is what makes this decidable: it separates "1 commit
+    // because the repo is new" from "1 commit because the clone is truncated",
+    // which repoHasHistory() alone can never do.
+    diff_indeterminate: diffIndeterminate,
+    diff_confidence: diffConfidence,
     diff_base: opts.baseSha || null,
   };
   let verdictOut;
@@ -1009,6 +1383,39 @@ function run(opts) {
     // told you to `cat` was never written. Write it for every runner that
     // produced output, so the receipt can answer "why" and not just "no".
     evidence_paths: writeRunnerLogs(runnerResults, opts.outputDir),
+    // The scope this verdict is actually about. `base: null` now means the run
+    // was never told what to diff against, which is exactly the state that used
+    // to be indistinguishable from a clean one.
+    diff_scope: {
+      // WHERE the file list came from. `base` is what was ACTUALLY diffed
+      // against, so it is null whenever the list came from FQE_CHANGED_FILES -
+      // reporting the passed --base there would assert a diff that never ran.
+      // `declared_base` keeps the ignored value visible for audit rather than
+      // dropping it.
+      source: diff.source || 'git',
+      base: diff.source === 'env' ? null : (opts.baseSha || null),
+      declared_base: diff.declaredBase || null,
+      // The commit the diff ACTUALLY started from. For a normal run this is the
+      // merge base, not --base, and they differ whenever the base branch moved
+      // after the PR forked - which is most of the time. Recording only --base
+      // would describe a range that was never diffed.
+      range_start: diff.rangeStart || null,
+      // True when the merge base was unreachable because the clone is shallow, so
+      // the range is the approximate two-dot one. A reader can then tell a
+      // precise range from a best-effort one instead of assuming precision.
+      confidence: diffConfidence,
+      truncated_history: diff.truncatedHistory === true,
+      changed_file_count: files.length,
+      indeterminate: diffIndeterminate,
+      unusable_reason: diff.reason || null,
+      // What was actually on disk when the runners executed. Runners run against
+      // the WORKING TREE, not against --commit, so when these differ the receipt
+      // is attesting a verdict for a commit whose tree was never the thing that
+      // was tested. Recorded rather than blocked: actions/checkout resolves a PR
+      // to a merge commit by default, so HEAD legitimately differs from
+      // head.sha on nearly every run, and failing on that would be pure noise.
+      tree_commit: gitHeadOf(repoDir),
+    },
     human_review: humanReview,
   });
 
@@ -1037,4 +1444,12 @@ module.exports = {
   quarantineExpired,
   readChangedFileContents,
   sanitizeRunnerEnv,
+  // Exported so the guard can be tested directly. The shallow-clone hole shipped
+  // twice partly because nothing could reach this decision without spawning the
+  // whole CLI, so every test asserted the verdict's branching instead of the
+  // predicate that feeds it.
+  repoIsShallow,
+  repoHasHistory,
+  isGenuinelyFirstRun,
+  isGitRepo,
 };

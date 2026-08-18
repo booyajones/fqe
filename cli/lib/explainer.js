@@ -51,6 +51,84 @@ function explainReason(reason, ctx = {}) {
     };
   }
 
+  // Pattern 0b: runner timed out. Must be matched BEFORE the generic
+  // "no numeric exit_code" pattern, and must never be confused with a spawn
+  // failure: a timeout means the command was correct and the suite was slow,
+  // so sending the reader to their `command` wastes the moment they are blocked.
+  // verdict.js emits the timeout in THREE shapes, because the quarantine
+  // branches wrap it: plain, `is QUARANTINED and TIMED OUT`, and `QUARANTINE
+  // EXPIRED and it TIMED OUT`. Matching only the plain one sent the other two -
+  // including the EXPIRED case, which is a blocking FAIL - to UNKNOWN_REASON,
+  // i.e. "file an issue", in the file whose entire job is explaining timeouts.
+  m = reason.match(/^runner "([^"]+)" (?:is QUARANTINED and |QUARANTINE EXPIRED and it )?TIMED OUT(?: after (\d+)ms)?/);
+  if (m) {
+    const [, name, ms] = m;
+    const quarantined = /is QUARANTINED and/.test(reason);
+    const expired = /QUARANTINE EXPIRED/.test(reason);
+    const dur = ms ? `${ms}ms` : 'its configured timeout';
+    return {
+      code: 'RUNNER_TIMED_OUT',
+      plain_english:
+        `The "${name}" runner started and ran, but was still going after ${dur}, so fqe killed it. ` +
+        `A killed process has no exit code, so fqe cannot tell whether your tests were passing. ` +
+        (quarantined
+          ? `This runner is QUARANTINED, so it is not blocking the merge — but nothing was verified by it either.`
+          : expired
+            ? `Its quarantine has EXPIRED, so it no longer shields this and the merge is blocked.`
+            : `That blocks the merge.`) +
+        ` Your command is fine; the suite did not finish in time.`,
+      fix:
+        `Either raise the budget — set "${name}".timeout_ms in .fqe.yml above the suite's real wall-clock time ` +
+        `(the default is 300000, five minutes) — or make the suite faster. If it hangs rather than runs long, ` +
+        `look for a test awaiting a port, a prompt, or a network call that never resolves in CI.` +
+        (expired ? ` Then fix it or refresh quarantined_since; the quarantine will not shield it again as-is.` : ''),
+      repro_command: repro,
+    };
+  }
+
+  // Pattern 0c: the diff scope. This family had NO explainer coverage at all, so
+  // it rendered as UNKNOWN_REASON - literally "file an issue at github.com,
+  // this explainer hasn't been updated" - for a condition fqe understands
+  // completely and can tell you how to fix in one line. That was tolerable while
+  // it only fired on a genuinely misconfigured base ref; it stopped being
+  // tolerable once an under-fetched checkout (anything not using fqe's own
+  // fetch-depth: 0 scaffold) began producing it routinely.
+  m = reason.match(/^(?:BLOCKED \(indeterminate diff\): )?the diff range is APPROXIMATE(?: \(base: ([^)]*)\))?/);
+  if (m) {
+    return {
+      code: 'DIFF_RANGE_APPROXIMATE',
+      plain_english:
+        `fqe could not find the merge base between your branch and the base ref, because this ` +
+        `checkout's history is truncated (a shallow clone). It fell back to comparing the two ` +
+        `commits directly. Your runners DID run, so a failure reported here is real - but the ` +
+        `file list may be missing changes, so a clean result is not authoritative.`,
+      fix:
+        `Fetch full history in CI: set \`fetch-depth: 0\` on actions/checkout (fqe's own generated ` +
+        `workflow already does). On other CI systems, disable shallow cloning or fetch the base ` +
+        `branch's history. Once the merge base is reachable, the range becomes exact and this ` +
+        `message stops.`,
+      repro_command: repro,
+    };
+  }
+
+  m = reason.match(/^(?:BLOCKED \(indeterminate diff\): )?the diff could not be resolved(?: \(base: ([^)]*)\))?/);
+  if (m) {
+    const named = m[1] ? ` ("${m[1]}")` : '';
+    return {
+      code: 'DIFF_UNRESOLVED',
+      plain_english:
+        `fqe could not work out which files this change touches, so it evaluated ZERO files and ` +
+        `every runner gated on "when" sat out. Nothing was actually checked. A green result here ` +
+        `would mean "nothing was examined", not "nothing was wrong", which is why it is not green.`,
+      fix:
+        `Check the base ref${named} exists in this checkout: a repo whose default branch is ` +
+        `"master" will not resolve "origin/main". Make sure CI fetches enough history ` +
+        `(\`fetch-depth: 0\`) and that --base names a real commit reachable from here. If this is ` +
+        `a brand-new repo with a single commit, run without --base and fqe will stay quiet.`,
+      repro_command: repro,
+    };
+  }
+
   // Pattern 1: required runner did not run
   m = reason.match(/^required runner "([^"]+)" did not run$/);
   if (m) {

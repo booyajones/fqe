@@ -139,6 +139,10 @@ const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init 
 
 version: 0.15
 require_money_policy_when_detected: true
+# If fqe cannot resolve the diff it cannot tell which runners were required, so a
+# green result would mean "nothing was checked", not "nothing was wrong". On a
+# money repo that must block, not flag.
+require_resolvable_diff: true
 
 mutation:
   mode: blocking
@@ -214,8 +218,15 @@ runners:
 # <<< END ARM 2 of 2 <<<
 
 # OPTIONAL 2 of 2 - the regression runner for the policy above, and NOT part of arming.
-# It already sits under runners:, at the right indent. It needs OPTIONAL 1 (the policy) to
-# do anything, and OPTIONAL 1 needs this to avoid blocking every money PR. Both or neither.
+# It already sits under runners:, at the right indent.
+#
+# Turn on BOTH pieces or NEITHER, for two different reasons:
+#   OPTIONAL 1 without this = every money PR FAILs, because the policy demands a
+#     regression class no runner provides.
+#   This without OPTIONAL 1 = still a live gate, not a no-op. It is always_run and
+#     required ON ITS OWN, so it fires and can block on EVERY pull request; what you lose
+#     is only the path-to-class binding. And until you have captured a manifest it exits
+#     non-zero, so arming it alone blocks every PR immediately.
 #
 # 'fqe golden verify' needs a manifest you have already captured; without one it exits
 # non-zero with a clear message, which on a required runner blocks the merge. Run
@@ -531,9 +542,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qa-receipt-\${{ github.event.pull_request.head.sha }}
+          # runner-*.log carries what the receipt's evidence_paths names and what
+          # the explainer tells you to download. Without it the receipt points at
+          # files no reader can reach.
+          # (Keep this comment ABOVE \`path:\` — inside a \`|\` block scalar a '#'
+          # line is literal text, not a comment, and would be uploaded as a glob.)
           path: |
             out/QA-RESULT.yml
             out/QA-RESULT.md
+            out/runner-*.log
           # 365 days for SOC2/PCI evidence retention (1-year minimum). The repo's
           # max artifact-retention setting must allow this; the Check Run output
           # also persists with the commit. For 7-year SOX, mirror to object storage.
@@ -833,7 +850,11 @@ function readPackagedTemplate(name) {
  * the original if no anchor was found.
  */
 function appendRunnerBlock(yml, block) {
-  // Case 1: vanilla "runners: {}"
+  // Case 1: vanilla "runners: {}". No separator needed and none added: this branch
+  // REPLACES the "runners: {}" line, so the block lands directly under the key it belongs
+  // to with nothing before it to be confused with. Cases 2 and 3 append after existing
+  // content, which is where the separator matters. Nothing the CLI generates reaches this
+  // branch today (both scaffolds emit a bare "runners:"), but it is exported API.
   if (/\nrunners:\s*\{\}\s*\n?$/m.test(yml)) {
     return yml.replace(/\nrunners:\s*\{\}\s*\n?$/m, `\nrunners:${block}`);
   }

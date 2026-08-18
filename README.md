@@ -2,9 +2,9 @@
 
 **A CI gate that runs the checks you already have, refuses to let humans skip them, and emits a tamper-evident receipt of what was checked.**
 
-[![tests](https://img.shields.io/badge/tests-818%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.18.19-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-872%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.18.19-blue)](CHANGELOG.md)
 
-fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in about 500 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
+fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in about 600 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
@@ -50,7 +50,7 @@ fqe makes those checks unskippable.
        │   + tally     │   runners         │
        │               │   ↓               │
        │               │   verdict.js      │  ← no LLM in path
-       │               │   (deterministic) │     pure JS, ~500 LOC
+       │               │   (deterministic) │     pure JS, ~600 LOC
        └───────────────┴───────────────────┘
                        │
                        ▼
@@ -86,7 +86,7 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 
 fqe uses Claude in two places, both **around** the gate: it reviews every PR (advisory comments) and it can write tests for you (the optional auto-author, gated by the mutation bouncer). What it never does is let an LLM **decide the merge**.
 
-- **No LLM decides PASS/FAIL.** The verdict is `verdict.js`, about 500 lines of pure deterministic code, no AI, no dependencies. This is the point: a merge gate must be deterministic (same PR, same answer), auditable (you can show exactly what blocked it), and immune to prompt injection (a PR cannot talk its way to green). Claude advises and authors; the gate decides.
+- **No LLM decides PASS/FAIL.** The verdict is `verdict.js`, about 600 lines of pure deterministic code, no AI, no dependencies. This is the point: a merge gate must be deterministic (same PR, same answer), auditable (you can show exactly what blocked it), and immune to prompt injection (a PR cannot talk its way to green). Claude advises and authors; the gate decides.
 - **It does not run your runners.** You configure runners (your tests, linters, dependency audits). fqe orchestrates them and reads their exit codes. It does not bring its own test/lint/audit tools.
 - **It does not punish bypass.** It audits bypass. If your team is consistently bypassing, the gate is wrong, not your team.
 - **It does not replace your CI.** It runs alongside your existing workflows as an additional required check.
@@ -139,7 +139,7 @@ Payments QA techniques (the bet-the-company tests):
 
 ```bash
 # Same verdict CI computes, run on your laptop:
-fqe run --full --base origin/main --output ./out/
+fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/
 
 # See what fqe will check on the current diff:
 fqe explain
@@ -165,7 +165,7 @@ fqe reads exit codes and emits one of five outcomes:
 | 3 | FLAG: adversarial CI bound exceeded | Informational only, does not block |
 | 4 | INFRA: transient (GitHub API timeout, missing binary) | Neutral Check Run, does not block |
 
-You can read the full taxonomy in [`cli/lib/verdict.js`](cli/lib/verdict.js). It's about 500 lines, a large share of them comments recording why each check exists and which review caught the gap it closes.
+You can read the full taxonomy in [`cli/lib/verdict.js`](cli/lib/verdict.js). It's about 600 lines, a large share of them comments recording why each check exists and which review caught the gap it closes.
 
 ## Statistical guard rails
 
@@ -181,7 +181,7 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.18.19.** 818 tests passing on Linux and Windows across Node 20 and 22 (one symlink test self-skips on a Windows box without developer mode, since it cannot create the symlink), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.18.19.** 872 tests passing on Linux and Windows across Node 20 and 22 (one symlink test self-skips on a Windows box without developer mode, since it cannot create the symlink), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 
 **Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
@@ -213,7 +213,7 @@ These are the honest gaps as of 0.18.2. The architectural invariants are real an
 | | fqe | husky / lefthook | danger.js | a custom workflow |
 |---|---|---|---|---|
 | Runs server-side | Yes | No (local-only) | Yes | Yes |
-| Deterministic verdict | Yes (~500 LOC, readable) | N/A | No (opinionated) | Depends on your code |
+| Deterministic verdict | Yes (~600 LOC, readable) | N/A | No (opinionated) | Depends on your code |
 | Tamper-evident receipt | Yes (SHA-bound) | No | No | Depends |
 | Server-authoritative bypass | Yes (Events API) | No | No | No (file-based) |
 | Statistical bounds on AI evals | Yes (Wilson CI) | No | No | No |

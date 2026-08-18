@@ -13,7 +13,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const { validateConfig } = require('../lib/config_schema');
 const { parseConfigYaml } = require('../lib/orchestrator');
 const {
-  init, PAYMENTS_FQE_YML, armPaymentsTemplate, enableOptionalPolicy,
+  init, appendRunnerBlock, PAYMENTS_FQE_YML, armPaymentsTemplate, enableOptionalPolicy,
   ARM_BEGIN_RE, ARM_END_RE, OPT_BEGIN_RE, OPT_END_RE,
 } = require('../lib/init');
 
@@ -367,22 +367,45 @@ test('MS U9: each OPTIONAL piece is valid when uncommented exactly where it sits
   }
 
   // Position-based means EVERY line in the block comes through, including ones nobody
-  // enumerated. Pin that: no line inside either OPTIONAL block may survive commented.
-  // This is what the key-name version could not assert, and what let it pass with a
-  // silently-skipped field.
-  const inOptional = [];
-  let inside = false;
+  // enumerated. Assert that on the PARSED STRUCTURE, not on raw-line membership.
+  //
+  // The first version of this check did `opted.split('\n').includes(uncommented)`, which
+  // is array membership, not positional equality. `    always_run: true` and
+  // `    required: true` each appear three times in the processed file - the money and
+  // contract runners from ARM 2 carry identical lines at the identical indent - so any
+  // one of them satisfied the check for the regression runner's own copy. Review proved
+  // it: skipping exactly one line (`required: true` on regression) left the runner with
+  // no `required` key at all, and this assertion still passed. A regression runner that
+  // fires but cannot block is precisely the silently-weaker gate this file exists to
+  // prevent. Third time this shape has appeared here; parse it, do not grep it.
+  // Scan OPTIONAL block 2 only — block 1 is the policy stanza, whose `require_for:` sits
+  // at the same 2-space indent a runner name does and would otherwise read as a runner.
+  const declared = {};
+  let block = 0;
+  let current = null;
   for (const line of PAYMENTS_FQE_YML.split(/\r?\n/)) {
-    if (!inside && OPT_BEGIN_RE.test(line)) { inside = true; continue; }
-    if (inside && OPT_END_RE.test(line)) { inside = false; continue; }
-    if (inside) inOptional.push(line);
+    if (!block && OPT_BEGIN_RE.test(line)) { block = Number((line.match(/OPTIONAL (\d) of 2/) || [])[1]); continue; }
+    if (block && OPT_END_RE.test(line)) { block = 0; current = null; continue; }
+    if (block !== 2) continue;
+    const body = line.replace(/^# ?/, '');
+    const runner = body.match(/^ {2}([A-Za-z_][\w-]*):\s*$/);
+    if (runner) { current = runner[1]; declared[current] = declared[current] || []; continue; }
+    const field = body.match(/^ {4}([A-Za-z_]\w*):/);
+    if (field && current) declared[current].push(field[1]);
   }
-  assert.ok(inOptional.length >= 8, `expected the OPTIONAL blocks to have content, got ${inOptional.length} lines`);
-  for (const line of inOptional) {
-    const uncommented = line.replace(/^# ?/, '');
-    assert.ok(opted.split('\n').includes(uncommented),
-      `line "${line.trim()}" was not uncommented; the mechanism skipped it`);
+  assert.ok(Object.keys(declared).length > 0, 'the OPTIONAL 2 block scan found no runner; the marker wording changed');
+  assert.deepEqual(Object.keys(declared), ['regression'],
+    'the OPTIONAL blocks should declare exactly one runner');
+  assert.ok(declared.regression.length >= 5,
+    `expected the regression runner to declare several fields, got ${declared.regression.join(',')}`);
+  for (const key of declared.regression) {
+    assert.ok(Object.prototype.hasOwnProperty.call(cfg.runners.regression, key),
+      `the template declares regression.${key} but the uncommented config does not carry it; ` +
+      `the mechanism skipped that line (parsed keys: ${Object.keys(cfg.runners.regression).join(',')})`);
   }
+  // And the two that decide whether it can block at all, pinned by value.
+  assert.equal(cfg.runners.regression.required, true, 'a regression runner that cannot block is not a gate');
+  assert.equal(cfg.runners.regression.always_run, true);
 
   // ARM and OPTIONAL must stay disjoint: arming alone must never enable the regression
   // runner, or the armed template gains a `fqe golden verify` with no captured manifest -
@@ -407,6 +430,11 @@ test('MS U10: an appended runner block is separated from the template it lands o
     // Walk back over its own leading comment block to the line before it.
     let j = i - 1;
     while (j >= 0 && lines[j].trim().startsWith('#')) j--;
+    // A comment block running to the top of the file would leave j at -1 and make the
+    // next line throw a TypeError instead of failing an assertion. Not reachable in an
+    // fqe-generated file (runners: always precedes a runner), but a crash is a worse
+    // failure mode than a red assertion, so say so explicitly.
+    assert.ok(j >= 0, `walked off the top of the file looking for what precedes ${live}`);
     assert.equal(lines[j].trim(), '',
       `a live runner must be separated from what precedes it by a blank line, ` +
       `or it reads as part of the commented-out example above it:\n` +
@@ -416,6 +444,25 @@ test('MS U10: an appended runner block is separated from the template it lands o
   const cfg = parseConfigYaml(body);
   assert.deepEqual(Object.keys(cfg.runners), ['stryker-mutation', 'qodo-cover']);
   assert.equal(validateConfig(cfg).valid, true);
+
+  // The three branches of appendRunnerBlock, driven directly. init() only ever exercises
+  // Case 2, so a claim about "every combination" has to reach the other two here.
+  const BLOCK = '\n  extra:\n    command: "node"\n    args: ["-e", "0"]\n    always_run: true\n';
+  // Case 2: appends after existing content -> needs the blank-line separator.
+  const case2 = appendRunnerBlock('version: 0.15\nrunners:\n  a:\n    command: "node"\n    always_run: true\n', BLOCK);
+  assert.match(case2, /\n\n {2}extra:/, 'Case 2 must separate the appended block');
+  // Case 3: no runners: anchor at all -> adds the key, also separated.
+  const case3 = appendRunnerBlock('version: 0.15\n', BLOCK);
+  assert.match(case3, /\n\nrunners:\n {2}extra:/, 'Case 3 must separate the runners: section it adds');
+  // Case 1: REPLACES the `runners: {}` line, so the block sits directly under the key it
+  // belongs to and there is deliberately nothing before it to separate from.
+  const case1 = appendRunnerBlock('version: 0.15\nrunners: {}\n', BLOCK);
+  assert.match(case1, /\nrunners:\n {2}extra:/, 'Case 1 must put the block directly under the key');
+  for (const [label, text] of [['case1', case1], ['case2', case2], ['case3', case3]]) {
+    const c = parseConfigYaml(text);
+    assert.equal(validateConfig(c).valid, true, `${label} must validate`);
+    assert.ok(Object.keys(c.runners).includes('extra'), `${label} must carry the appended runner`);
+  }
 });
 
 /**

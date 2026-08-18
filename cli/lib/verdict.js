@@ -159,12 +159,37 @@ function computeVerdict(input) {
       const quarantineActive = r.quarantined === true && r.quarantine_expired === false;
       const quarantineExpired = r.quarantined === true && r.quarantine_expired === true;
       if (typeof r.exit_code !== 'number' || Number.isNaN(r.exit_code)) {
+        // Why the timeout is described here and not in its own branch: a timed-out
+        // runner now has ran:true, so it reaches Pass 2 and the quarantine branches
+        // match FIRST. A timeout branch placed after them is dead for any
+        // quarantined runner, and the receipt then said only "produced no numeric
+        // exit_code" for a suite that actually hung - the record omitting the one
+        // fact the reader needs. Every branch below names the real cause.
+        //
+        // The VERDICT is deliberately unchanged: an active quarantine still
+        // shields, because that is exactly what a quarantine is for and a
+        // quarantined runner that FAILS is already non-blocking. It stays visible
+        // in the receipt and expires on the TTL. What is fixed is the honesty of
+        // the reason, not the blocking policy.
+        const tms = typeof r.timeout_ms === 'number' ? ` after ${r.timeout_ms}ms` : '';
+        const noCode = r.timed_out === true
+          ? `TIMED OUT${tms} and was killed, so it produced no exit code`
+          : 'produced no numeric exit_code';
         if (quarantineActive) {
           hasFlag = true;
-          reasons.push(`runner "${r.name}" is QUARANTINED and produced no numeric exit_code (neutral, not blocking)`);
+          reasons.push(`runner "${r.name}" is QUARANTINED and ${noCode} (neutral, not blocking)`);
         } else if (quarantineExpired) {
           hasFail = true;
-          reasons.push(`runner "${r.name}" QUARANTINE EXPIRED and it produced no numeric exit_code; the quarantine no longer shields it (fix it or refresh quarantined_since)`);
+          reasons.push(`runner "${r.name}" QUARANTINE EXPIRED and it ${noCode}; the quarantine no longer shields it (fix it or refresh quarantined_since)`);
+        } else if (r.timed_out === true) {
+          // A timeout DID run. It blocks, but naming it sends the engineer to
+          // their suite's duration or timeout_ms, not to a hunt for malformed
+          // runner JSON that was never the problem.
+          hasFail = true;
+          reasons.push(
+            `runner "${r.name}" ${noCode}; ` +
+            `the process did run (raise timeout_ms for this runner, or make the suite faster)`
+          );
         } else {
           hasFail = true;
           reasons.push(`runner "${r.name}" ran but exit_code is not a number (got ${JSON.stringify(r.exit_code)})`);
@@ -515,15 +540,39 @@ function computeVerdict(input) {
   // run. The classic trigger is a documented `--base origin/main` against a
   // repo whose default branch is master: git errors, the error is swallowed,
   // changed_file_count is 0, and every `when`-gated runner sits out. FLAG by
-  // default so it is always visible in the receipt; FAIL under the same strict
-  // switch that governs the other scope guards.
+  // default so it is always visible in the receipt; FAIL under its OWN switch.
+  //
+  // This used to escalate on `require_money_policy_when_detected`, which governs
+  // the money guards and has nothing to do with whether a diff resolved. The
+  // consequence was concrete: a non-payments repo that reasonably sets that flag
+  // false could never make an unresolvable diff blocking, and a payments repo got
+  // the behaviour whether or not it wanted it. Scope switches belong to scope.
   if (input.diff_indeterminate === true) {
     const base = input.diff_base ? ` (base: ${input.diff_base})` : '';
-    const msg =
-      `the diff could not be resolved${base}, so fqe evaluated ZERO changed files. ` +
-      `Any runner gated on "when" was skipped. Check that the base ref exists in this ` +
-      `checkout (a repo whose default branch is "master" will not resolve "origin/main")`;
-    if (input.require_money_policy_when_detected === true) {
+    // THE MESSAGE MUST MATCH THE STATE. This flag used to mean exactly one thing,
+    // "zero information", so the sentence below could safely hardcode "evaluated
+    // ZERO changed files. Any runner gated on `when` was skipped." Then the flag
+    // grew a second meaning - an APPROXIMATE range, where the runners genuinely
+    // did run on a real (possibly incomplete) file list - and nothing revisited
+    // the prose. The result was a receipt asserting "evaluated ZERO changed
+    // files... skipped" two lines above `runners_fired: ["unit"]` and
+    // `changed_file_count: 1`. For a product whose whole claim is that the
+    // receipt says what happened, a self-contradicting receipt is the failure,
+    // even when the verdict itself is right.
+    //
+    // `diff_confidence` carries the distinction so each state gets a true
+    // sentence. It is read defensively: an older caller that sets only the
+    // boolean still gets the original wording.
+    const approximate = input.diff_confidence === 'approximate';
+    const msg = approximate
+      ? `the diff range is APPROXIMATE${base}: the clone's history is truncated, so fqe could not `
+        + `anchor the range at the merge base and fell back to comparing the two commits directly. `
+        + `The runners DID run, on a file list that may be incomplete - so a failure here is real, `
+        + `but a clean result is not authoritative. Fetch full history (fetch-depth: 0) to make it exact`
+      : `the diff could not be resolved${base}, so fqe evaluated ZERO changed files. `
+        + `Any runner gated on "when" was skipped. Check that the base ref exists in this `
+        + `checkout (a repo whose default branch is "master" will not resolve "origin/main")`;
+    if (input.require_resolvable_diff === true) {
       hasFail = true;
       reasons.push(`BLOCKED (indeterminate diff): ${msg}`);
     } else {
