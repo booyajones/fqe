@@ -564,3 +564,82 @@ test('parseConfigYaml behaves identically on CRLF input', () => {
   const bad = ['runners:', '  unit:', '    command: "node"', '   required: true'];
   assert.throws(() => parseConfigYaml(bad.join('\r\n')), /malformed indent under runners\.unit, line 4/);
 });
+
+// --- round 4: the last members of each family, from review ---
+
+test('parseConfigYaml throws on a duplicate require_for block', () => {
+  // The `require_for` branch assigns unconditionally, so it sat outside the
+  // duplicate guard: a repeated `require_for:` silently replaced the earlier
+  // one, on the single key where losing a rule matters most.
+  assert.throws(() => parseConfigYaml([
+    'policy:',
+    '  require_for:',
+    '    - when: ["src/payments/**"]',
+    '      classes: ["money"]',
+    '  require_for:',
+    '    - when: ["src/**"]',
+    '      classes: ["unit"]',
+  ].join('\n')), /duplicate key 'require_for' at line 5/);
+});
+
+test('parseConfigYaml throws on a require_for block with no entries', () => {
+  // Parsed to [], which validateConfig accepts and the verdict ignores, so the
+  // diff-conditional money requirement vanished with the config reporting valid.
+  // The sibling `require_classes:` branch already threw for exactly this reason.
+  assert.throws(() => parseConfigYaml([
+    'policy:', '  require_for:', 'runners:', '  unit:', '    command: "node"',
+  ].join('\n')), /'require_for' at line 2 has no entries/);
+  // Same outcome when every item is commented out: parseRequireFor skips them.
+  assert.throws(() => parseConfigYaml([
+    'policy:', '  require_for:', '    # - when: ["a"]', 'runners:', '  unit:', '    command: "node"',
+  ].join('\n')), /has no entries/);
+});
+
+test('parseConfigYaml throws on a reserved JavaScript property name as a key', () => {
+  // `result.runners['__proto__'] = {}` goes through Object.prototype's setter and
+  // re-points the map's prototype instead of adding a key, so the runner vanished
+  // whole: Object.keys came back empty and `runners: {}` validated clean.
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  __proto__:', '    command: "node"', '    class: money',
+  ].join('\n')), /reserved JavaScript property name/);
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  a:', '    __proto__: "x"',
+  ].join('\n')), /reserved JavaScript property name/);
+  assert.throws(() => parseConfigYaml([
+    'runners:', '  constructor:', '    command: "node"',
+  ].join('\n')), /reserved JavaScript property name/);
+  assert.throws(() => parseConfigYaml([
+    'policy:', '  __proto__: ["x"]',
+  ].join('\n')), /reserved JavaScript property name/);
+});
+
+test('every parse throw is tagged fqeConfigInvalid', () => {
+  // The tag routes these to the pinned EXIT.ERROR branch in bin/fqe.js rather
+  // than die()'s default. An untagged throw is a silent downgrade risk, and the
+  // first attempt at tagging converted only the single-line throw sites.
+  const bad = [
+    ['runners:', '  u:', '    command: "node"', '   required: true'],
+    ['runners:', '   u:', '    command: "node"'],
+    ['runners:', '    command: "node"'],
+    ['runners:', '  a:', '    command: "x"', 'version: 0.15', '  b:', '    command: "y"'],
+    ['runners:', '  a:', '    command: "x"', 'runners:', '  b:', '    command: "y"'],
+    ['runners:', '  a:', '    command: "x"', '  a:', '    command: "y"'],
+    ['runners:', '  a:', '    command: "x"', '    command: "y"'],
+    ['runners:', '  a:', '    s: |', '      body'],
+    ['runners:', '  a:', '    when:', '      - "src/**"'],
+    ['runners:', '  __proto__:', '    command: "node"'],
+    ['policy:', '   require_classes: ["unit"]'],
+    ['policy:', '  require_classes: ["a"]', '  require_classes: ["b"]'],
+    ['policy:', '  require_for:'],
+    ['policy:', '  require_for:', '    - when: ["a"]', '      classes: ["m"]', '      when: ["b"]'],
+    ['mutation:', '  policy: blocking', '  policy: advisory'],
+  ];
+  for (const lines of bad) {
+    try {
+      parseConfigYaml(lines.join('\n'));
+      assert.fail(`expected a throw for:\n${lines.join('\n')}`);
+    } catch (e) {
+      assert.equal(e.fqeConfigInvalid, true, `untagged throw for:\n${lines.join('\n')}\n${e.message}`);
+    }
+  }
+});

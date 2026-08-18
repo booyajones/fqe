@@ -107,6 +107,7 @@ function parseConfigYaml(text) {
       const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
       if (!m) throw configParseError(`config parse: malformed top-level line ${i + 1}: ${line}`);
       current = m[1];
+      assertSafeKey(current, 'top-level key', i + 1);
       // Fail closed on a repeated top-level key. `result[current] = {}` overwrote,
       // so a second `runners:` block silently deleted the first one whole — the
       // v0.18.18 duplicate-key defect, reachable at the parser rather than only
@@ -162,6 +163,7 @@ function parseConfigYaml(text) {
         const m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
         if (!m) throw configParseError(`config parse: malformed runner key line ${i + 1}: ${line}`);
         currentRunner = m[1];
+        assertSafeKey(currentRunner, 'runner name', i + 1);
         if (Object.prototype.hasOwnProperty.call(result.runners, currentRunner)) {
           throw configParseError(
             `config parse: duplicate runner '${currentRunner}' at line ${i + 1}. ` +
@@ -177,6 +179,7 @@ function parseConfigYaml(text) {
         if (!m) throw configParseError(`config parse: malformed runner field line ${i + 1}: ${trimmed}`);
         const key = m[1];
         const val = m[2];
+        assertSafeKey(key, `field on runner '${currentRunner}'`, i + 1);
         if (Object.prototype.hasOwnProperty.call(result.runners[currentRunner], key)) {
           throw configParseError(
             `config parse: duplicate field '${key}' on runner '${currentRunner}' at line ${i + 1}. ` +
@@ -253,6 +256,29 @@ function configParseError(message) {
 }
 
 /**
+ * Key names that do not behave as own properties on a plain object.
+ *
+ * `result.runners['__proto__'] = {}` goes through Object.prototype's setter and
+ * re-points the map's prototype instead of adding a key, so a runner named
+ * `__proto__` vanished entirely: `Object.keys(runners)` came back empty, the
+ * duplicate guard read false, every field landed on the prototype, and
+ * `runners: {}` validated clean. The last member of the "runner name silently
+ * disappears" family. Rejected by name rather than by switching these maps to
+ * null-prototype objects, which would change what every downstream consumer of
+ * the parsed config receives.
+ */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function assertSafeKey(key, whatItIs, lineNo) {
+  if (UNSAFE_KEYS.has(key)) {
+    throw configParseError(
+      `config parse: ${whatItIs} '${key}' at line ${lineNo} is a reserved JavaScript ` +
+      `property name and cannot be used as a key. Rename it.`
+    );
+  }
+}
+
+/**
  * Name the real problem when a mis-indented line is actually a YAML block
  * sequence or block scalar. Telling the author to re-indent a `- item` line to 4
  * spaces sends them to a second, less clear error, because this parser reads
@@ -310,6 +336,7 @@ function parseFlatMapBlock(lines) {
     if (val === '') {
       throw configParseError(`config parse: key '${key}' must have an inline value (e.g. ${key}: blocking)`);
     }
+    assertSafeKey(key, 'key', 0);
     if (Object.prototype.hasOwnProperty.call(out, key)) {
       throw configParseError(
         `config parse: duplicate key '${key}' in this block: ${raw.trim()}. ` +
@@ -375,8 +402,29 @@ function parsePolicyBlock(lines, lineNos) {
     if (!m) throw configParseError(`policy parse: malformed line: ${line}`);
     const key = m[1];
     const val = m[2];
+    assertSafeKey(key, 'policy key', lineNos[i]);
     if (key === 'require_for' && val === '') {
+      // This branch assigns unconditionally, so it sat outside the duplicate
+      // guard below and a repeated `require_for:` silently replaced the earlier
+      // one — the money rule, on the one key where losing it matters most.
+      if (Object.prototype.hasOwnProperty.call(policy, 'require_for')) {
+        throw configParseError(
+          `policy parse: duplicate key 'require_for' at line ${lineNos[i]}. ` +
+          `The later block would silently replace the earlier one.`
+        );
+      }
       const { items, next } = parseRequireFor(lines, i + 1);
+      // Fail closed on an empty block, for the reason the sibling branch below
+      // already states: `require_for:` with no items (or with every item
+      // commented out) parsed to `[]`, which validateConfig accepts and the
+      // verdict then ignores, so a diff-conditional money requirement vanished
+      // with the config reporting valid.
+      if (items.length === 0) {
+        throw configParseError(
+          `policy parse: 'require_for' at line ${lineNos[i]} has no entries. ` +
+          `Give it at least one '- when: [...]' item, or remove the key.`
+        );
+      }
       policy.require_for = items;
       i = next - 1;
     } else if (val === '') {
@@ -424,6 +472,7 @@ function parseRequireFor(lines, start) {
         // would make a diff-conditional money requirement vanish).
         throw configParseError(`policy parse: require_for key '${m[1]}' must have an inline list value`);
       }
+      assertSafeKey(m[1], 'require_for key', 0);
       cur[m[1]] = parseMaybeList(m[2]);
     } else {
       if (!cur) throw configParseError(`policy parse: require_for continuation without an item: ${line}`);
@@ -433,6 +482,7 @@ function parseRequireFor(lines, start) {
       // written without its leading `- ` disappeared: both keys overwrote the
       // first item's, the two entries merged into one, and the earlier `when`
       // (typically the payments rule) was gone with the config still valid.
+      assertSafeKey(m[1], 'require_for key', 0);
       if (Object.prototype.hasOwnProperty.call(cur, m[1])) {
         throw configParseError(
           `policy parse: duplicate key '${m[1]}' in one require_for entry: ${line.trim()}. ` +
