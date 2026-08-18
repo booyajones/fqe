@@ -76,7 +76,10 @@ Adding samples to a run that has any failures may not be enough by itself.
 
 **Root cause:** you passed a short SHA or an empty string to `fqe run`.
 
-**Fix:** use the full 40-character SHA: `fqe run --commit $(git rev-parse HEAD) --output ./out/`.
+**Fix:** use the full 40-character SHA, and name the base so the run covers the same range CI does:
+`fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/`.
+
+Without `--base`, fqe does not know which range to gate and says so instead of guessing.
 
 ### `init: target dir does not exist`
 
@@ -104,7 +107,7 @@ If you've added `fqe-quality.yml` to your repo and it's running, but PRs can sti
 
 Two paths:
 
-1. **Fix the underlying failure.** Run `fqe run` locally, read the explainer output, apply the fix. Usually 2-5 minutes.
+1. **Fix the underlying failure.** Run `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/` locally, read the explainer output, apply the fix. Usually 2-5 minutes. Pass the same `--base` CI uses, or you will be gating a different range than the one that is blocking you.
 2. **Bypass with a `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment** if you have repo-write and you're on `.github/fqe-bypass-allowlist.yml`. The comment must name the exact current head SHA (run `git rev-parse HEAD`), so any new push invalidates it and you re-post. It is valid only within its TTL, and an edited comment is rejected. Re-run the fqe check after posting so it re-evaluates. Bypass is logged in the rolling tally. If your team's bypass rate goes above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer second-approves.
 
 `fqe` does not punish bypass. It audits it.

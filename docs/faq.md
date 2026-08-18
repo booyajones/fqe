@@ -30,7 +30,7 @@ Danger writes opinionated PR comments based on diff inspection. fqe runs runners
 
 Three differences:
 
-1. **Deterministic verdict aggregation.** fqe reads exit codes from N runners and computes one verdict via about 500 lines of pure code. You can read that code. You can run it locally. You can audit it.
+1. **Deterministic verdict aggregation.** fqe reads exit codes from N runners and computes one verdict via about 600 lines of pure code. You can read that code. You can run it locally. You can audit it.
 2. **Tamper-evident receipts.** fqe emits a QA-RESULT.yml bound to the commit SHA. You can prove what was checked.
 3. **Server-authoritative bypass.** Your custom workflow can be bypassed by anyone with write access. fqe's bypass uses GitHub Events API identity, requires an allowlisted actor, and gets logged in a rolling rate that auto-escalates when abused.
 
@@ -100,7 +100,7 @@ If your configured runners are slow, that's your runner's cost, not fqe's. Use t
 
 ## Why is the verdict logic in JavaScript and not Python / Go / Rust?
 
-Because the workflow already needs Node for the orchestrator, adding a second language doubles the install footprint. The verdict logic is about 500 lines of pure JS with no dependencies. It's not the bottleneck.
+Because the workflow already needs Node for the orchestrator, adding a second language doubles the install footprint. The verdict logic is about 600 lines of pure JS with no dependencies. It's not the bottleneck.
 
 ## Why Wilson confidence intervals specifically?
 

@@ -21,7 +21,7 @@
 const { KNOWN_CLASSES, BLAST_RADIUS_THRESHOLDS } = require('./verdict');
 const { KNOWN_FORMATS } = require('./inventory');
 
-const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired', 'require_money_idempotency', 'require_money_policy_when_detected', 'require_nonempty_gate', 'mutation'];
+const TOP_LEVEL_KEYS = ['runners', 'version', 'policy', 'require_coverage_evidence', 'require_all_suites_wired', 'require_money_idempotency', 'require_money_policy_when_detected', 'require_nonempty_gate', 'require_resolvable_diff', 'mutation'];
 const MUTATION_KEYS = ['mode', 'threshold', 'min_mutants', 'allowlist', 'max_suppression_ratio'];
 // Invariant ids a runner may declare it proves (payments safety, v0.11).
 const KNOWN_INVARIANTS = Object.freeze(['idempotency', 'double-spend', 'conservation', 'no-negative-balance']);
@@ -194,6 +194,9 @@ function validateConfig(config) {
 
   // F2 (v0.16): opt-in. A gate with no teeth (no required runner / class / money req) mints
   // a green that protects nothing; with this on, that FAILs instead.
+  if ('require_resolvable_diff' in config && typeof config.require_resolvable_diff !== 'boolean') {
+    errors.push(`'require_resolvable_diff' must be true or false, got ${typeOf(config.require_resolvable_diff)}`);
+  }
   if ('require_nonempty_gate' in config && typeof config.require_nonempty_gate !== 'boolean') {
     errors.push(`'require_nonempty_gate' must be true or false, got ${typeOf(config.require_nonempty_gate)}`);
   }

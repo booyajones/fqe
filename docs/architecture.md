@@ -47,7 +47,7 @@ The verdict (PASS, FLAG, FAIL) is computed by `cli/lib/verdict.js`. It is:
 3. **An evaluator with its own failure mode.** Prompt-injection in PR content could fool the verdict.
 4. **Auditability collapse.** You can't read a model and know when it blocks.
 
-You can read about 500 lines of `verdict.js` and know exactly when fqe blocks. That readability is the design.
+You can read about 600 lines of `verdict.js` and know exactly when fqe blocks. That readability is the design.
 
 **Code that enforces this:** the verdict path is `bin/fqe.js` → `lib/orchestrator.js` → `lib/verdict.js`. No `require` of any LLM SDK. The only places fqe talks to an LLM are in user-configured runners (e.g., a Promptfoo runner the user adds to `.fqe.yml`). Those runners feed deterministic numbers back to `verdict.js`.
 
@@ -117,7 +117,7 @@ elif hasFlag: verdict = FLAG (exit 3)
 else: verdict = PASS (exit 0)
 ```
 
-That is the whole decision surface: about 500 lines, no LLM, no clock, no I/O, no
+That is the whole decision surface: about 600 lines, no LLM, no clock, no I/O, no
 randomness. Same inputs always produce the same output.
 
 The recompute in Pass 3 is worth dwelling on, because the earlier version of this
@@ -144,7 +144,7 @@ Bounded scope is a trust signal. fqe does not:
 
 2. **Bypass is a deliberate, audited act.** Every bypass writes to `bypass-tally.jsonl`, posts to a Check Run, gets archived in `audits/<sha>/`. Rolling rate above 10% in 14 days flips the `fqe/second-reviewer-required` check to FAIL, requiring an allowlisted second approver.
 
-3. **Engineers can read the source and run it locally.** No proprietary binaries. No closed-source dependency. `fqe explain` prints the audit. `fqe run --base origin/main --output ./out/` reproduces the CI behavior on your laptop.
+3. **Engineers can read the source and run it locally.** No proprietary binaries. No closed-source dependency. `fqe explain` prints the audit. `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/` reproduces the CI behavior on your laptop.
 
 ## See also
 
@@ -152,4 +152,4 @@ Bounded scope is a trust signal. fqe does not:
 - [docs/writing-a-runner.md](writing-a-runner.md), how to add a runner to your `.fqe.yml`.
 - [docs/troubleshooting.md](troubleshooting.md), exact-error to exact-fix lookup.
 - [SECURITY.md](../SECURITY.md), threat model and reporting.
-- The actual verdict source: `cli/lib/verdict.js` (about 500 lines, read it).
+- The actual verdict source: `cli/lib/verdict.js` (about 600 lines, read it).

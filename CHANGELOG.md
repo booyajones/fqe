@@ -2,6 +2,53 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [Unreleased]
+
+Ten review rounds against v0.18.19, all in one subsystem: **deciding which range to gate, and reporting that honestly.** Every round's fix produced the next round's defect, so the entries below are as much a record of what the fixes broke as of what they fixed. Nothing here is tagged yet.
+
+### Fixed (scope determination)
+
+- **`fqe run` without `--base` silently gated only the last commit.** The diff fell back to `HEAD~1..HEAD`, a guess at the pull request's range that is wrong for every multi-commit PR. Measured: a 3-commit PR whose break is in commit 1 and whose commit 2 is docs-only returned PASS, exit 0, `runners_fired: []`. `git` SUCCEEDED, so `diff.ok` was true and the indeterminate-diff guard never ran — five rounds of hardening "the diff did not resolve" could not see it, because nothing failed. The guess is gone; not knowing the range is now what `ok: false` means.
+- **The range was two-dot, not merge-base anchored.** `git diff base..head` compares two tree snapshots, so when the base branch independently reaches the same content the PR reached, the changed file vanishes. Measured: fork has `app.js` "original", the PR makes it "BUGGY", main independently also becomes "BUGGY" — two-dot returns zero files and the gate reports a clean, resolved diff over a PR that changed gated code. Now anchored at the merge base, which is what GitHub's own "Files changed" view uses.
+- **A degenerate range succeeded.** `git diff X..X` exits 0 with zero files, so `--base HEAD --commit HEAD` over a real regression gave PASS with `indeterminate: false`. Two distinct causes are now detected and separately labelled: `degenerate-range` (a self-targeting declared pair) and `head-is-ancestor-of-base` (a PR with nothing ahead of its base — a stale re-run after merge).
+- **Unrelated histories succeeded too.** `git diff` happily compares commits with no common ancestor; that result is not the PR's change set.
+- **A shallow clone disarmed the guard entirely.** `repoHasHistory()` counts commits reachable from HEAD, and a shallow clone reports 1 regardless of real history — `fetch-depth: 1` is the `actions/checkout` default. An explicitly-named base that failed to resolve was swallowed and the run reported PASS over zero evaluated files, with `require_resolvable_diff` set, on the money path. Silence must now be earned: it is granted only for a genuinely new repository with no base named, proven via `git rev-parse --is-shallow-repository`.
+- **Truncated history is no longer conflated with unrelated history.** A shallow clone whose merge base is unreachable falls back to the two-dot range and still runs the runners, so a real regression still blocks — briefly, that case was treated as unusable, which downgraded a caught regression to a non-blocking FLAG.
+- **`--base ''` silently demoted the run to "no base named."** An unresolved shell variable is a misconfiguration, not a request. Rejected loudly.
+- **An explicitly empty `FQE_CHANGED_FILES` is never excused by repo history.** That is the caller asserting its own diff came back empty; a fact about the checkout has no bearing on it.
+- **`isGitRepo()` conflated "git said no" with "git could not answer,"** and the second is the branch that grants silence. A dubious-ownership refusal, a broken `GIT_DIR`, git missing from PATH, or a moved worktree all read as "brand-new repo" and minted a clean green. Now keyed on a `.git` marker at or above the directory, so a git failure reads as suspicious rather than as newness.
+- **The adjacent guards contradicted the main one.** `computeRequiredClasses` and `detectMoneyPaths` took the raw `!diff.ok` while the main guard applied the first-run qualifier, so the state one deliberately exonerated was hard-blocked by the other. One qualified value, computed once, shared by all three.
+
+### Fixed (the receipt)
+
+- **The receipt recorded nothing about scope,** so a blind PASS and a genuinely clean PASS were byte-identical after the fact — the product failing its own thesis. It now carries `diff_scope`: `source` (git or env), `base` (null unless a diff actually ran against it), `declared_base`, `range_start` (the merge base actually used), `confidence`, `indeterminate` (the field that answers whether this scope was trustworthy at all), `truncated_history`, `changed_file_count`, `unusable_reason`, and `tree_commit`.
+- **The receipt could claim a base it never diffed against.** With `FQE_CHANGED_FILES` set, the file list comes from the environment and no `git diff` runs — but `diff_scope.base` was filled from `--base` anyway, so an env list of nonexistent paths plus a correct `--base` read as a git-verified clean run.
+- **The receipt contradicted itself on truncated clones.** `diff_indeterminate` meant "zero information" until it also came to mean "approximate range, the runners did run" — and the sentence rendering it was never revisited, so a receipt asserted "evaluated ZERO changed files. Any runner gated on `when` was skipped" two lines above `runners_fired: ["unit"]` and `changed_file_count: 1`. Scope confidence is now three states (`exact`, `approximate`, `unknown`) and each renders a sentence that is true for it.
+
+### Fixed (signing)
+
+- **`diff_scope` is signed.** The field that distinguishes "clean because nothing was wrong" from "clean because nothing was evaluated" sat outside the MAC, so it was forgeable after signing.
+- **Adding it broke verification of every previously-signed receipt.** `verifyReceipt` always used the current field list, so an untampered, in-retention artifact verified as "signature mismatch (receipt was tampered)" — from the tool whose product is tamper-evidence, under a scaffold that retains receipts for 365 days. `signature.covers` was already being written for exactly this purpose and never read back; it is now the authority on verify, restricted to known field names.
+- **Verification no longer prints a bare OK when it cannot vouch for a field.** A receipt signed before a field existed never covered it, so that field can be rewritten with the signature block untouched and still verify — no forgery of `covers` required. The receipt is authentic for what it covers, so it still verifies, but `verifyReceipt` now returns `unsigned_fields` and `fqe receipt verify` names them.
+
+### Fixed (runners, flags, explanations)
+
+- **A timed-out runner was reported as never having started.** `spawnSync` sets `.error` when a child "failed OR timed out", so a suite that ran its full timeout was recorded as never started — the exact lie the release existed to remove, reintroduced by the fix for it. Detection now keys on positive evidence of execution.
+- **The flag allowlist rejected nine documented flags,** including `coverage-ratchet --patch`, which appears four times in its own recipe. Derived from the code now, and pinned by a drift test plus a docs sweep. `fqe version --bogus` also silently exited 0; no-argument subcommands were invisible to the derivation.
+- **`receipt verify --require-signature`** was rejected while both new allowlist tests passed — the map and the derivation shared a blind spot, so the drift test was comparing it to itself.
+- **The whole diff-scope reason family had no explanation.** It rendered as "file an issue, this explainer hasn't been updated" for conditions fqe understands completely; the approximate-range case now names the remedy (`fetch-depth: 0`).
+- **A timeout was explained in only one of the three shapes the verdict emits,** so the blocking quarantine-expired case sent the reader to the issue tracker.
+- **Runner logs are uploaded by CI.** `evidence_paths` named `out/runner-<name>.log` while the workflow uploaded only `QA-RESULT.*`, so the receipt pointed at files no reader could reach. A `#` comment inside the `path: |` block scalar was also being passed to `upload-artifact` as three glob patterns.
+
+### Fixed (docs)
+
+- **`verdict.js` had outgrown its own documented size** in six places across `README.md`, `docs/faq.md` and `docs/architecture.md` (claimed ~500 lines, actually ~600). fqe asks readers to audit that file themselves, so a wrong size is the first thing they check. Caught by the repo's own doc-accuracy guard and corrected rather than silenced.
+
+### Notes
+
+- 862 tests. Every fix in this range was negative-controlled **individually** — reverted alone, in a scratch copy, to confirm a specific test goes red. Batch-controlling hid two hollow tests of my own, both of which passed with their fix reverted.
+- A green suite was never the evidence here. 808, 826, 839, 846 and 851 passing tests each accompanied a product with a live silent-PASS defect.
+
 ## [0.18.19] - 2026-08-17
 
 Tag: `fqe-v0.18.19`. (v0.18.18 shipped WITHOUT these: the push went to `fix/coldstart-text` while the PR tracked `fix/cold-start-text`, one hyphen apart, so the merge carried only the doc tier. Caught by cold-starting the published tag rather than trusting the merge.) Acts on a 3-engineer cold start (42 findings, 40 reproduced, 2 of 3 hard-stopped) and on CodeRabbit's first real review of this repo. Fixes the four defects that made fqe unusable for a first-time adopter, not just the docs describing them.

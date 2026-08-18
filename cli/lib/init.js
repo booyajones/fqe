@@ -64,6 +64,10 @@ const PAYMENTS_FQE_YML = `# Finexio Quality Engine - PAYMENTS profile (fqe init 
 version: 0.15
 require_money_idempotency: true
 require_money_policy_when_detected: true
+# If fqe cannot resolve the diff it cannot tell which runners were required, so a
+# green result would mean "nothing was checked", not "nothing was wrong". On a
+# money repo that must block, not flag.
+require_resolvable_diff: true
 
 mutation:
   mode: blocking
@@ -339,9 +343,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qa-receipt-\${{ github.event.pull_request.head.sha }}
+          # runner-*.log carries what the receipt's evidence_paths names and what
+          # the explainer tells you to download. Without it the receipt points at
+          # files no reader can reach.
+          # (Keep this comment ABOVE \`path:\` — inside a \`|\` block scalar a '#'
+          # line is literal text, not a comment, and would be uploaded as a glob.)
           path: |
             out/QA-RESULT.yml
             out/QA-RESULT.md
+            out/runner-*.log
           # 365 days for SOC2/PCI evidence retention (1-year minimum). The repo's
           # max artifact-retention setting must allow this; the Check Run output
           # also persists with the commit. For 7-year SOX, mirror to object storage.
