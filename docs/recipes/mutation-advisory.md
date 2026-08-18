@@ -16,8 +16,9 @@ mutation:
   mode: advisory          # advisory (FLAG survivors) -> blocking (FAIL) once ratcheted
   threshold: 70           # minimum kill rate %
   min_mutants: 1          # below this in the diff, NEUTRAL (cannot judge, never a silent pass)
-  allowlist:              # equivalent mutants to suppress, so the gate never sprays false reds
-    - "src/money/round.ts:42:ArithmeticOperator"
+  # equivalent mutants to suppress, so the gate never sprays false reds. Inline
+  # list: this block takes flat `key: value` lines, not a nested `- item` block.
+  allowlist: ["src/money/round.ts:42:ArithmeticOperator"]
 
 runners:
   mutation:
