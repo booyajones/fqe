@@ -32,7 +32,7 @@ function rate(artifacts, overrides = {}) {
     id, run_attempt: Math.max(...artifacts.filter(a => a.name.split('-').at(-2) === String(id)).map(a => Number(a.name.split('-').at(-1)))),
     path: '.github/workflows/fqe-publish.yml',
   }));
-  return githubBypassRate({ repo: 'org/repo', now: '2026-10-12T14:00:00Z',
+  return githubBypassRate({ repo: 'org/repo', now: '2026-10-12T14:00:00Z', currentHead: sha,
     fetch: endpoint => {
       if (endpoint.includes('/workflows/')) return [{ total_count: completed.length, workflow_runs: completed }];
       if (endpoint.includes('/artifacts?')) {
@@ -44,19 +44,23 @@ function rate(artifacts, overrides = {}) {
     }, ...overrides });
 }
 test('bypass rate is recovered from earlier immutable workflow artifacts in a clean job', () => {
-  const r = rate([artifact('fqe-audit-v1-bypass-10-1')], { currentRun: '11-1', currentBypass: false });
+  const r = rate([artifact('fqe-audit-v2-bypass-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-1')], { currentRun: '11-1', currentBypass: false });
   assert.equal(r.rate, 0.5);
   assert.equal(r.denominator, 2);
 });
-test('audit history counts distinct attempts and refuses conflicting records', () => {
-  assert.equal(rate([artifact('fqe-audit-v1-normal-10-1'), artifact('fqe-audit-v1-bypass-10-2')]).denominator, 2);
-  assert.throws(() => rate([artifact('fqe-audit-v1-normal-10-1'), artifact('fqe-audit-v1-bypass-10-1')]), /duplicate/);
+test('audit history counts distinct heads and refuses conflicting attempt records', () => {
+  assert.equal(rate([artifact('fqe-audit-v2-normal-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-1'), artifact('fqe-audit-v2-bypass-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-2')]).denominator, 1);
+  assert.throws(() => rate([artifact('fqe-audit-v2-normal-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-1'), artifact('fqe-audit-v2-bypass-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-1')]), /duplicate/);
+  const repeated = rate([artifact('fqe-audit-v2-bypass-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-1'), artifact('fqe-audit-v2-normal-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-11-1', 11)]);
+  assert.equal(repeated.denominator, 1);
+  assert.equal(repeated.rate, 1);
 });
 test('missing, expired, misbound or unreadable audit evidence cannot claim a zero rate', () => {
   assert.equal(rate([]).rate, null);
   for (const a of [
-    { ...artifact('fqe-audit-v1-normal-10-1'), expired: true },
-    artifact('fqe-audit-v1-normal-10-1', 999),
+    { ...artifact('fqe-audit-v2-normal-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-1'), expired: true },
+    artifact('fqe-audit-v2-normal-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-1', 999),
+    artifact('fqe-audit-v1-normal-10-1'),
   ]) assert.throws(() => rate([a]), /audit/);
   assert.throws(() => rate([], { fetch: () => { throw new Error('GitHub down'); } }), /GitHub down/);
 });
@@ -143,20 +147,22 @@ test('generated evaluation and publisher can pin the same immutable ref and reje
 });
 
 test('rerunning a failed publisher repairs its missing latest audit record without a 14-day lockout', () => {
-  const fetch = endpoint => endpoint.includes('/artifacts?') ? [{ total_count: endpoint.includes('/12/') ? 1 : 0, artifacts: endpoint.includes('/12/') ? [artifact('fqe-audit-v1-normal-12-2', 12)] : [] }]
+  const fetch = endpoint => endpoint.includes('/artifacts?') ? [{ total_count: endpoint.includes('/12/') ? 1 : 0, artifacts: endpoint.includes('/12/') ? [artifact('fqe-audit-v2-normal-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-12-2', 12)] : [] }]
     : endpoint.includes('/workflows/') ? [{ total_count: 1, workflow_runs: [{ id: 12, run_attempt: 2, path: '.github/workflows/fqe-publish.yml' }] }]
     : [{ id: 12, path: '.github/workflows/fqe-publish.yml', run_attempt: 2 }];
   assert.equal(rate([], { fetch, currentRun: '13-1', currentBypass: false }).rate, 0);
 });
 
-test('a high historical bypass rate does not force second approval on an ordinary clean PR', t => {
+test('ordinary clean PRs keep their verified result even when bypass history is unavailable', t => {
   const data = {
-    'repos/org/repo/actions/runs/12/artifacts?per_page=100': [{ total_count: 1, artifacts: [artifact('fqe-audit-v1-bypass-12-1', 12)] }],
+    'repos/org/repo/actions/runs/12/artifacts?per_page=100': [{ total_count: 1, artifacts: [artifact('fqe-audit-v2-bypass-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-12-1', 12)] }],
     'repos/org/repo/actions/workflows/fqe-publish.yml/runs?per_page=100&status=completed&created=%3E%3D2026-09-28T14%3A00%3A00.000Z': [{ total_count: 1, workflow_runs: [{ id: 12, path: '.github/workflows/fqe-publish.yml', run_attempt: 1 }] }],
     'repos/org/repo/actions/runs/12': [{ id: 12, path: '.github/workflows/fqe-publish.yml', run_attempt: 1 }],
   };
+  data['repos/org/repo/actions/workflows/fqe-publish.yml/runs?per_page=100&status=completed&created=%3E%3D2026-09-28T14%3A00%3A00.000Z'] = [{ total_count: 1001, workflow_runs: [] }];
   const r = verify(t, data);
-  assert.equal(r.rate.rate, 0.5);
+  assert.equal(r.rate.rate, null);
+  assert.equal(r.rate.source, 'not_queried');
   assert.equal(r.check_state, 'success');
   assert.equal(r.second_state, 'success');
 });

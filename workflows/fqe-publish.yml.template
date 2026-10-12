@@ -83,7 +83,7 @@ jobs:
         if: always() && env.VERIFIED != ''
         uses: actions/upload-artifact@v4
         with:
-          name: fqe-audit-v1-${{ steps.verify.outputs.bypass || 'normal' }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: fqe-audit-v2-${{ steps.verify.outputs.bypass || 'normal' }}-${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.VERIFIED }}/
           if-no-files-found: error
           retention-days: 90

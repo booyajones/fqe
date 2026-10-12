@@ -253,3 +253,5 @@ Upgrade both workflows to the same reviewed SHA with `fqe init --ref <40-char-sh
 A receipt attests what happened at verification time. A cached GitHub check is not a continuous authorization service: require re-verification before merging an old bypass or after changing access policy. Branch protection and workflow ownership remain part of the security boundary. Standard PRs are supported; merge-queue enforcement must be separately verified before adoption.
 
 The payments scaffold is a template. Its detector is a heuristic. Add real money and contract tests; use `--with-mutation` only after installing Stryker. Mutation is judged as a deterministic mutant set, not an independent random sample requiring hundreds of observations.
+
+Bypass history is read only to authorize a bypass; missing history never cancels a clean ordinary test result. For a bypass request, missing or unsupported audit schemas fail closed. New artifacts use v2 names with the server-bound source head SHA so repeated attempts cannot dilute the rate.

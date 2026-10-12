@@ -34,13 +34,13 @@ function currentApprovers({ reviews, headSha, author, requester, allowlist }) {
 }
 
 // Immutable Actions artifacts are the audit ledger; a PR-branch file is never history.
-function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun, currentBypass, fetch = githubJson }) {
+function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun, currentBypass, currentHead, fetch = githubJson }) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo || '') || !Number.isFinite(windowDays) || windowDays <= 0) {
     throw new Error('a repository and positive history window are required');
   }
   const cutoff = new Date(now).getTime() - windowDays * 86400000;
   if (!Number.isFinite(cutoff)) throw new Error('invalid audit clock');
-  if (currentRun !== undefined && (!/^\d+-\d+$/.test(currentRun) || typeof currentBypass !== 'boolean')) throw new Error('current workflow attempt is invalid');
+  if (currentRun !== undefined && (!/^\d+-\d+$/.test(currentRun) || typeof currentBypass !== 'boolean' || !/^[a-f0-9]{40}$/.test(currentHead || ''))) throw new Error('current workflow attempt is invalid');
   const history = fetch(`repos/${repo}/actions/workflows/fqe-publish.yml/runs?per_page=100&status=completed&created=${encodeURIComponent('>=' + new Date(cutoff).toISOString())}`);
   const completed = history.flatMap(p => {
     if (!p || !Array.isArray(p.workflow_runs) || !Number.isSafeInteger(p.total_count)) throw new Error('publisher history is malformed');
@@ -66,14 +66,17 @@ function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun,
   }
   const records = new Map();
   for (const a of artifacts) {
-    const match = /^fqe-audit-v1-(normal|bypass)-(\d+)-(\d+)$/.exec(a.name || '');
-    if (!match) continue;
+    const match = /^fqe-audit-v2-(normal|bypass)-([a-f0-9]{40})-(\d+)-(\d+)$/.exec(a.name || '');
+    if (!match) {
+      if ((a.name || '').startsWith('fqe-audit-') && Date.parse(a.created_at) >= cutoff) throw new Error('audit schema is unsupported; do not authorize a bypass over unknown history');
+      continue;
+    }
     const at = Date.parse(a.created_at);
     if (!Number.isFinite(at)) throw new Error('audit artifact has no server timestamp');
     if (at < cutoff || at > new Date(now).getTime()) continue;
     if (a.expired) throw new Error('audit evidence expired inside the history window');
-    const id = Number(match[2]);
-    const attempt = Number(match[3]);
+    const id = Number(match[3]);
+    const attempt = Number(match[4]);
     if (!a.workflow_run || a.workflow_run.id !== id || attempt < 1) throw new Error('audit artifact run binding is invalid');
     if (!runs.has(id)) {
       const pages = fetch(`repos/${repo}/actions/runs/${id}`);
@@ -87,7 +90,7 @@ function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun,
     const key = `${id}-${attempt}`;
     if (key === currentRun) continue;
     if (records.has(key)) throw new Error('duplicate audit record for one workflow attempt');
-    records.set(key, match[1] === 'bypass');
+    records.set(key, { head: match[2], bypass: match[1] === 'bypass' });
   }
   for (const run of completed) {
     if (!Number.isSafeInteger(run.id) || !Number.isSafeInteger(run.run_attempt)) throw new Error('publisher history has no attempt identity');
@@ -96,13 +99,15 @@ function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun,
   }
   if (currentRun !== undefined) {
     if (!/^\d+-\d+$/.test(currentRun) || typeof currentBypass !== 'boolean') throw new Error('current workflow attempt is invalid');
-    records.set(currentRun, currentBypass);
+    records.set(currentRun, { head: currentHead, bypass: currentBypass });
   }
-  const denominator = records.size;
-  const numerator = [...records.values()].filter(Boolean).length;
+  const heads = new Map();
+  for (const r of records.values()) heads.set(r.head, heads.get(r.head) === true || r.bypass);
+  const denominator = heads.size;
+  const numerator = [...heads.values()].filter(Boolean).length;
   return { numerator, denominator, rate: denominator ? numerator / denominator : null,
     window_days: windowDays, source: 'github_actions_artifacts',
-    note: 'Observed audited attempts, with a record required for each latest completed publisher run in the window; no evidence is never reported as a zero bypass rate.' };
+    note: 'Distinct audited PR heads; repeated workflows and reruns cannot pad the denominator. Any applied bypass for a head counts. The current requested bypass is included. No evidence is never a measured zero.' };
 }
 
 function actorsFromYaml(text) {
@@ -119,7 +124,7 @@ function actorsFromYaml(text) {
 // This runs only in the publisher job, which never executes PR code.
 function verifyCiReceipt({ repo, pr, headSha, runId, auditRunId = runId, receiptPath, fqeVersion, now = new Date().toISOString(), fetch = githubJson }) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo || '') || !/^[a-f0-9]{40}$/.test(headSha || '') ||
-      !Number.isSafeInteger(pr) || pr < 1 || !/^\d+-\d+$/.test(runId || '')) throw new Error('CI destination is invalid');
+      !Number.isSafeInteger(pr) || pr < 1 || !/^\d+-\d+$/.test(runId || '') || !/^\d+-\d+$/.test(auditRunId || '')) throw new Error('CI destination is invalid');
   const one = endpoint => {
     const pages = fetch(endpoint);
     if (!Array.isArray(pages) || pages.length !== 1) throw new Error('GitHub object unavailable');
@@ -166,7 +171,10 @@ function verifyCiReceipt({ repo, pr, headSha, runId, auditRunId = runId, receipt
   const oracle = evaluateOracleGuard({ files: changedFiles, includeTests: true });
   const reviewers = currentApprovers({ headSha, author: pull.user.login, requester: bypass.actor,
     allowlist: allowed('fqe-second-reviewers.yml'), reviews: fetch(`repos/${repo}/pulls/${pr}/reviews?per_page=100`).flat() });
-  const rate = githubBypassRate({ repo, now, currentRun: auditRunId, currentBypass: bypass.bypass, fetch });
+  const rate = bypass.bypass
+    ? githubBypassRate({ repo, now, currentRun: auditRunId, currentBypass: true, currentHead: headSha, fetch })
+    : { numerator: null, denominator: null, rate: null, window_days: 14, source: 'not_queried',
+      note: 'Ordinary test results do not depend on bypass-history availability.' };
   const oracleSatisfied = !oracle.requires_second_review || reviewers.length > 0;
   const secondSatisfied = !bypass.bypass || (rate.rate != null && (rate.rate <= 0.1 || reviewers.length > 0));
   if (!oracleSatisfied || !secondSatisfied) {
