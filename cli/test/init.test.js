@@ -127,7 +127,7 @@ test('init: evaluation has no write credential and publishing never checks out P
   assert.match(publisher, /workflow_run:/);
   assert.match(publisher, /fqe ci-verify/);
   assert.doesNotMatch(publisher, /actions\/checkout|fqe run /);
-  assert.match(publisher, /fqe-audit-v1/);
+  assert.match(publisher, /fqe-audit-v2/);
   assert.ok(!fs.existsSync(path.join(dir, '.github/fqe-state')));
 });
 
