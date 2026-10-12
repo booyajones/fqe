@@ -90,15 +90,29 @@ function parseJUnit(xml) {
 
   // Some reporters expose setup/teardown errors only on the suite, not a testcase.
   let suiteTotalFailed = 0;
-  for (const match of text.matchAll(/<testsuite\b([^>]*)>/g)) {
-    let suiteFailed = 0;
+  const suites = [];
+  const suiteStructure = text.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  for (const match of suiteStructure.matchAll(/<\/?testsuite\b([^>]*)>/g)) {
+    if (match[0].startsWith('</')) {
+      const suite = suites.pop();
+      if (!suite) throw new Error('junit: unmatched testsuite close');
+      const total = Math.max(suite.declared, suite.children);
+      if (suites.length) suites[suites.length - 1].children += total;
+      else suiteTotalFailed += total;
+      continue;
+    }
+    let declared = 0;
     for (const key of ['failures', 'errors']) {
       const value = attr(match[1], key);
-      if (value && !/^\d+$/.test(value)) throw new Error(`junit: ${key} count is malformed`);
-      suiteFailed += Number(value || 0);
+      if (value && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))) throw new Error(`junit: ${key} count is malformed`);
+      declared += Number(value || 0);
     }
-    suiteTotalFailed += suiteFailed;
+    if (match[0].endsWith('/>')) {
+      if (suites.length) suites[suites.length - 1].children += declared;
+      else suiteTotalFailed += declared;
+    } else suites.push({ declared, children: 0 });
   }
+  if (suites.length) throw new Error('junit: unclosed testsuite');
   failed = Math.max(failed, suiteTotalFailed);
   return { reported, skipped, executed: reported - skipped, failed, ids };
 }

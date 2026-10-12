@@ -195,4 +195,6 @@ test('the mutation wrapper handles large embedded source without losing its verd
 test('JUnit suite-only errors are counted across independent suites', () => {
   const { parseJUnit } = require('../lib/junit');
   assert.equal(parseJUnit('<testsuites><testsuite errors="1"><testcase name="a"/></testsuite><testsuite failures="2"><testcase name="b"/></testsuite></testsuites>').failed, 3);
+  assert.equal(parseJUnit('<testsuites><testsuite failures="2"><testsuite failures="2"><testcase name="x"/></testsuite></testsuite></testsuites>').failed, 2);
+  assert.throws(() => parseJUnit('<testsuite failures="9007199254740992"><testcase name="x"/></testsuite>'), /malformed/);
 });

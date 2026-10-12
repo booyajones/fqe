@@ -134,6 +134,10 @@ function verifyCiReceipt({ repo, pr, headSha, runId, auditRunId = runId, receipt
       source.head_sha !== headSha || source.run_attempt !== Number(runId.split('-')[1]) || source.status !== 'completed') {
     throw new Error('receipt is not bound to a completed FQE run of this PR head');
   }
+  if (source.pull_requests !== undefined && (!Array.isArray(source.pull_requests) ||
+      (source.pull_requests.length > 0 && !source.pull_requests.some(p => p.number === pr)))) {
+    throw new Error('source workflow belongs to a different PR');
+  }
   const allowed = file => {
     const data = one(`repos/${repo}/contents/.github/${file}?ref=${encodeURIComponent(metadata.default_branch)}`);
     if (data.encoding !== 'base64' || typeof data.content !== 'string') throw new Error('current allowlist unavailable');

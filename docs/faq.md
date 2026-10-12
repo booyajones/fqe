@@ -53,7 +53,7 @@ Post a SHA-bound PR comment: `/fqe-bypass <head-sha> <24h|48h|72h>`. (The old un
 1. You must be on the `.github/fqe-bypass-allowlist.yml` list at the live default branch (a PR cannot add itself to the list).
 1b. The `<head-sha>` must equal the live head SHA, so any new push invalidates the bypass; it also expires on the stated TTL.
 2. Every published attempt has a server-side audit artifact; missing history fails closed.
-3. If the rolling 14-day bypass rate exceeds 10%, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer approves the current head through a GitHub review.
+3. If a bypass is requested and the rolling 14-day bypass rate exceeds 10%, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer approves the current head through a GitHub review.
 
 fqe does not punish bypass. It audits it. If you're consistently bypassing, the gate is wrong, not you.
 

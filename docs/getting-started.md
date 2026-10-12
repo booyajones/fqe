@@ -51,7 +51,7 @@ Once `.fqe.yml`, `.github/workflows/`, and the allowlists are committed to your 
 | Check | What it does |
 |---|---|
 | `fqe/pass` | Runs your configured runners. PASS if all clean, FAIL if any blocked, FLAG if Wilson CI bounds exceeded. |
-| `fqe/second-reviewer-required` | Normally green. Goes red when the 14-day rolling bypass rate is above 10%, requiring an allowlisted second approver. |
+| `fqe/second-reviewer-required` | Normally green. Goes red for a bypass request when the 14-day rolling bypass rate is above 10%, requiring an allowlisted second approver. |
 
 Look at the Check Run detail. If the gate fails, the output panel contains a plain-English explanation of what failed, why, and how to reproduce it locally.
 

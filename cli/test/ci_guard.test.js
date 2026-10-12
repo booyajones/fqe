@@ -97,6 +97,7 @@ test('trusted publisher permits an ordinary verified run and blocks stale or uns
   assert.throws(() => verify(t, { 'repos/org/repo/pulls/1': [{ head: { sha: 'b'.repeat(40) }, state: 'open' }] }), /stale/);
   assert.throws(() => verify(t, { 'repos/org/repo/actions/runs/10': [{ path: '.github/workflows/fqe-quality.yml', event: 'pull_request', head_sha: sha, run_attempt: 1, status: 'completed', conclusion: 'failure' }] }), /successfully/);
   assert.throws(() => verify(t, {}, { run_id: 'old-attempt' }), /does not match/);
+  assert.throws(() => verify(t, { 'repos/org/repo/actions/runs/10': [{ path: '.github/workflows/fqe-quality.yml', event: 'pull_request', head_sha: sha, run_attempt: 1, status: 'completed', conclusion: 'success', pull_requests: [{ number: 2 }] }] }), /different PR/);
 });
 
 test('oracle changes require an authorized non-author approval of the current head', t => {

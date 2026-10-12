@@ -108,7 +108,7 @@ If you've added `fqe-quality.yml` to your repo and it's running, but PRs can sti
 Two paths:
 
 1. **Fix the underlying failure.** Run `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/` locally, read the explainer output, apply the fix. Usually 2-5 minutes. Pass the same `--base` CI uses, or you will be gating a different range than the one that is blocking you.
-2. **Bypass with a `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment** if you have repo-write and you're on `.github/fqe-bypass-allowlist.yml`. The comment must name the exact current head SHA (run `git rev-parse HEAD`), so any new push invalidates it and you re-post. It is valid only within its TTL, and an edited comment is rejected. Re-run the fqe check after posting so it re-evaluates. The publisher stores immutable audit artifacts and checks completed-run coverage. If your team's bypass rate goes above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer second-approves.
+2. **Bypass with a `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment** if you have repo-write and you're on `.github/fqe-bypass-allowlist.yml`. The comment must name the exact current head SHA (run `git rev-parse HEAD`), so any new push invalidates it and you re-post. It is valid only within its TTL, and an edited comment is rejected. Re-run the fqe check after posting so it re-evaluates. The publisher stores immutable audit artifacts and checks completed-run coverage. If you request a bypass when your team's rate is above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer second-approves.
 
 `fqe` does not punish bypass. It audits it.
 
