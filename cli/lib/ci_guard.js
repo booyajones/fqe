@@ -186,7 +186,7 @@ function verifyCiReceipt({ repo, pr, headSha, runId, auditRunId = runId, receipt
   if (receipt.bypass) receipt.bypass.applied = oracleSatisfied && secondSatisfied;
   return { receipt, bypass: bypass.bypass && oracleSatisfied && secondSatisfied, reviewers, rate, oracle,
     check_state: receipt.verdict !== 'FAIL' && oracleSatisfied && secondSatisfied ? 'success' : 'failure',
-    second_state: secondSatisfied ? 'success' : 'failure' };
+    second_state: oracleSatisfied && secondSatisfied ? 'success' : 'failure' };
 }
 
 module.exports = { currentApprovers, githubBypassRate, githubJson, actorsFromYaml, verifyCiReceipt };

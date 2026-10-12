@@ -106,9 +106,13 @@ test('trusted publisher permits an ordinary verified run and blocks stale or uns
 
 test('oracle changes require an authorized non-author approval of the current head', t => {
   const files = { 'repos/org/repo/pulls/1/files?per_page=100': [[{ filename: '.fqe.yml' }]] };
-  assert.equal(verify(t, files).check_state, 'failure');
+  const blocked = verify(t, files);
+  assert.equal(blocked.check_state, 'failure');
+  assert.equal(blocked.second_state, 'failure');
   assert.equal(verify(t, { ...files, 'repos/org/repo/pulls/1/reviews?per_page=100': [[review(1, 'author')]] }).check_state, 'failure');
-  assert.equal(verify(t, { ...files, 'repos/org/repo/pulls/1/reviews?per_page=100': [[review(2, 'reviewer')]] }).check_state, 'success');
+  const approved = verify(t, { ...files, 'repos/org/repo/pulls/1/reviews?per_page=100': [[review(2, 'reviewer')]] });
+  assert.equal(approved.check_state, 'success');
+  assert.equal(approved.second_state, 'success');
   assert.throws(() => verify(t, { 'repos/org/repo/pulls/1/files?per_page=100': [[]] }), /incomplete/);
 });
 
