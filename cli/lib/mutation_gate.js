@@ -45,13 +45,17 @@ function parseStryker(report) {
   } else {
     j = report;
   }
-  const files = j && j.files ? j.files : {};
+  if (!j || !j.files || typeof j.files !== 'object' || Array.isArray(j.files)) {
+    throw new Error('parseStryker: mutation report must contain a files map');
+  }
+  const files = j.files;
   const perFile = {};
   const survivors = [];
   let killed = 0;
   let surviving = 0;
   for (const [path, data] of Object.entries(files)) {
-    const mutants = (data && data.mutants) || [];
+    if (!data || !Array.isArray(data.mutants)) throw new Error('parseStryker: each file must contain a mutants array');
+    const mutants = data.mutants;
     let k = 0;
     let s = 0;
     for (const m of mutants) {

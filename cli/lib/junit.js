@@ -64,6 +64,7 @@ function parseJUnit(xml) {
   let m;
   let reported = 0;
   let skipped = 0;
+  let failed = 0;
   const ids = [];
   while ((m = testcaseRe.exec(text)) !== null) {
     reported++;
@@ -71,6 +72,8 @@ function parseJUnit(xml) {
     const inner = m[3] || ''; // undefined/'' when self-closed
     const statusAttr = attr(attrs, 'status').toLowerCase();
     const isSkipped = /<skipped\b/.test(inner) || SKIPPED_STATUSES.has(statusAttr);
+    const structure = inner.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+    if (/<(?:failure|error)\b/.test(structure) || ['failed', 'failure', 'error'].includes(statusAttr)) failed++;
     if (isSkipped) skipped++;
     const cn = attr(attrs, 'classname');
     const nm = attr(attrs, 'name');
@@ -85,7 +88,17 @@ function parseJUnit(xml) {
     );
   }
 
-  return { reported, skipped, executed: reported - skipped, ids };
+  // Some reporters expose setup/teardown errors only on the suite, not a testcase.
+  for (const match of text.matchAll(/<testsuite\b([^>]*)>/g)) {
+    let suiteFailed = 0;
+    for (const key of ['failures', 'errors']) {
+      const value = attr(match[1], key);
+      if (value && !/^\d+$/.test(value)) throw new Error(`junit: ${key} count is malformed`);
+      suiteFailed += Number(value || 0);
+    }
+    failed = Math.max(failed, suiteFailed);
+  }
+  return { reported, skipped, executed: reported - skipped, failed, ids };
 }
 
 module.exports = { parseJUnit };

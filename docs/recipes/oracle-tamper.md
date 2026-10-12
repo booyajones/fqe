@@ -29,14 +29,14 @@ Exit codes: **0 = clean, 3 = FLAG** (the answer key changed, default), **2 = FAI
 
 ## Wire it into CI
 
-Copy `workflows/fqe-oracle-guard.yml.template` to `.github/workflows/fqe-oracle-guard.yml`. It runs the guard on the PR diff and, when the answer key changed, passes only if a reviewer other than the author has approved:
+Copy `workflows/fqe-publish.yml.template` to `.github/workflows/fqe-publish.yml`. It runs the guard on the PR diff and, when the answer key changed, passes only if a reviewer other than the author has approved:
 
 ```yaml
       - name: Run oracle-guard on the PR diff
         id: guard
         run: |
           set +e
-          npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe \
+          npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe \
             oracle-guard --base "$BASE_SHA" --head "$HEAD_SHA"
           GUARD_EXIT=$?; set -e
           # The exit code is the signal, not parsed text (a parse fallback can
@@ -70,3 +70,5 @@ Add the `oracle-guard` job to branch protection as a **required status check**. 
 - **`--include-tests` is the agent-heavy setting.** If agents author code and tests together, turn it on so a human eyeballs every PR that changes a test next to the source it grades.
 - **It fails closed.** If the guard cannot read the diff (a git error, a missing base SHA, a shallow clone), it does not report clean. It requires the second reviewer (exit 3) and the workflow keys off the exit code, not parsed text, so an unreadable diff cannot quietly switch the guard off. A security guard that fails open is worse than no guard.
 - **The patterns are an allowlist, so extend them for your repo.** The defaults cover the common conventions (goldens, snapshots, cassettes, fixtures, `*.approved`, `*.expected`, `*.received`). A determined insider could rename a golden to an extension the defaults do not list to dodge the guard, so add your repo's own golden and config paths. Treat oracle-guard as one layer next to the mutation gate, the coverage ratchet, and human review, not the only one.
+
+The v0.19 publisher performs this guard from trusted default-branch code, using current-head approvals from the live allowlist. Retire the standalone PR-checkout oracle workflow during migration; install both canonical workflows through `fqe init --ref <reviewed-sha>`.

@@ -1028,14 +1028,14 @@ test('nothing lands on PATH before its checksum is verified', () => {
     }
   }
 
-  // Floor, like every other whole-file scan in this file. Without it, reshaping
-  // the install to an idiom none of the patterns match leaves this green while
-  // inspecting nothing.
-  assert.ok(
-    checked > 0,
-    'found no line that places a file on PATH. Either the install was reshaped out ' +
-      'of this guard\'s reach or it was removed; both mean this test is now vacuous.'
-  );
+  // yq was removed: generated workflows no longer download native binaries.
+  // Keep the ordering rule and its negative controls for any future download.
+  if (checked === 0) {
+    for (const name of fs.readdirSync(wfDir)) {
+      const source = fs.readFileSync(path.join(wfDir, name), 'utf8');
+      assert.doesNotMatch(source, /\b(?:wget|curl)\b/, 'a new binary download must reach the checksum guard');
+    }
+  }
   assert.deepStrictEqual(
     offenders,
     [],

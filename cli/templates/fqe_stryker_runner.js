@@ -8,9 +8,9 @@
  * why you're diverging from the canonical contract.
  *
  * Wraps Stryker mutation testing so it emits a fqe-compatible JSON line on
- * stdout. The mutation-survival rate becomes the adversarial_stats observation;
- * fqe gates it against the Wilson-CI upper bound for the configured blast
- * radius class.
+ * stdout. fqe judges this deterministic mutant set with mutation.mode and
+ * mutation.threshold. Mutants are not independent random attack attempts,
+ * so a small fully killed set must not fail a Wilson sample-size requirement.
  *
  * Exit codes:
  *   0 — Stryker ran, JSON emitted (verdict is fqe's call from the stats)
@@ -23,12 +23,6 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Edit this to match the code under test. See docs/recipes/ai-test-generation.md
-// for the threshold map by blast class.
-// Valid values: 'outbound' (5% CI ceiling), 'mcp-read' (3%), 'mcp-write-or-financial' (1%).
-// An unknown value is rejected loudly by fqe's verdict.js, not silently passed.
-const BLAST_RADIUS = process.env.FQE_STRYKER_BLAST_RADIUS || 'mcp-write-or-financial';
-
 // Anchor to the repo root the runner was spawned from. Stryker writes
 // reports/mutation/mutation.json relative to its own cwd; this script must
 // resolve the same path the same way. process.cwd() is what fqe's orchestrator
@@ -40,6 +34,8 @@ function fail(msg) {
   process.exit(1);
 }
 
+// A failed Stryker run must never reuse a prior report.
+fs.rmSync(REPORT_PATH, { force: true });
 // 1. Run Stryker, ask for JSON reporter
 const stryker = spawnSync('npx', ['stryker', 'run', '--reporters', 'json,progress'], {
   encoding: 'utf8',
@@ -80,43 +76,12 @@ if (total === 0) {
   fail('Stryker report has zero measurable mutants. Check stryker.conf.json mutate patterns.');
 }
 
-// 3. Compute Wilson 95% CI for the survival rate
-// (fqe's own wilson helper if available; fallback to inline math)
-let ci95 = null;
-try {
-  const wilson = spawnSync('fqe', ['wilson', String(survived), String(total)], {
-    encoding: 'utf8',
-    timeout: 5000,
-  });
-  if (wilson.status === 0 && wilson.stdout) {
-    ci95 = JSON.parse(wilson.stdout).ci_95;
-  }
-} catch (_) { /* fall through to inline */ }
-
-if (!ci95) {
-  // Inline Wilson 95% CI fallback
-  const z = 1.959963984540054;
-  const p = survived / total;
-  const z2 = z * z;
-  const denom = 1 + z2 / total;
-  const center = (p + z2 / (2 * total)) / denom;
-  const half = (z * Math.sqrt(p * (1 - p) / total + z2 / (4 * total * total))) / denom;
-  ci95 = [Math.max(0, center - half), Math.min(1, center + half)];
-}
-
 // 4. Emit the fqe JSON line
 const out = {
   runner: 'stryker-mutation',
   exit_code: 0,
-  adversarial_stats: [
-    {
-      runner: 'stryker-mutation',
-      n: total,
-      successes: survived,
-      ci_95: ci95,
-      blast_radius: BLAST_RADIUS,
-    },
-  ],
+  mutation_report: report,
+
 };
 console.log(JSON.stringify(out));
 process.exit(0);

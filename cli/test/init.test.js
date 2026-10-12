@@ -39,7 +39,7 @@ test('init: writes all expected files in a fresh repo', () => {
   const result = initLib.init({ dir, actor: 'chris-wyatt' });
   assert.ok(result.written.includes('.fqe.yml'));
   assert.ok(result.written.includes('.github/workflows/fqe-quality.yml'));
-  assert.ok(result.written.includes('.github/workflows/fqe-second-approve.yml'));
+  assert.ok(result.written.includes('.github/workflows/fqe-publish.yml'));
   assert.ok(result.written.includes('.github/fqe-bypass-allowlist.yml'));
   assert.ok(result.written.includes('.github/fqe-second-reviewers.yml'));
   assert.equal(result.skipped.length, 0);
@@ -117,22 +117,18 @@ test('init: .fqe.yml declares runners EXACTLY once (duplicate key silently wins)
   );
 });
 
-test('init: workflow reads bypass identity from a server-recorded source, not a PR file (invariant #1)', () => {
+test('init: evaluation has no write credential and publishing never checks out PR code', () => {
   const dir = freshGitRepo();
   initLib.init({ dir, actor: 'chris-wyatt' });
   const quality = fs.readFileSync(path.join(dir, '.github/workflows/fqe-quality.yml'), 'utf8');
-  // v0.4.0 SHA-bound comment flow: identity is the comment author (user.login)
-  // from the comments API, the SHA is bound, and the gate fails closed.
-  assert.match(quality, /\.user\.login/);          // server-recorded identity
-  assert.match(quality, /issues\/\$PR_NUMBER\/comments/); // comments API, not a PR file
-  assert.match(quality, /fqe bypass-check/);        // SHA-bound guard
-  assert.match(quality, /fqe-bypass/);
-});
-
-test('init: state dir is created with .gitkeep', () => {
-  const dir = freshGitRepo();
-  initLib.init({ dir, actor: 'chris-wyatt' });
-  assert.ok(fs.existsSync(path.join(dir, '.github/fqe-state/.gitkeep')));
+  const publisher = fs.readFileSync(path.join(dir, '.github/workflows/fqe-publish.yml'), 'utf8');
+  assert.match(quality, /persist-credentials: false/);
+  assert.doesNotMatch(quality, /checks: write|FQE_SIGNING_KEY|status publish/);
+  assert.match(publisher, /workflow_run:/);
+  assert.match(publisher, /fqe ci-verify/);
+  assert.doesNotMatch(publisher, /actions\/checkout|fqe run /);
+  assert.match(publisher, /fqe-audit-v1/);
+  assert.ok(!fs.existsSync(path.join(dir, '.github/fqe-state')));
 });
 
 test('init --with-mutation: writes the Stryker glue + config + runner block', () => {

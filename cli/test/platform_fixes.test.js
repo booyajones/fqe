@@ -449,7 +449,7 @@ test('the generated workflow uploads globs, not comment text, in its artifact pa
     assert.ok(!e.startsWith('#'),
       `'${e}' is prose being passed to upload-artifact as a glob; move the comment ABOVE 'path: |'`);
   }
-  assert.ok(entries.includes('out/runner-*.log'), `runner logs must be uploaded, got: ${JSON.stringify(entries)}`);
+  assert.ok(entries.includes('${{ env.FQE_OUT }}/'), `runner logs must be uploaded, got: ${JSON.stringify(entries)}`);
 });
 
 test('the shipped workflow TEMPLATE has the same clean path block', () => {
@@ -459,7 +459,7 @@ test('the shipped workflow TEMPLATE has the same clean path block', () => {
   for (const e of entries) {
     assert.ok(!e.startsWith('#'), `'${e}' is prose inside a YAML block scalar in the template`);
   }
-  assert.ok(entries.includes('out/runner-*.log'));
+  assert.ok(entries.includes('${{ env.FQE_OUT }}/'));
 });
 
 /**
@@ -1228,7 +1228,9 @@ test('the verify CLI warns instead of printing a bare OK for an uncovered field'
   const { serializeReceipt } = require('../lib/receipt');
   const base = {
     schema_version: 1, fqe_version: '0.18.19', commit_sha: 'a'.repeat(40),
-    content_hash: 'b'.repeat(64), inputs_hash: 'c'.repeat(64), verdict: 'PASS', bypass: null,
+    content_hash: 'sha256:' + 'b'.repeat(64), inputs_hash: 'sha256:' + 'c'.repeat(64), verdict: 'PASS', bypass: null,
+    run_id: 'legacy-run', started_at: '2026-08-01T00:00:00Z', finished_at: '2026-08-01T00:00:01Z',
+    classifier_version: 1, runner_versions: {},
     runners: [], runners_fired: [], verdict_reasons: [],
     diff_scope: { source: 'git', base: null, changed_file_count: 0, indeterminate: false },
   };

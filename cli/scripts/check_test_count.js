@@ -66,7 +66,7 @@ function realTestCount() {
     }
     return n;
   }
-  const res = spawnSync(process.execPath, ['--test'], { cwd: CLI, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const res = spawnSync(process.execPath, ['--test', '--test-reporter=tap'], { cwd: CLI, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const out = (res.stdout || '') + (res.stderr || '');
   const m = out.match(/^# tests (\d+)$/m);
   if (!m) {

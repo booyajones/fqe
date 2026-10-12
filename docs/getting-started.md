@@ -1,30 +1,30 @@
 # Getting started
 
-5 minutes from `git clone` to a gated PR. If it takes longer than that, open an issue.
+Install and verify in a sandbox before requiring the gate on an application. This branch is the v0.19.0 release candidate; until the tag exists, use the reviewed full commit SHA in the install command and `--ref`.
 
 ## Step 1: Add fqe to your repo (one command)
 
 In any git repo with a `main` or `master` branch:
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe init
+npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe init
 ```
 
 This creates:
 
 - `.fqe.yml`: your runner config. A static template with commented examples; fqe does not inspect your repo to guess runners.
 - `.github/workflows/fqe-quality.yml`: the gate workflow.
-- `.github/workflows/fqe-second-approve.yml`: the bypass-unblock workflow.
+- `.github/workflows/fqe-publish.yml`: the trusted publisher.
 - `.github/fqe-bypass-allowlist.yml`: who can bypass (seeded with your GitHub login).
 - `.github/fqe-second-reviewers.yml`: who can unblock when bypass rate is high.
-- `.github/fqe-state/.gitkeep`: state directory for the rolling bypass tally.
+- Immutable Actions audit artifacts retain the observed bypass history.
 
-Commit and push these on a branch, open a PR, watch the workflow fire.
+Configure actual required runners and an independent reviewer, then submit the installation through normal review. The publisher must reach the default branch before GitHub starts its `workflow_run` handler. After that bootstrap, open a dedicated probe PR and verify both checks before requiring them.
 
 ## Step 2: Configure your runners
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe explain
+npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe explain
 ```
 
 Then open `.fqe.yml`. It ships with commented examples you adapt by hand:
@@ -42,7 +42,7 @@ Copy an example under the live `runners:` key at the bottom of the file and dele
 
 **On Windows**, `command: "npm"` will not start, because npm is a `.cmd` shim and fqe spawns without a shell. Use `command: "cmd"` with `args: ["/c", "npm", "test"]`. A runner that fails to spawn is reported as a failure carrying no exit code.
 
-Empty config means the gate runs but always passes.
+`require_nonempty_gate: true` blocks this empty scaffold until required runners are configured.
 
 ## Step 3: Open a PR and watch the workflow
 
@@ -62,17 +62,17 @@ First, install the CLI so you have an `fqe` binary on your PATH. Two options:
 ```bash
 # Option A: clone and link (recommended for iteration)
 git clone https://github.com/booyajones/fqe.git ~/.local/share/fqe
-cd ~/.local/share/fqe && git checkout fqe-v0.18.21
+cd ~/.local/share/fqe && git checkout fqe-v0.19.0
 npm link --prefix ~/.local/share/fqe/cli   # adds `fqe` to PATH
 
 # Option B: one-off via npx (no install, slower)
-alias fqe='npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe'
+alias fqe='npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe'
 ```
 
 On **Windows**, both options above are Unix-only (`npm link` mutates your global prefix, and `alias` is a bash builtin that PowerShell rejects). Use a PowerShell function instead, or just type the full `npx` invocation:
 
 ```powershell
-function fqe { npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe @args }
+function fqe { npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe @args }
 ```
 
 Then, from any repo with a `.fqe.yml`:
@@ -117,14 +117,14 @@ Now `main` cannot accept a merge without a green `fqe/pass`. To bypass in an eme
 
 ## What the gate doesn't do until you configure it
 
-Empty `.fqe.yml` (or a `.fqe.yml` with all suggestions still commented out) means **no runners**. The gate exists but always passes. This is intentional. fqe is a no-op until you tell it what to enforce.
+The empty standard scaffold has **no runners** and blocks with `require_nonempty_gate: true`. Legacy configs without that flag can still produce a hollow PASS; inspect and migrate them. FQE does not infer business requirements or implement missing tests.
 
 ## Optional: wire AI test-gen + mutation testing in the same install
 
-For JS/TS repos that want the modern AI quality stack (Stryker mutation testing wired as a fqe runner, with Wilson-CI-bounded survival rate as the verdict), add the `--with-mutation` flag:
+For JS/TS repos that want the modern AI quality stack (Stryker mutation testing wired as a fqe runner, with deterministic mutation counts as the evidence), add the `--with-mutation` flag:
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe init --with-mutation
+npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe init --with-mutation
 npm install --save-dev @stryker-mutator/core
 ```
 
@@ -138,13 +138,14 @@ For production, pin to a commit SHA instead. Find the SHA for the release you wa
 
 ```bash
 # Replace SHA with the 40-char commit hash for the release you want
-SHA=074eeb434215d5588088690a2dfde33e97356536
-npx --yes -p "github:booyajones/fqe#${SHA}" fqe init
+# Assign the reviewed release commit here; verify it is a full 40-hex SHA.
+SHA="REPLACE_WITH_REVIEWED_COMMIT"
+npx --yes -p "github:booyajones/fqe#${SHA}" fqe init --ref "$SHA"
 ```
 
-The generated workflow YAML will also pin its `git clone` step to that SHA. To re-pin to a new release later, re-run `init` with the new SHA, or hand-edit `.github/workflows/fqe-quality.yml`.
+The generated workflow YAML pins both workflows' `git fetch` steps to that SHA. To re-pin to a new release later, re-run `init` with the new SHA, or update both `.github/workflows/fqe-quality.yml` and `.github/workflows/fqe-publish.yml`.
 
-A SHA-pinned Docker image (`ghcr.io/booyajones/fqe`) will be pinned by image digest, which is content-addressed and cannot be silently changed. Once it ships, that's the recommended default.
+No published FQE container is required by these workflows.
 
 ## Common next steps
 
@@ -158,3 +159,5 @@ A SHA-pinned Docker image (`ghcr.io/booyajones/fqe`) will be pinned by image dig
 ## If something goes wrong
 
 Run `fqe explain` to see the config fqe resolved, then check [docs/troubleshooting.md](troubleshooting.md).
+
+Install the publisher on the default branch before enabling required checks. The empty standard config now blocks until a required runner is configured; validation alone is not proof that tests run. See the v0.19 migration section in README.

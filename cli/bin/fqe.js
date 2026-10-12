@@ -47,6 +47,7 @@ const mutationGate = require('../lib/mutation_gate');
 const configSchema = require('../lib/config_schema');
 const oracleGuard = require('../lib/oracle_guard');
 const bypassGuard = require('../lib/bypass_guard');
+const { verifyCiReceipt } = require('../lib/ci_guard');
 const uatLib = require('../lib/uat');
 const goldenLib = require('../lib/golden');
 const qaReportLib = require('../lib/qa_report');
@@ -124,6 +125,7 @@ const SUBCOMMANDS = {
       withMutation: opts['with-mutation'] === true,
       withQodo: opts['with-qodo'] === true,
       payments: opts.payments === true,
+      ref: opts.ref,
     });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     if (result.skipped.length > 0 && result.written.length === 0) {
@@ -177,6 +179,7 @@ const SUBCOMMANDS = {
       outputDir: opts.output,
       repoDir: opts['repo-dir'],
       fqeVersion: FQE_VERSION,
+      runId: opts['run-id'],
     });
     process.stdout.write(JSON.stringify({
       verdict: result.verdict,
@@ -595,6 +598,16 @@ const SUBCOMMANDS = {
     }
   },
 
+  'ci-verify'(args) {
+    const opts = parseFlags(args);
+    requireFlags(opts, ['repo', 'pr', 'head', 'run-id', 'receipt', 'output']);
+    const result = verifyCiReceipt({ repo: opts.repo, pr: Number(opts.pr), headSha: opts.head,
+      runId: opts['run-id'], auditRunId: opts['audit-run-id'], receiptPath: opts.receipt, fqeVersion: FQE_VERSION });
+    if (process.env.FQE_SIGNING_KEY) result.receipt = signReceipt(result.receipt, process.env.FQE_SIGNING_KEY, result.receipt.finished_at);
+    writeReceiptFiles(result.receipt, opts.output);
+    process.stdout.write(JSON.stringify({ ...result, receipt: undefined }) + '\n');
+  },
+
   'bypass-tally'(args) {
     const sub = args[0];
     const rest = args.slice(1);
@@ -636,6 +649,13 @@ const SUBCOMMANDS = {
       if (!ymlPath) die('status print: <yml-path> required');
       const yaml = fs.readFileSync(ymlPath, 'utf8');
       const parsed = parseReceiptYaml(yaml);
+      const opts = parseFlags(rest.slice(1));
+      if (opts['expected-commit'] && parsed.commit_sha !== opts['expected-commit']) {
+        die('status print: receipt commit does not match the expected commit');
+      }
+      if (opts['expected-run-id'] && parsed.run_id !== opts['expected-run-id']) {
+        die('status print: receipt run_id does not match the expected workflow attempt');
+      }
       // Map verdict to GitHub check conclusion:
       //   PASS -> success (build can proceed)
       //   FLAG -> success on fqe/pass + flag emitted separately (FLAG is informational)
@@ -950,13 +970,15 @@ const SUBCOMMANDS = {
       'usage: fqe <subcommand> [args...]',
       '',
       'gate workflow:',
-      '  init [--dir D] [--force]            bootstrap a repo with .fqe.yml + GitHub workflows',
+      '  init [--dir D] [--force] [--ref SHA] bootstrap config + read-only evaluation + trusted publisher',
       '  run --commit SHA --output DIR       orchestrate: classify diff -> spawn runners -> verdict + receipt',
-      '                                        [--base SHA] [--config .fqe.yml] [--pr N] [--repo-dir D]',
+      '                                        [--base SHA] [--config .fqe.yml] [--pr N] [--repo-dir D] [--run-id ID]',
       '  explain [--dir D] [--json]          5-minute architectural audit: invariants, thresholds, current config',
       '  validate [--config .fqe.yml]        check .fqe.yml fail-closed: unknown keys, bad types, never-fires runners',
       '  oracle-guard [--changed "a,b"]      flag a PR that edits its own ground truth / grading rules',
       '               [--base SHA --head SHA] [--include-tests] [--block]   (requires a second reviewer)',
+      '  ci-verify --repo OWNER/REPO --pr N --head SHA --run-id ID --receipt F --output DIR',
+      '                                        trusted publisher validation; [--audit-run-id ID]',
       '  bypass-check --comments F --head SHA  validate a SHA-bound /fqe-bypass comment (TTL + allowlist,',
       '               (--allowed "a,b" | --allowlist-file F) [--now ISO]    head-bound; exit 0=bypass, 3=none)',
       '',
@@ -1050,9 +1072,9 @@ const KNOWN_FLAGS = {
   thresholds: [],
   help: [],
   explain: ['dir', 'json'],
-  init: ['actor', 'dir', 'force', 'payments', 'with-mutation', 'with-qodo'],
+  init: ['actor', 'dir', 'force', 'payments', 'with-mutation', 'with-qodo', 'ref'],
   verdict: [],
-  run: ['base', 'commit', 'config', 'output', 'pr', 'repo-dir'],
+  run: ['base', 'commit', 'config', 'output', 'pr', 'repo-dir', 'run-id'],
   validate: ['config', 'dir'],
   discover: ['config', 'dir', 'strict'],
   baseline: ['count', 'spec'],
@@ -1064,7 +1086,8 @@ const KNOWN_FLAGS = {
   receipt: ['actor', 'allowlist-version', 'commit', 'events-url', 'output', 'pr', 'require-signature', 'requester-source', 'run-id'],
   scorecard: ['dir', 'format'],
   'bypass-tally': ['actor', 'commit', 'format', 'pr', 'state-dir', 'window-days'],
-  status: ['check', 'commit', 'description', 'dry-run', 'output-text', 'repo', 'state'],
+  'ci-verify': ['repo', 'pr', 'head', 'run-id', 'audit-run-id', 'receipt', 'output'],
+  status: ['check', 'commit', 'description', 'dry-run', 'output-text', 'repo', 'state', 'expected-commit', 'expected-run-id'],
   'coverage-ratchet': ['baseline', 'bump', 'patch', 'patch-threshold', 'report'],
   'mutation-gate': ['changed', 'killed', 'min-mutants', 'report', 'surviving', 'threshold'],
   'spec-mutate': ['report', 'threshold'],

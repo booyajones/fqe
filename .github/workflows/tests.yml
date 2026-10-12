@@ -167,8 +167,11 @@ jobs:
   # job would be SKIPPED when a matrix leg fails, and a skipped required check is
   # treated as success by branch protection: the gate would go green precisely
   # when the tests went red.
+  selfhost:
+    uses: ./.github/workflows/fqe-selfhost.yml
+
   test:
-    needs: [suite, doc-counts, install]
+    needs: [suite, doc-counts, install, selfhost]
     if: always()
     runs-on: ubuntu-latest
     name: test
@@ -178,9 +181,11 @@ jobs:
           echo "suite:      ${{ needs.suite.result }}"
           echo "doc-counts: ${{ needs.doc-counts.result }}"
           echo "install:    ${{ needs.install.result }}"
+          echo "selfhost:   ${{ needs.selfhost.result }}"
           if [ "${{ needs.suite.result }}" != "success" ] \
             || [ "${{ needs.doc-counts.result }}" != "success" ] \
-            || [ "${{ needs.install.result }}" != "success" ]; then
+            || [ "${{ needs.install.result }}" != "success" ] \
+            || [ "${{ needs.selfhost.result }}" != "success" ]; then
             echo "::error::a required check did not succeed"
             exit 1
           fi

@@ -1,97 +1,40 @@
 # Security
 
-## Reporting a vulnerability
+Report a suspected vulnerability privately to chris@finexio.com with subject `[fqe-security]`. Include the affected commit and a minimal reproduction; keep credentials out of the report.
 
-Email **chris.wyatt@finexio.com** with subject `[fqe-security]`. Encrypt with PGP if the issue is sensitive (key on request). We acknowledge within 24 hours, triage within 72.
+## Trust boundaries
 
-Do **not** open public issues for vulnerabilities. Don't tweet about them. Don't post in Slack channels with non-employees.
+FQE aggregates configured tests. It cannot prove that those tests cover the product, or that an authorized maintainer is honest. A receipt is evidence of declared checks, not a certification of compliance or production readiness.
 
-## Threat model
+The generated `fqe-quality.yml` executes the exact PR head with a read-only token and `persist-credentials: false`. It produces a fresh receipt bound to the head SHA and source run/attempt. Runner environment filtering reduces accidental credential exposure; it is not a sandbox for arbitrary code.
 
-fqe is a CI gate. It runs inside GitHub Actions with a `GITHUB_TOKEN` and (when bypass is requested) reads PR-level metadata. The threat model has three core actors.
+The separate `fqe-publish.yml` runs from the default branch with `checks: write`. It never checks out or executes PR code. The publisher downloads source-run artifacts as data, validates their schema, live PR head, source workflow and attempt, and re-reads GitHub authority before publishing. Missing, malformed or stale evidence fails closed. Both workflows must pin the same reviewed FQE commit with `fqe init --ref <40-char-sha>`.
 
-### Actor 1: Untrusted PR author (fork or untrusted contributor)
+Protect the publisher, `.fqe.yml`, allowlists and test oracles with CODEOWNERS and repository rules requiring independent review. A user with permission to alter workflows or post competing checks can defeat an application-level gate. The repository owner must constrain those capabilities. GitHub Actions versions in the templates are major-version tags; organizations needing immutable action dependencies should replace them with reviewed full commit SHAs and keep an update process.
 
-**Goal:** bypass the gate to merge bad code, escalate to repo write.
+## Bypass and approval
 
-**Mitigation:** identity is read ONLY from a server-recorded GitHub source (the comment author via the comments API). Bypass requires a SHA-bound `/fqe-bypass <head-sha> <ttl>` comment from an allowlisted maintainer. PR-branch files (commit messages, PR body, receipt content) are never trusted for identity decisions.
+Only an unedited, unexpired `/fqe-bypass <current-head-sha> <24h|48h|72h>` comment from a currently allowlisted GitHub account can authorize a bypass. Identity and timestamps come from the comments API, never receipt fields. The allowlist is read at the live default branch, not the PR base snapshot.
 
-### Actor 2: Compromised dependency in the runner toolchain
+Current-head reviews are checked against the current reviewer allowlist. The author and bypass requester cannot second-approve. A later change request or dismissal invalidates an earlier approval. Oracle and grading-rule changes need independent approval even without a bypass.
 
-**Goal:** inject arbitrary code into the gate's runtime via Node, yq, gh CLI, LibreOffice, etc.
+The 14-day bypass rate uses immutable Actions audit artifacts and server run metadata. Missing, expired, duplicate, misbound, unreadable or truncated history blocks verification. Each latest completed publisher run must have an audit record. The denominator counts observed audited attempts, including the current one; it is not a count of unique PRs. An empty history is unknown, not a measured zero. Rerun a failed publisher to repair a missing latest record.
 
-**Mitigation:** every binary download verifies a SHA256 pin. **Two** install mechanisms ship, both pinning an exact ref rather than a branch HEAD. As shipped both are mutable pins; the last column is the ceiling each reaches if you harden it, not what you get by default.
+Authorization is checked at publication time. GitHub does not automatically turn an existing green check red when a comment expires or an allowlist changes. Rerun verification after such changes and before a consequential merge. Merge queues, fork/review event behavior and your repository rules require a native integration test before deployment.
 
-| Where | Mechanism | As shipped | Ceiling if hardened |
-|---|---|---|---|
-| `fqe-quality.yml` and `fqe-second-approve.yml`, both written by `fqe init` | `FQE_REF` + `git fetch --depth=1 <url> "$FQE_REF"` then `git checkout --detach FETCH_HEAD` | `fqe-v0.18.21`, a **mutable** git tag (force-pushable unless tag protection is on) | **Immutable.** Set `FQE_REF` to a 40-char SHA. Staged in a fresh `mktemp -d` under `RUNNER_TEMP`, never a fixed path in world-writable `/tmp`, because the step executes what it fetches. |
-| `fqe-oracle-guard.yml` | `FQE_TAG` + `npx -p github:booyajones/fqe#${FQE_TAG}` | `fqe-v0.18.21`, same mutable tag | **Immutable.** npm's commit-ish accepts a SHA. Never affected by the `--branch` bug. |
+## Receipts and retention
 
-**There is no container mechanism. The image does not exist.** Until v0.18.12 both `workflows/*.yml.template` and the `fqe-second-approve.yml` that `fqe init` *generates* declared `container: ghcr.io/booyajones/fqe:0.1`. It has never been published: the authenticated GitHub Packages API returns 404 for the package, and the owner has zero container packages. A job declaring it fails on image pull before its first step, so every adopter who ran `fqe init` received a second-approve workflow that could not start. That is the bypass-rate unblock, precisely the path you need working on a bad day.
+Unsigned receipts can be altered by someone who controls the source job. In the trusted publisher, optional `FQE_SIGNING_KEY` signs the validated known evidence fields, including run identity, timestamps, runner results, reasons, hashes, verdict and applied bypass. Keep this key only in the publisher; never expose it to untrusted runners. Verification authenticates the declared signed fields, not unknown extensions or a signer's organizational authority. Legacy receipts keep their explicit signed scope. See [receipt signing](docs/recipes/receipt-signing.md).
 
-That image also supplied `yq`. Removing the container in v0.18.12 without replacing it moved the failure rather than fixing it, from image pull to `yq: command not found` a few steps later. v0.18.13 installs yq in that workflow with the same SHA256 verification the gate uses, and a test now asserts that every binary a generated workflow calls is installed in it.
+Artifacts are retained for 90 days in the templates, subject to GitHub repository limits. This is a technical retention setting, not a regulatory opinion. If your approved retention requirement is longer, export verified receipts to controlled storage and test retrieval and access enforcement. Check output alone is not a complete evidence archive.
 
-Both generated workflows install the CLI the same ref-pinned way, and a test asserts no generated workflow declares a container at all. If the image is ever published and pinned by digest, delete that test deliberately rather than working around it.
+## Operator checks
 
-### Actor 3: Compromised maintainer or stolen GitHub token
+1. Install the trusted publisher on the default branch before enabling required checks.
+2. Pin both workflows to a reviewed full FQE commit SHA; tags can move.
+3. Configure real required runners; the default empty scaffold blocks.
+4. Require `fqe/pass` and `fqe/second-reviewer-required` under the intended GitHub App and enforce repository rules for administrators where appropriate.
+5. Verify a passing PR, deliberate failure, stale receipt, missing report and independent approval in a dedicated sandbox.
+6. Monitor missing publisher artifacts and periodically verify your evidence archive.
 
-**Goal:** push a malicious patch under the release tag that gated repos clone, and have it executed automatically by every one of them.
-
-**Mitigation:** tags can be force-moved, which is the supply-chain risk here. Defences: (1) signed commits on the public repo, (2) branch protection on `main` requiring review, (3) the workflow can be re-pinned to a SHA instead of a tag for higher assurance: set `FQE_REF` to the 40-char commit SHA. The scaffolded step fetches that ref rather than cloning it, because `git clone --branch` accepts a ref NAME only and fails on a raw SHA with "Remote branch &lt;sha&gt; not found in upstream origin". Until v0.18.8 this page told you to pass the SHA to `--branch`, which broke the gate instead of hardening it.
-
-## Architectural invariants
-
-Three commitments the codebase enforces. If you find code that violates one, that's a critical bug. Report it.
-
-1. **No identity claim is read from a file the constrained actor wrote.** Bypass requester identity comes from the server-recorded comment author (`gh api /repos/{owner}/{repo}/issues/{pr}/comments`, `user.login`). Receipt content is informational only. `bypass.requester_source` MUST be a server-recorded source (`github_comments_api_v3`, or the legacy `github_events_api_v3`) or `buildReceipt` throws.
-2. **No LLM is in the verdict path.** `cli/lib/verdict.js` is a pure deterministic Node function. Same inputs produce the same output. The test suite covers the failure paths (Claude reviews and can author tests, but never computes the verdict). No language model is ever asked "is this PR good?" The full-suite policy (require_classes) is enforced here too: a required test class with no passing runner is a FAIL, fail closed.
-3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts AND Check Run outputs (server-side, immutable per run). In 0.1.0, GitHub workflow artifacts default to 90-day retention (configurable down, not up without an Enterprise plan). Check Run outputs are limited to ~65KB but persist with the commit indefinitely. **For SOX-grade 7-year retention, mirror the receipt to an external object store via a post-merge `workflow_run` job.** The 0.2 release ships an opt-in `audits/<sha>/` archiver that commits the receipt to the protected branch automatically.
-
-## Supply chain
-
-- **The pinned release ref** is the only thing workflows fetch. To pin tighter, set `FQE_REF` in `.github/workflows/fqe-quality.yml` to a 40-char commit SHA; the fetch form accepts either a tag or a SHA.
-- **Node, yq, gh CLI**: SHA256-pinned in the workflow's install step. Failed verification means the workflow fails closed.
-- **LibreOffice**: installed from the Ubuntu apt repository inside the GitHub-hosted runner (no third-party mirror).
-- **No `curl | bash`**. All downloads are checksum-verified.
-- **No telemetry**. fqe does not phone home. The only network calls are to the GitHub API for Check Run publishing and event reading.
-
-## Known issues in 0.1.0 (acknowledged, prioritized for 0.2)
-
-Surfaced during adversarial design review and corroborated by Finexio's internal threat modeling. These five issues were flagged unanimously by independent reviewers. They are real. They are documented here, prioritized for 0.2, and they have interim mitigations:
-
-| # | Issue | Today's mitigation | 0.2 fix |
-|---|---|---|---|
-| 1 | Default install pins to a force-pushable git tag | See `docs/getting-started.md#production-install-sha-pinned`. Pin to a SHA. | Docker image pinned by digest, default install path. |
-| 2 | Bypass was an unbounded label, not bound to the head SHA | **FIXED in 0.4.0.** | Bypass is now a SHA-bound, TTL'd PR comment: `/fqe-bypass <40-hex-head-sha> <24h/48h/72h>`. Identity and time come from the comments API (server-recorded), SHA equality is the binding (any new push changes `head.sha` and the bypass evaporates), edited comments are rejected, and it fails closed. See `cli/lib/bypass_guard.js`. |
-| 3 | Allowlist could be read at a stale ref (offboarding hole) | **FIXED in 0.6.0.** | The workflow reads the allowlist at the live default-branch HEAD (`gh api repos/{repo} .default_branch`, then `contents?ref=<default>`), so removing someone takes effect immediately, even on in-flight PRs branched from an old commit. |
-| 4 | Workflow artifacts (receipts) expired at 90 days, under the SOC2/PCI 1-year minimum | **Mitigated in 0.6.0.** | Receipt artifact retention raised to 365 days (`retention-days: 365`); the repo's max-retention setting must allow it. Check Run output also persists with the commit. For 7-year SOX, mirror receipts to object storage via a post-merge job. |
-| 5 | Bypass-tally JSONL writes to the protected branch from the workflow | The tally is updated by a `workflow_run` event AFTER merge, not from the PR's own workflow. Fork PRs have read-only `GITHUB_TOKEN` and cannot bypass. Concurrency stress-tested up to ~5 concurrent merges. | External KV state backend (SQLite cache + signed JSONL fallback). |
-
-If any of these is a deal-breaker for your repo, run `fqe/pass` as an informational check first and promote it to required once you have measured its false-red rate on your own repo. That is the adoption path [docs/build-vs-buy.md](docs/build-vs-buy.md) recommends regardless.
-
-## What fqe does NOT protect against
-
-- **A malicious runner in your `.fqe.yml`.** If you configure a runner that runs arbitrary code (which is the point), fqe runs it. Treat `.fqe.yml` as code that requires code review.
-- **GitHub itself being compromised.** Identity flows through the GitHub API. If GitHub is breached, so is fqe.
-- **A maintainer with repo-write access deciding to bypass.** Bypass is auditable (logged in `bypass-tally.jsonl`, posted as a Check Run output, archived in `audits/<sha>/`). It is not preventable.
-- **Logic bugs in your own runners.** fqe's verdict is deterministic on what the runners report. If a runner falsely says PASS, fqe says PASS.
-- **A CI that lies about the diff.** `FQE_CHANGED_FILES` is a trusted CI override: the workflow computes the server-side merge-base diff and passes it, because the runner's own git context may lack the base. It must be set by the workflow, never from PR-controlled content. fqe fails closed on the obvious dodge (an empty value is treated as indeterminate, which activates every diff-conditional `require_for` class), but it cannot detect a CI operator who passes a non-empty list that omits the payments paths. That is the same trust boundary as "a maintainer who bypasses": auditable, not preventable.
-
-## Hardening above defaults
-
-For Finexio production repos:
-
-1. **Required status checks** on the protected branch: `fqe/pass` and `fqe/second-reviewer-required`.
-2. **Enforce admins** ON in branch protection. No admin-merge override.
-3. **Pin `fqe-v0.18.21` to a SHA** in your workflow. Resolve it without needing a local clone (a bare `git rev-parse` only works if the tag is already fetched, and on an annotated tag it can resolve to the tag object rather than the commit):
-
-   ```bash
-   git ls-remote https://github.com/booyajones/fqe.git 'refs/tags/fqe-v0.18.21^{}' | cut -f1
-   ```
-4. **Restrict who is on `.github/fqe-bypass-allowlist.yml`.** The workflow reads it at the default-branch HEAD, so a PR cannot add itself and a removal takes effect immediately on in-flight PRs.
-5. **Enable Dependabot** on your gated repo for the GitHub Actions used in `fqe-quality.yml`.
-6. **Audit `.github/fqe-state/bypass-tally.jsonl`** weekly. Rolling rate above 10% triggers the second-reviewer requirement automatically.
-
-## Disclosure history
-
-None yet.
+The local test suite includes negative controls for verdicts, mutation reports, receipt authentication, current-head authority and deleted audit history. Green unit tests do not establish production adoption or a live payment-path result.

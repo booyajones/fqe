@@ -18,7 +18,7 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Root cause:** an old version of the `parseFlags` helper treated `--output-text "$BODY"` as a boolean true when `$BODY` started with `--` (e.g., a YAML frontmatter delimiter `---`).
 
-**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Re-pin the workflow's `FQE_REF` to `fqe-v0.18.21` (the current tag) to pick it up. If you've pinned an older SHA, bump it.
+**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Re-pin the workflow's `FQE_REF` to `fqe-v0.19.0` (the current tag) to pick it up. If you've pinned an older SHA, bump it.
 
 ### `fqe: error: 'gh' CLI not found on PATH`
 
@@ -108,7 +108,7 @@ If you've added `fqe-quality.yml` to your repo and it's running, but PRs can sti
 Two paths:
 
 1. **Fix the underlying failure.** Run `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/` locally, read the explainer output, apply the fix. Usually 2-5 minutes. Pass the same `--base` CI uses, or you will be gating a different range than the one that is blocking you.
-2. **Bypass with a `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment** if you have repo-write and you're on `.github/fqe-bypass-allowlist.yml`. The comment must name the exact current head SHA (run `git rev-parse HEAD`), so any new push invalidates it and you re-post. It is valid only within its TTL, and an edited comment is rejected. Re-run the fqe check after posting so it re-evaluates. Bypass is logged in the rolling tally. If your team's bypass rate goes above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer second-approves.
+2. **Bypass with a `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment** if you have repo-write and you're on `.github/fqe-bypass-allowlist.yml`. The comment must name the exact current head SHA (run `git rev-parse HEAD`), so any new push invalidates it and you re-post. It is valid only within its TTL, and an edited comment is rejected. Re-run the fqe check after posting so it re-evaluates. The publisher stores immutable audit artifacts and checks completed-run coverage. If your team's bypass rate goes above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer second-approves.
 
 `fqe` does not punish bypass. It audits it.
 
@@ -128,5 +128,5 @@ Currently detected markers:
 ## Still stuck?
 
 1. Run `fqe explain` (in the affected repo). Paste the output.
-2. Run `node --version`, `gh --version`, `yq --version`. Paste the output.
+2. Run `node --version`, `gh --version`, `fqe version`. Paste the output.
 3. Open an issue at github.com/booyajones/fqe with the PR or run-id where the error occurred.

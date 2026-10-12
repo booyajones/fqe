@@ -52,14 +52,21 @@ function aggregateScorecard(receipts) {
   const walls = [];
   let earliest = null;
   let latest = null;
+  const bypassTimes = new Map();
+  for (const r of list) {
+    if (!r.bypass || r.bypass.applied === false || !r.commit_sha) continue;
+    const at = Date.parse(r.started_at);
+    if (!Number.isNaN(at)) bypassTimes.set(r.commit_sha, Math.max(at, bypassTimes.get(r.commit_sha) ?? -Infinity));
+  }
 
   for (const r of list) {
     const v = ['PASS', 'FLAG', 'FAIL'].includes(r.verdict) ? r.verdict : 'OTHER';
     byVerdict[v]++;
-    const hasBypass = r.bypass != null && typeof r.bypass === 'object';
+    const hasBypass = r.bypass != null && typeof r.bypass === 'object' && r.bypass.applied !== false;
     if (hasBypass) bypassed++;
     if (v === 'FAIL') {
-      if (hasBypass) falseRedCandidates++; else trueCatches++;
+      const laterBypass = bypassTimes.has(r.commit_sha) && Date.parse(r.finished_at) <= bypassTimes.get(r.commit_sha);
+      if (hasBypass || laterBypass) falseRedCandidates++; else trueCatches++;
     }
     if (r.human_review && num(r.human_review.estimated_minutes) != null) {
       humanMinutes += r.human_review.estimated_minutes;
@@ -100,7 +107,7 @@ function aggregateScorecard(receipts) {
       samples: walls.length,
       note: 'gate runtime only; compare to your total CI time for the < X% target',
     },
-    true_catches: trueCatches, // reds that stuck (caught a real problem); target >= 1
+    true_catches: trueCatches, // legacy field: unresolved failures, not independently confirmed bugs
     human_review_minutes_total: round(humanMinutes),
     window: {
       from: earliest != null ? new Date(earliest).toISOString() : null,
@@ -123,7 +130,7 @@ function renderScorecard(s) {
   const frPct = s.false_red.rate == null ? 'n/a (no FAILs in sample)' : `${(s.false_red.rate * 100).toFixed(1)}%`;
   lines.push(`1. false-red rate: ${frPct}  (${s.false_red.candidates} bypassed of ${s.false_red.of_fails} FAILs) -- target ~0%`);
   lines.push(`2. gate wall-time: p50 ${ms(s.gate_wall_ms.p50)}, p95 ${ms(s.gate_wall_ms.p95)}, max ${ms(s.gate_wall_ms.max)} (n=${s.gate_wall_ms.samples})`);
-  lines.push(`3. true catches: ${s.true_catches} real FAIL(s) that stuck -- target >= 1`);
+  lines.push(`3. unresolved FAILs: ${s.true_catches} non-overridden red(s); human triage is required before calling these real defects`);
   lines.push('');
   lines.push(`Bypassed runs: ${s.bypassed_runs}   Human-review minutes (modeled): ${s.human_review_minutes_total}`);
   return lines.join('\n');

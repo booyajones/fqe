@@ -1169,6 +1169,7 @@ function assembleCoverage(cfg, reportAbs, startMs, invResult, preMtime) {
   catch (e) { cov.evidence_error = e.message; return cov; }
   cov.reported = parsed.reported;
   cov.executed = parsed.executed;
+  cov.failed = parsed.failed;
 
   if (reconcile) {
     if (!invResult || invResult.ok !== true) {
@@ -1387,6 +1388,11 @@ function run(opts) {
   const repoDir = opts.repoDir || process.cwd();
   const configPath = opts.configPath || path.join(repoDir, '.fqe.yml');
 
+  // An unsuccessful rerun must not leave yesterday's PASS for a CI publisher.
+  for (const file of ['QA-RESULT.yml', 'QA-RESULT.md']) {
+    fs.rmSync(path.join(opts.outputDir, file), { force: true });
+  }
+
   let config = { runners: {} };
   if (fs.existsSync(configPath)) {
     const text = fs.readFileSync(configPath, 'utf8');
@@ -1558,16 +1564,19 @@ function run(opts) {
           if (!unparseable) tally = parseStryker(obj);
         } else if (mutRunner.parsed.mutation && typeof mutRunner.parsed.mutation === 'object') {
           const m = mutRunner.parsed.mutation;
-          const killedN = Number(m.killed);
-          const survN = m.surviving != null ? Number(m.surviving)
+          const killedN = m.killed;
+          const survN = m.surviving != null ? m.surviving
             : (Array.isArray(m.survivors) ? m.survivors.length : NaN);
           // Reject junk counts instead of coercing to 0 (which read as NEUTRAL).
-          if (!Number.isFinite(killedN) || !Number.isFinite(survN)) {
+          if (!Number.isSafeInteger(killedN) || killedN < 0 || !Number.isSafeInteger(survN) || survN < 0 ||
+              (Array.isArray(m.survivors) && m.survivors.length !== survN)) {
             unparseable = true;
           } else {
             tally = {
               killed: killedN, surviving: survN, perFile: m.perFile || {},
-              survivors: Array.isArray(m.survivors) ? m.survivors : [],
+              // Aggregate counts have no file scope. Do not invent an empty
+              // survivor list: it would replace every real survivor with zero.
+              ...(Array.isArray(m.survivors) ? { survivors: m.survivors } : {}),
             };
           }
         }
@@ -1586,6 +1595,12 @@ function run(opts) {
           changedFiles: diff.ok ? files : null,
         });
       }
+    } else {
+      mutationResult = {
+        ...unparseableResult(),
+        reasons: ['configured mutation gate produced no mutation report; cannot prove mutation testing ran' +
+          (blocking ? ' [blocking]' : ' [advisory]')],
+      };
     }
   }
 
@@ -1745,7 +1760,7 @@ function run(opts) {
 
   const receipt = buildReceipt({
     fqe_version: opts.fqeVersion,
-    run_id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    run_id: opts.runId || `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     started_at: startedAt,
     finished_at: finishedAt,
     commit_sha: opts.commitSha,

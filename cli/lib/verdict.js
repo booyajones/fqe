@@ -351,6 +351,10 @@ function computeVerdict(input) {
     }
 
     // Empty / all-skipped: non-skipped executed count below the floor is a FAIL.
+    if (cov.failed > 0) {
+      hasFail = true;
+      reasons.push(`runner "${r.name}" reported ${cov.failed} failed test(s) or suite error(s); exit code zero cannot override a failing test report`);
+    }
     const minTests = typeof cov.min_tests === 'number' ? cov.min_tests : 1;
     if (typeof cov.executed === 'number' && cov.executed < minTests) {
       hasFail = true;
