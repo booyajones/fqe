@@ -35,8 +35,16 @@ function fail(msg) {
 
 // A failed Stryker run must never reuse a prior report.
 fs.rmSync(REPORT_PATH, { force: true });
+// Launch the project's installed JS bin with Node; npx is a .cmd shim on Windows.
+let strykerBin;
+try {
+  const manifest = require.resolve('@stryker-mutator/core/package.json', { paths: [process.cwd()] });
+  strykerBin = path.resolve(path.dirname(manifest), require(manifest).bin.stryker);
+} catch (error) {
+  fail(`Cannot resolve installed Stryker: ${error.message}. Run npm install --save-dev @stryker-mutator/core.`);
+}
 // 1. Run Stryker, ask for JSON reporter
-const stryker = spawnSync('npx', ['stryker', 'run', '--reporters', 'json,progress'], {
+const stryker = spawnSync(process.execPath, [strykerBin, 'run', '--reporters', 'json,progress'], {
   encoding: 'utf8',
   timeout: 14 * 60 * 1000,
   stdio: ['ignore', 'inherit', 'inherit'],

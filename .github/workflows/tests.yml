@@ -153,6 +153,27 @@ jobs:
           npx --yes -p "$TARBALL" fqe validate
           echo "init + validate both work from a clean npx install"
 
+  stryker:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    name: real Stryker runner (${{ matrix.os }})
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: install Stryker in an isolated adopter fixture
+        shell: bash
+        run: npm install --prefix "$RUNNER_TEMP/fqe-stryker-smoke" --save-dev --ignore-scripts --no-audit --no-fund @stryker-mutator/core@9.6.1
+      - name: generated wrapper runs real Stryker and rejects stale reports
+        shell: bash
+        run: node cli/scripts/stryker_smoke.js "$RUNNER_TEMP/fqe-stryker-smoke"
+
   # This job exists to keep the branch-protection contract stable.
   #
   # `test` is the context required by branch protection on main. Turning the old
@@ -171,7 +192,7 @@ jobs:
     uses: ./.github/workflows/fqe-selfhost.yml
 
   test:
-    needs: [suite, doc-counts, install, selfhost]
+    needs: [suite, doc-counts, install, stryker, selfhost]
     if: always()
     runs-on: ubuntu-latest
     name: test
@@ -181,10 +202,12 @@ jobs:
           echo "suite:      ${{ needs.suite.result }}"
           echo "doc-counts: ${{ needs.doc-counts.result }}"
           echo "install:    ${{ needs.install.result }}"
+          echo "stryker:    ${{ needs.stryker.result }}"
           echo "selfhost:   ${{ needs.selfhost.result }}"
           if [ "${{ needs.suite.result }}" != "success" ] \
             || [ "${{ needs.doc-counts.result }}" != "success" ] \
             || [ "${{ needs.install.result }}" != "success" ] \
+            || [ "${{ needs.stryker.result }}" != "success" ] \
             || [ "${{ needs.selfhost.result }}" != "success" ]; then
             echo "::error::a required check did not succeed"
             exit 1

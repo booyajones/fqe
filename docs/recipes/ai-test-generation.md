@@ -30,6 +30,8 @@ runners:
 
 Do not convert mutants into Wilson attack-success trials. Generated code transformations are not a sampled independent adversarial experiment. Keep the parser's full counts; do not discard no-coverage or other unfavorable outcomes to improve the result. For formats other than Stryker, preserve the report's honest aggregate counts and scope.
 
+The wrapper resolves the project's installed `@stryker-mutator/core` and runs its JavaScript CLI through Node, including on Windows. It never downloads a missing runner through `npx`; install Stryker before running the gate. CI exercises the generated wrapper against real Stryker on Linux and Windows, including killed mutants, surviving mutants and failed-run report freshness.
+
 ## Optional Claude proposals
 
 Install [the proposal template](../../workflows/fqe-write-tests.yml.template) at `.github/workflows/fqe-write-tests.yml` through normal review and configure the provider key according to your approved account policy. A trusted engineer adds the `fqe-write-tests` label to an open same-repository PR.

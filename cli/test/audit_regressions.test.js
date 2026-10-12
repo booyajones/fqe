@@ -177,11 +177,13 @@ test('the standard installer refuses a hollow gate and wires an actual determini
 test('the mutation wrapper handles large embedded source without losing its verdict evidence', t => {
   const dir = temp(t);
   fs.writeFileSync(path.join(dir, 'app.js'), 'module.exports=1;');
-  const preload = path.join(dir, 'fake-stryker.cjs');
-  fs.writeFileSync(preload, `const fs=require('node:fs'),path=require('node:path');require('node:child_process').spawnSync=()=>{const p=path.join(process.cwd(),'reports/mutation/mutation.json');fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify({files:{'app.js':{source:'x'.repeat(2*1024*1024),mutants:[{status:'Killed',mutatorName:'Boolean',location:{start:{line:1}}}]}}}));return {status:0};};`);
+  const installed = path.join(dir, 'node_modules/@stryker-mutator/core');
+  fs.mkdirSync(installed, { recursive: true });
+  fs.writeFileSync(path.join(installed, 'package.json'), JSON.stringify({ bin: { stryker: 'cli with spaces & symbols.cjs' } }));
+  fs.writeFileSync(path.join(installed, 'cli with spaces & symbols.cjs'), `const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');assert.deepEqual(process.argv.slice(2),['run','--reporters','json,progress']);const p=path.join(process.cwd(),'reports/mutation/mutation.json');fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify({files:{'app.js':{source:'x'.repeat(2*1024*1024),mutants:[{status:'Killed',mutatorName:'Boolean',location:{start:{line:1}}}]}}}));`);
   const config = ['mutation:', '  mode: blocking', '  threshold: 70', 'runners:', '  mutation:',
     '    command: ' + JSON.stringify(process.execPath),
-    '    args: ' + JSON.stringify(['--require', preload, path.resolve(__dirname, '../templates/fqe_stryker_runner.js')]),
+    '    args: ' + JSON.stringify([path.resolve(__dirname, '../templates/fqe_stryker_runner.js')]),
     '    class: mutation', '    required: true', '    always_run: true'];
   fs.writeFileSync(path.join(dir, '.fqe.yml'), config.join('\n'));
   const prior = process.env.FQE_CHANGED_FILES; process.env.FQE_CHANGED_FILES = 'app.js';
@@ -190,6 +192,20 @@ test('the mutation wrapper handles large embedded source without losing its verd
     assert.equal(result.verdict, 'PASS', result.reasons.join(' '));
     assert.ok(fs.statSync(path.join(dir, 'out/runner-mutation.log')).size < 2000);
   } finally { if (prior === undefined) delete process.env.FQE_CHANGED_FILES; else process.env.FQE_CHANGED_FILES = prior; }
+});
+
+test('the mutation wrapper rejects a missing local install and removes its stale report', t => {
+  const dir = temp(t);
+  const report = path.join(dir, 'reports/mutation/mutation.json');
+  fs.mkdirSync(path.dirname(report), { recursive: true });
+  fs.writeFileSync(report, JSON.stringify({ files: { 'app.js': { mutants: [{ status: 'Killed' }] } } }));
+  const result = spawnSync(process.execPath, [path.resolve(__dirname, '../templates/fqe_stryker_runner.js')], {
+    cwd: dir, encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Cannot resolve installed Stryker/);
+  assert.equal(fs.existsSync(report), false);
+  assert.equal(result.stdout, '');
 });
 
 test('JUnit suite-only errors are counted across independent suites', () => {
