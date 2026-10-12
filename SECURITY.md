@@ -18,7 +18,7 @@ Only an unedited, unexpired `/fqe-bypass <current-head-sha> <24h|48h|72h>` comme
 
 Current-head reviews are checked against the current reviewer allowlist. The author and bypass requester cannot second-approve. A later change request or dismissal invalidates an earlier approval. Oracle and grading-rule changes need independent approval even without a bypass.
 
-The 14-day bypass rate uses immutable Actions audit artifacts and server run metadata. Missing, expired, duplicate, misbound, unreadable or truncated history blocks verification. Each latest completed publisher run must have an audit record. The denominator counts observed audited attempts, including the current one; it is not a count of unique PRs. An empty history is unknown, not a measured zero. Rerun a failed publisher to repair a missing latest record.
+For bypass requests, the 14-day bypass rate uses immutable Actions audit artifacts and server run metadata. Missing, expired, duplicate, misbound, unreadable or truncated history blocks verification. Each latest completed publisher run must have an audit record. The denominator counts observed audited attempts, including the current one; it is not a count of unique PRs. An empty history is unknown, not a measured zero. Rerun a failed publisher to repair a missing latest record.
 
 Authorization is checked at publication time. GitHub does not automatically turn an existing green check red when a comment expires or an allowlist changes. Rerun verification after such changes and before a consequential merge. Merge queues, fork/review event behavior and your repository rules require a native integration test before deployment.
 
@@ -38,3 +38,5 @@ Artifacts are retained for 90 days in the templates, subject to GitHub repositor
 6. Monitor missing publisher artifacts and periodically verify your evidence archive.
 
 The local test suite includes negative controls for verdicts, mutation reports, receipt authentication, current-head authority and deleted audit history. Green unit tests do not establish production adoption or a live payment-path result.
+
+Publisher signatures attest to validated commit/run binding and current server authority, while recording the source job's runner claims. They do not establish honest runner output: PR code can forge data inside its own evaluation job. Protected grading rules, independent review and meaningful negative controls remain necessary.

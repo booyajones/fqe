@@ -1217,6 +1217,8 @@ function runOne(name, cfg, ctx) {
     startMs = Date.now();
     r = spawnSync(cmd, args, {
       timeout: cfg.timeout_ms || DEFAULT_TIMEOUT_MS,
+      // shortcut: reports above 20 MiB fail; use file-backed evidence before that scale.
+      maxBuffer: 20 * 1024 * 1024,
       encoding: 'utf8',
       cwd: ctx.repoDir || process.cwd(),
       env: sanitizeRunnerEnv({ FQE_RUNNER_NAME: name, FQE_ATTEMPT: String(attempt) }),
@@ -1295,7 +1297,7 @@ function runOne(name, cfg, ctx) {
     flaky,
     quarantined: cfg.quarantined === true,
     stdout: r.stdout || '',
-    stderr: r.stderr || '',
+    stderr: (r.stderr || '') + (spawnError && !timedOut ? `\nRunner capture error: ${spawnError.code || spawnError.message} (output limit 20 MiB)` : ''),
     parsed,
     coverage,
   };

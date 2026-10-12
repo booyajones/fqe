@@ -25,7 +25,7 @@ function currentApprovers({ reviews, headSha, author, requester, allowlist }) {
   for (const review of reviews) {
     const login = review && review.user && review.user.login;
     if (!login || !Number.isSafeInteger(review.id)) throw new Error('review evidence missing server identity or ID');
-    if (review.state === 'PENDING') continue;
+    if (['PENDING', 'COMMENTED'].includes(review.state)) continue;
     if (!latest.has(login) || review.id > latest.get(login).id) latest.set(login, review);
   }
   return [...latest.values()].filter(r => r.state === 'APPROVED' && r.commit_id === headSha &&
@@ -40,11 +40,30 @@ function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun,
   }
   const cutoff = new Date(now).getTime() - windowDays * 86400000;
   if (!Number.isFinite(cutoff)) throw new Error('invalid audit clock');
-  const artifacts = fetch(`repos/${repo}/actions/artifacts?per_page=100`).flatMap(p => {
-    if (!p || !Array.isArray(p.artifacts)) throw new Error('artifact history is malformed');
-    return p.artifacts;
+  if (currentRun !== undefined && (!/^\d+-\d+$/.test(currentRun) || typeof currentBypass !== 'boolean')) throw new Error('current workflow attempt is invalid');
+  const history = fetch(`repos/${repo}/actions/workflows/fqe-publish.yml/runs?per_page=100&status=completed&created=${encodeURIComponent('>=' + new Date(cutoff).toISOString())}`);
+  const completed = history.flatMap(p => {
+    if (!p || !Array.isArray(p.workflow_runs) || !Number.isSafeInteger(p.total_count)) throw new Error('publisher history is malformed');
+    return p.workflow_runs;
   });
+  if (history.some(p => p.total_count > completed.length)) throw new Error('publisher history is incomplete');
   const runs = new Map();
+  for (const run of completed) {
+    if (!Number.isSafeInteger(run.id) || !Number.isSafeInteger(run.run_attempt) || !/^\.github\/workflows\/fqe-publish\.yml(?:@.+)?$/.test(run.path || '')) throw new Error('publisher history has no trusted attempt identity');
+    runs.set(run.id, run);
+  }
+  const ids = new Set(runs.keys());
+  if (currentRun !== undefined) ids.add(Number(currentRun.split('-')[0]));
+  const artifacts = [];
+  for (const id of ids) {
+    const pages = fetch(`repos/${repo}/actions/runs/${id}/artifacts?per_page=100`);
+    const found = pages.flatMap(p => {
+      if (!p || !Array.isArray(p.artifacts) || !Number.isSafeInteger(p.total_count)) throw new Error('artifact history is malformed');
+      return p.artifacts;
+    });
+    if (pages.some(p => p.total_count > found.length)) throw new Error('artifact history is incomplete');
+    artifacts.push(...found);
+  }
   const records = new Map();
   for (const a of artifacts) {
     const match = /^fqe-audit-v1-(normal|bypass)-(\d+)-(\d+)$/.exec(a.name || '');
@@ -70,12 +89,6 @@ function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun,
     if (records.has(key)) throw new Error('duplicate audit record for one workflow attempt');
     records.set(key, match[1] === 'bypass');
   }
-  const history = fetch(`repos/${repo}/actions/workflows/fqe-publish.yml/runs?per_page=100&status=completed&created=${encodeURIComponent('>=' + new Date(cutoff).toISOString())}`);
-  const completed = history.flatMap(p => {
-    if (!p || !Array.isArray(p.workflow_runs) || !Number.isSafeInteger(p.total_count)) throw new Error('publisher history is malformed');
-    return p.workflow_runs;
-  });
-  if (history.some(p => p.total_count > completed.length)) throw new Error('publisher history is incomplete');
   for (const run of completed) {
     if (!Number.isSafeInteger(run.id) || !Number.isSafeInteger(run.run_attempt)) throw new Error('publisher history has no attempt identity');
     const key = `${run.id}-${run.run_attempt}`;
@@ -151,7 +164,7 @@ function verifyCiReceipt({ repo, pr, headSha, runId, auditRunId = runId, receipt
     allowlist: allowed('fqe-second-reviewers.yml'), reviews: fetch(`repos/${repo}/pulls/${pr}/reviews?per_page=100`).flat() });
   const rate = githubBypassRate({ repo, now, currentRun: auditRunId, currentBypass: bypass.bypass, fetch });
   const oracleSatisfied = !oracle.requires_second_review || reviewers.length > 0;
-  const secondSatisfied = rate.rate != null && (rate.rate <= 0.1 || reviewers.length > 0);
+  const secondSatisfied = !bypass.bypass || (rate.rate != null && (rate.rate <= 0.1 || reviewers.length > 0));
   if (!oracleSatisfied || !secondSatisfied) {
     receipt.verdict = 'FAIL';
     receipt.verdict_reasons.push(!oracleSatisfied

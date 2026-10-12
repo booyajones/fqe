@@ -171,5 +171,28 @@ test('the standard installer refuses a hollow gate and wires an actual determini
   assert.equal(config.runners['stryker-mutation'].always_run, true);
   const wrapper = fs.readFileSync(path.join(dir, 'scripts/fqe_stryker_runner.js'), 'utf8');
   assert.doesNotMatch(wrapper, /adversarial_stats\s*:/);
-  assert.match(wrapper, /mutation_report: report/);
+  assert.match(wrapper, /mutation_report:/);
+});
+
+test('the mutation wrapper handles large embedded source without losing its verdict evidence', t => {
+  const dir = temp(t);
+  fs.writeFileSync(path.join(dir, 'app.js'), 'module.exports=1;');
+  const preload = path.join(dir, 'fake-stryker.cjs');
+  fs.writeFileSync(preload, `const fs=require('node:fs'),path=require('node:path');require('node:child_process').spawnSync=()=>{const p=path.join(process.cwd(),'reports/mutation/mutation.json');fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify({files:{'app.js':{source:'x'.repeat(2*1024*1024),mutants:[{status:'Killed',mutatorName:'Boolean',location:{start:{line:1}}}]}}}));return {status:0};};`);
+  const config = ['mutation:', '  mode: blocking', '  threshold: 70', 'runners:', '  mutation:',
+    '    command: ' + JSON.stringify(process.execPath),
+    '    args: ' + JSON.stringify(['--require', preload, path.resolve(__dirname, '../templates/fqe_stryker_runner.js')]),
+    '    class: mutation', '    required: true', '    always_run: true'];
+  fs.writeFileSync(path.join(dir, '.fqe.yml'), config.join('\n'));
+  const prior = process.env.FQE_CHANGED_FILES; process.env.FQE_CHANGED_FILES = 'app.js';
+  try {
+    const result = run({ repoDir: dir, commitSha: sha, outputDir: path.join(dir, 'out'), fqeVersion: 'test' });
+    assert.equal(result.verdict, 'PASS', result.reasons.join(' '));
+    assert.ok(fs.statSync(path.join(dir, 'out/runner-mutation.log')).size < 2000);
+  } finally { if (prior === undefined) delete process.env.FQE_CHANGED_FILES; else process.env.FQE_CHANGED_FILES = prior; }
+});
+
+test('JUnit suite-only errors are counted across independent suites', () => {
+  const { parseJUnit } = require('../lib/junit');
+  assert.equal(parseJUnit('<testsuites><testsuite errors="1"><testcase name="a"/></testsuite><testsuite failures="2"><testcase name="b"/></testsuite></testsuites>').failed, 3);
 });

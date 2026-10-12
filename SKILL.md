@@ -5,7 +5,7 @@ description: Finexio Quality Engine (fqe). A unified deterministic CI gate for F
 
 # fqe: Finexio Quality Engine
 
-**Status:** v0.19.0 release candidate. v0.19.0 repairs missing mutation evidence, count-only reports, stale receipts, workflow privilege separation, current-head approvals, durable bypass history, authenticated runner evidence and scorecard correlation. The suite contains 944 tests; use exact-head CI and native receipts as proof. Production payment-path acceptance and deployment of the new publisher are separate checks.
+**Status:** v0.19.0 release candidate. v0.19.0 repairs missing mutation evidence, count-only reports, stale receipts, workflow privilege separation, current-head approvals, durable bypass history, authenticated runner evidence and scorecard correlation. The suite contains 948 tests; use exact-head CI and native receipts as proof. Production payment-path acceptance and deployment of the new publisher are separate checks.
 
 ## When to fire (auto-invoke triggers)
 

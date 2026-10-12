@@ -18,6 +18,7 @@ test('a later change request or dismissal revokes a prior approval, regardless o
   for (const state of ['CHANGES_REQUESTED', 'DISMISSED']) assert.deepEqual(currentApprovers({
     headSha: sha, author: 'author', allowlist: ['reviewer'], reviews: [review(8, 'reviewer', state), review(1, 'reviewer')],
   }), []);
+  assert.deepEqual(currentApprovers({ headSha: sha, author: 'author', allowlist: ['reviewer'], reviews: [review(1, 'reviewer'), review(9, 'reviewer', 'COMMENTED')] }), ['reviewer']);
 });
 test('malformed review evidence fails closed', () => {
   assert.throws(() => currentApprovers({ headSha: sha, allowlist: ['reviewer'], reviews: [{}] }), /evidence/);
@@ -27,10 +28,20 @@ function artifact(name, run = 10) {
   return { name, created_at: '2026-10-12T13:00:00Z', expired: false, workflow_run: { id: run } };
 }
 function rate(artifacts, overrides = {}) {
+  const completed = [...new Set(artifacts.map(a => Number(a.name.split('-').at(-2))))].map(id => ({
+    id, run_attempt: Math.max(...artifacts.filter(a => a.name.split('-').at(-2) === String(id)).map(a => Number(a.name.split('-').at(-1)))),
+    path: '.github/workflows/fqe-publish.yml',
+  }));
   return githubBypassRate({ repo: 'org/repo', now: '2026-10-12T14:00:00Z',
-    fetch: endpoint => endpoint.includes('/artifacts?') ? [{ artifacts }] : endpoint.includes('/workflows/') ? [{ total_count: 0, workflow_runs: [] }] : [{
-      id: Number(endpoint.split('/').pop()), run_attempt: 2, path: '.github/workflows/fqe-publish.yml',
-    }], ...overrides });
+    fetch: endpoint => {
+      if (endpoint.includes('/workflows/')) return [{ total_count: completed.length, workflow_runs: completed }];
+      if (endpoint.includes('/artifacts?')) {
+        const id = Number(endpoint.match(/runs\/(\d+)\//)[1]);
+        const found = artifacts.filter(a => a.name.split('-').at(-2) === String(id));
+        return [{ total_count: found.length, artifacts: found }];
+      }
+      return [{ id: Number(endpoint.split('/').pop()), run_attempt: 2, path: '.github/workflows/fqe-publish.yml' }];
+    }, ...overrides });
 }
 test('bypass rate is recovered from earlier immutable workflow artifacts in a clean job', () => {
   const r = rate([artifact('fqe-audit-v1-bypass-10-1')], { currentRun: '11-1', currentBypass: false });
@@ -66,7 +77,7 @@ function verify(t, overrides = {}, receipts = {}) {
     'repos/org/repo/issues/1/comments?per_page=100': [[]],
     'repos/org/repo/pulls/1/files?per_page=100': [[{ filename: 'app.js' }]],
     'repos/org/repo/pulls/1/reviews?per_page=100': [[]],
-    'repos/org/repo/actions/artifacts?per_page=100': [{ artifacts: [] }],
+    'repos/org/repo/actions/runs/11/artifacts?per_page=100': [{ total_count: 0, artifacts: [] }],
     'repos/org/repo/actions/workflows/fqe-publish.yml/runs?per_page=100&status=completed&created=%3E%3D2026-09-28T14%3A00%3A00.000Z': [{ total_count: 0, workflow_runs: [] }],
   };
   for (const f of ['fqe-bypass-allowlist.yml', 'fqe-second-reviewers.yml']) {
@@ -125,7 +136,26 @@ test('generated evaluation and publisher can pin the same immutable ref and reje
 
  test('deleted audit records and a truncated publisher inventory fail closed', () => {
   for (const history of [
-    { total_count: 1, workflow_runs: [{ id: 12, run_attempt: 1 }] },
+    { total_count: 1, workflow_runs: [{ id: 12, run_attempt: 1, path: '.github/workflows/fqe-publish.yml' }] },
     { total_count: 1001, workflow_runs: [] },
-  ]) assert.throws(() => rate([], { fetch: endpoint => endpoint.includes('/artifacts?') ? [{ artifacts: [] }] : [history] }), /missing its audit|incomplete/);
+  ]) assert.throws(() => rate([], { fetch: endpoint => endpoint.includes('/artifacts?') ? [{ total_count: 0, artifacts: [] }] : [history] }), /missing its audit|incomplete/);
+});
+
+test('rerunning a failed publisher repairs its missing latest audit record without a 14-day lockout', () => {
+  const fetch = endpoint => endpoint.includes('/artifacts?') ? [{ total_count: endpoint.includes('/12/') ? 1 : 0, artifacts: endpoint.includes('/12/') ? [artifact('fqe-audit-v1-normal-12-2', 12)] : [] }]
+    : endpoint.includes('/workflows/') ? [{ total_count: 1, workflow_runs: [{ id: 12, run_attempt: 2, path: '.github/workflows/fqe-publish.yml' }] }]
+    : [{ id: 12, path: '.github/workflows/fqe-publish.yml', run_attempt: 2 }];
+  assert.equal(rate([], { fetch, currentRun: '13-1', currentBypass: false }).rate, 0);
+});
+
+test('a high historical bypass rate does not force second approval on an ordinary clean PR', t => {
+  const data = {
+    'repos/org/repo/actions/runs/12/artifacts?per_page=100': [{ total_count: 1, artifacts: [artifact('fqe-audit-v1-bypass-12-1', 12)] }],
+    'repos/org/repo/actions/workflows/fqe-publish.yml/runs?per_page=100&status=completed&created=%3E%3D2026-09-28T14%3A00%3A00.000Z': [{ total_count: 1, workflow_runs: [{ id: 12, path: '.github/workflows/fqe-publish.yml', run_attempt: 1 }] }],
+    'repos/org/repo/actions/runs/12': [{ id: 12, path: '.github/workflows/fqe-publish.yml', run_attempt: 1 }],
+  };
+  const r = verify(t, data);
+  assert.equal(r.rate.rate, 0.5);
+  assert.equal(r.check_state, 'success');
+  assert.equal(r.second_state, 'success');
 });

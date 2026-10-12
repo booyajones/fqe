@@ -37,7 +37,7 @@ flowchart LR
 
 The evaluation job executes PR code with a read-only token and no persisted checkout credential. The publisher installs a reviewed FQE ref, consumes evidence as data and does not execute PR code. `ci-verify` requires the receipt's commit and source run/attempt to match the completed GitHub run and the currently open PR head. The source workflow must have completed successfully before a clean receipt is accepted.
 
-The publisher resolves bypass identity from GitHub comments and reviewers from GitHub reviews. It reads allowlists at the current default branch. Only the latest non-pending review for each account counts; it must approve this head and come from a currently allowlisted account other than the author/requester. Oracle changes always require independent review. A bypass rate over 10% also requires it.
+The publisher resolves bypass identity from GitHub comments and reviewers from GitHub reviews. It reads allowlists at the current default branch. Only the latest non-pending review for each account counts; it must approve this head and come from a currently allowlisted account other than the author/requester. Oracle changes always require independent review. A bypass request at a rate over 10% also requires it; ordinary clean PRs do not.
 
 Audit artifacts have immutable names binding publisher run and attempt. History is paginated and checked against server metadata. A latest completed publisher without a record, a conflicting record or incomplete inventory fails closed. The rate counts observed audited attempts in 14 days, not unique PRs. No history is unknown; it is never silently presented as zero.
 
@@ -48,3 +48,5 @@ Receipts describe what configured runners reported. A source job that controls i
 A cached green GitHub check is a point-in-time result. Expiration or access changes need a rerun; they do not automatically invalidate a previously posted check. Publisher bootstrap, branch protection, forks, review events and merge queues need dedicated native acceptance tests. Artifact retention is 90 days by default and is not a compliance guarantee. See [SECURITY.md](../SECURITY.md) for deployment controls and [writing a runner](writing-a-runner.md) for the evidence contract.
 
 The engine self-hosts its spec-mutation, requirement-trace and ledger-reconciliation checks. These checks join the stable required `test` aggregator with unit tests, documented-count validation and packed installation tests.
+
+Publisher signatures attest to validated commit/run binding and current server authority, while recording the source job's runner claims. They do not establish honest runner output: PR code can forge data inside its own evaluation job. Protected grading rules, independent review and meaningful negative controls remain necessary.

@@ -89,6 +89,7 @@ function parseJUnit(xml) {
   }
 
   // Some reporters expose setup/teardown errors only on the suite, not a testcase.
+  let suiteTotalFailed = 0;
   for (const match of text.matchAll(/<testsuite\b([^>]*)>/g)) {
     let suiteFailed = 0;
     for (const key of ['failures', 'errors']) {
@@ -96,8 +97,9 @@ function parseJUnit(xml) {
       if (value && !/^\d+$/.test(value)) throw new Error(`junit: ${key} count is malformed`);
       suiteFailed += Number(value || 0);
     }
-    failed = Math.max(failed, suiteFailed);
+    suiteTotalFailed += suiteFailed;
   }
+  failed = Math.max(failed, suiteTotalFailed);
   return { reported, skipped, executed: reported - skipped, failed, ids };
 }
 

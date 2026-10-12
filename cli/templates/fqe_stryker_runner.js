@@ -16,7 +16,6 @@
  *   0 — Stryker ran, JSON emitted (verdict is fqe's call from the stats)
  *   1 — Stryker crashed before producing a report; report this as a runner FAIL
  *
- * Configure blast radius by editing the BLAST_RADIUS const below.
  */
 
 const { spawnSync } = require('node:child_process');
@@ -80,7 +79,8 @@ if (total === 0) {
 const out = {
   runner: 'stryker-mutation',
   exit_code: 0,
-  mutation_report: report,
+  mutation_report: { files: Object.fromEntries(Object.entries(report.files || {}).map(([name, file]) => [name,
+    { mutants: (file.mutants || []).map(({ status, mutatorName, location }) => ({ status, mutatorName, location })) }])) },
 
 };
 console.log(JSON.stringify(out));
