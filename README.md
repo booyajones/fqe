@@ -7,7 +7,7 @@ fqe is an orchestrator. It does not lint, test, or judge. It runs the runners yo
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
-This is the v0.19.1 release candidate. Until the tag is published, install the reviewed full commit SHA and pass the same SHA to `init --ref`.
+This is the v0.19.1 release candidate. The installation commands below require the `fqe-v0.19.1` GitHub release to exist. Before publication, use a full reviewed commit SHA with `--ref` for generated workflows.
 
 ```bash
 npx --yes -p github:booyajones/fqe#fqe-v0.19.1 fqe init
