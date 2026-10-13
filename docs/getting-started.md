@@ -1,6 +1,6 @@
 # Getting started
 
-Install and verify in a sandbox before requiring the gate on an application. This branch is the v0.19.0 release candidate; until the tag exists, use the reviewed full commit SHA in the install command and `--ref`.
+Install and verify in a sandbox before requiring the gate on an application. v0.19.0 is published as `fqe-v0.19.0`. For an immutable install, use the release commit `edde4120e86abedde65e4930f253544d9dfdb64e` in the install command and `--ref`.
 
 ## Step 1: Add fqe to your repo (one command)
 
