@@ -2,7 +2,7 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
-## [0.19.0] - Unreleased
+## [0.19.0] - 2026-10-13
 
 - Separate read-only PR evaluation from trusted default-branch publication. Bind source run, head and attempt, re-check current allowlists and current-head reviews, retain immutable audit history, and reject stale or malformed evidence.
 - Fail closed on missing mutation payloads and failing JUnit reports even when the child exits zero. Preserve aggregate survivor counts. Configure the actual deterministic mutation judge rather than applying Wilson sampling bounds to code mutants.

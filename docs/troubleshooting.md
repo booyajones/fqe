@@ -18,7 +18,7 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Root cause:** an old version of the `parseFlags` helper treated `--output-text "$BODY"` as a boolean true when `$BODY` started with `--` (e.g., a YAML frontmatter delimiter `---`).
 
-**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Pin both workflows to the same reviewed full FQE commit SHA that contains the fix. `fqe-v0.19.0` is a release candidate, not a published tag; until release, install by the reviewed SHA and pass that SHA to `init --ref`.
+**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Pin both workflows to the same reviewed full FQE commit SHA that contains the fix. `fqe-v0.19.0` is published at `edde4120e86abedde65e4930f253544d9dfdb64e`; install by that release SHA and pass the same SHA to `init --ref`.
 
 ### `fqe: error: 'gh' CLI not found on PATH`
 

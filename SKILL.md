@@ -5,7 +5,7 @@ description: Finexio Quality Engine (fqe). A unified deterministic CI gate for F
 
 # fqe: Finexio Quality Engine
 
-**Status:** v0.19.0 release candidate. v0.19.0 repairs missing mutation evidence, count-only reports, stale receipts, workflow privilege separation, current-head approvals, durable bypass history, authenticated runner evidence and scorecard correlation. The suite contains 949 tests; use exact-head CI and native receipts as proof. Production payment-path acceptance and deployment of the new publisher are separate checks.
+**Status:** v0.19.0 released on 2026-10-13 as `fqe-v0.19.0`. v0.19.0 repairs missing mutation evidence, count-only reports, stale receipts, workflow privilege separation, current-head approvals, durable bypass history, authenticated runner evidence and scorecard correlation. The suite contains 949 tests; use exact-head CI and native receipts as proof. Production payment-path acceptance and deployment of the new publisher are separate checks.
 
 ## When to fire (auto-invoke triggers)
 
@@ -129,7 +129,7 @@ Classes: unit, integration, e2e, regression, contract, property, uat, lint, type
 
 ## Verification
 
-Use this commit's `test` CI result: it includes Linux/Windows Node 20/22, packed installation and self-hosted spec mutation, requirement trace and reconciliation. The local suite also exercises stale/malformed receipts, mutation evidence, deleted audit history and current-head review failures. Older smoke-test and model-review results are historical evidence, not acceptance of this release candidate. Native publisher integration and live payment-path QA remain deployment checks.
+Use this commit's `test` CI result: it includes Linux/Windows Node 20/22, packed installation and self-hosted spec mutation, requirement trace and reconciliation. The local suite also exercises stale/malformed receipts, mutation evidence, deleted audit history and current-head review failures. Older smoke-test and model-review results are historical evidence, not acceptance of this release. Native publisher integration and live payment-path QA remain deployment checks.
 
 ## Files in the skill
 

@@ -7,7 +7,7 @@ fqe is an orchestrator. It does not lint, test, or judge. It runs the runners yo
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
-This is the v0.19.0 release candidate. Until the tag is released, install the reviewed full commit SHA and pass it to `init --ref`.
+[v0.19.0 is released](https://github.com/booyajones/fqe/releases/tag/fqe-v0.19.0). For an immutable install, use its reviewed commit `edde4120e86abedde65e4930f253544d9dfdb64e` and pass the same SHA to `init --ref`.
 
 ```bash
 npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe init
@@ -93,7 +93,7 @@ fqe uses Claude in two places, both **around** the gate: it reviews every PR (ad
 | [FAQ](docs/faq.md) | Pre-empts the 10 questions every engineer asks. |
 | [Security](SECURITY.md) | Threat model. What fqe protects against and what it does not. |
 | [Contributing](CONTRIBUTING.md) | PR process and ground rules. |
-| [Changelog](CHANGELOG.md) | Release history and the current candidate. |
+| [Changelog](CHANGELOG.md) | Release history. |
 
 ## Recipes
 
@@ -172,7 +172,7 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.19.0.** Release candidate; the tag is created only after review. The suite contains 949 tests. CI verifies Linux and Windows across Node 20 and 22; inspect the exact commit's run rather than treating an older green as current proof, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.19.0.** Released on 2026-10-13 as `fqe-v0.19.0`. The suite contains 949 tests. CI verifies Linux and Windows across Node 20 and 22; inspect the exact commit's run rather than treating an older green as current proof, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 **Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
 What each release added: coverage-liveness (v0.9.0, no green over an empty/mis-scoped suite), inter-suite discovery + flaky/quarantine + human-review telemetry (v0.10.0), a mandatory money-idempotency invariant (v0.11.0), contract baseline from an OpenAPI spec (v0.12.0), an advisory-first mutation-on-diff judge (v0.13.0), adversarial-stat integrity hardening (v0.14.0), the money-strict profile and foot-gun caps (v0.15.0), receipt signing (v0.16.0), a full-codebase adversary sweep (v0.17.0), the shadow-trial scorecard (v0.18.0), and doc-accuracy guards (v0.18.2). See the [Changelog](CHANGELOG.md).

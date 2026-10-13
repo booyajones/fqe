@@ -9,7 +9,7 @@ npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe init --with-mutation
 npm install --save-dev @stryker-mutator/core
 ```
 
-This branch is a release candidate. Until its tag exists, install the reviewed full FQE commit SHA and pass the same SHA to `init --ref`. Review the generated config and both workflows. Bootstrap the publisher on the default branch before requiring its checks.
+v0.19.0 is published as `fqe-v0.19.0`. For an immutable install, use the release commit `edde4120e86abedde65e4930f253544d9dfdb64e` and pass the same SHA to `init --ref`. Review the generated config and both workflows. Bootstrap the publisher on the default branch before requiring its checks.
 
 The canonical [Stryker wrapper](../../cli/templates/fqe_stryker_runner.js) removes stale reports, executes Stryker and emits a fresh `mutation_report`. The configured mutation judge evaluates killed/surviving counts, file scope, threshold, minimum mutants and suppression caps. Missing evidence fails according to advisory/blocking mode. The standard profile starts advisory; `--payments --with-mutation` selects a blocking judge. Measure false reds and runtime before enforcing a threshold.
 
