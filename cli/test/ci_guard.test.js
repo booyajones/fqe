@@ -109,6 +109,12 @@ test('oracle changes require an authorized non-author approval of the current he
   const blocked = verify(t, files);
   assert.equal(blocked.check_state, 'failure');
   assert.equal(blocked.second_state, 'failure');
+  const explained = serializeReceipt(blocked.receipt).markdown;
+  assert.match(explained, /CI_ORACLE_REVIEW_REQUIRED/);
+  assert.match(explained, /default branch's .github\/fqe-second-reviewers.yml/);
+  assert.match(explained, /approve this exact head/);
+  assert.match(explained, /Verify in GitHub/);
+  assert.doesNotMatch(explained, /UNKNOWN_REASON|File an issue|Reproduce locally/);
   assert.equal(verify(t, { ...files, 'repos/org/repo/pulls/1/reviews?per_page=100': [[review(1, 'author')]] }).check_state, 'failure');
   const approved = verify(t, { ...files, 'repos/org/repo/pulls/1/reviews?per_page=100': [[review(2, 'reviewer')]] });
   assert.equal(approved.check_state, 'success');
@@ -124,6 +130,13 @@ test('only a live server comment can create a bypass, and a high rate requires a
   assert.equal(blocked.receipt.verdict, 'FAIL');
   assert.equal(blocked.receipt.bypass.applied, false);
   assert.equal(blocked.check_state, 'failure');
+  const explained = serializeReceipt(blocked.receipt).markdown;
+  assert.match(explained, /CI_BYPASS_REVIEW_REQUIRED/);
+  assert.match(explained, /CI_BYPASS_REQUEST_VALID/);
+  assert.match(explained, /bypass is not applied/);
+  assert.match(explained, /other than the PR author or bypass requester/);
+  assert.match(explained, /rerun the current-head FQE Publish/);
+  assert.doesNotMatch(explained, /UNKNOWN_REASON|File an issue|Reproduce locally/);
   const approved = verify(t, { ...comments, 'repos/org/repo/pulls/1/reviews?per_page=100': [[review(1, 'reviewer')]] }, { verdict: 'FAIL' });
   assert.equal(approved.check_state, 'success');
   assert.equal(approved.bypass, true);

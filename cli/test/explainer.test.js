@@ -95,6 +95,11 @@ test('unknown reason -> UNKNOWN_REASON with original wrapped in framing', () => 
   assert.match(out.plain_english, /doesn't match any known pattern/);
   assert.match(out.plain_english, /verdict itself .* is still trustworthy/);
   assert.match(out.fix, /file an issue/i);
+  for (const unknown of [
+    'CI authority guard: a future policy requires a different approval',
+    'CI authority guard: changed grading rules require an authorized non-author approval of this head (unrecognized suffix)',
+    'BYPASS_OK: unrecognized request format',
+  ]) assert.equal(explainReason(unknown).code, 'UNKNOWN_REASON');
 });
 
 // ─── Round-trip: every reason verdict.js can produce -> non-UNKNOWN ────

@@ -2,6 +2,11 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.19.1] - 2026-10-13
+
+- Explain expected publisher authority blocks for oracle/grading-rule changes and high-rate bypasses with current-head reviewer and publisher-verification guidance. Valid bypass request details no longer appear as unknown failures when an authority guard blocks application.
+- Keep unknown reasons unknown and preserve verdict, review eligibility, bypass authorization and publisher behavior. Regression checks render receipts from the actual CI guard.
+
 ## [0.19.0] - 2026-10-13
 
 - Separate read-only PR evaluation from trusted default-branch publication. Bind source run, head and attempt, re-check current allowlists and current-head reviews, retain immutable audit history, and reject stale or malformed evidence.
