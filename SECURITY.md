@@ -20,6 +20,8 @@ Current-head reviews are checked against the current reviewer allowlist. The aut
 
 For bypass requests, the 14-day bypass rate uses immutable Actions audit artifacts and server run metadata. Missing, expired, duplicate, misbound, unreadable or truncated history blocks verification. Each latest completed publisher run must have an audit record. The denominator counts distinct audited PR heads, including the current one; it is not a count of unique PRs. An empty history is unknown, not a measured zero. Rerun a failed publisher to repair a missing latest record.
 
+Posting a bypass comment does not trigger a workflow. Rerun the FQE Publish run associated with the current head and verify both refreshed checks and its receipt.
+
 Authorization is checked at publication time. GitHub does not automatically turn an existing green check red when a comment expires or an allowlist changes. Rerun verification after such changes and before a consequential merge. Merge queues, fork/review event behavior and your repository rules require a native integration test before deployment.
 
 ## Receipts and retention
@@ -27,6 +29,8 @@ Authorization is checked at publication time. GitHub does not automatically turn
 Unsigned receipts can be altered by someone who controls the source job. In the trusted publisher, optional `FQE_SIGNING_KEY` signs the validated known evidence fields, including run identity, timestamps, runner results, reasons, hashes, verdict and applied bypass. Keep this key only in the publisher; never expose it to untrusted runners. Verification authenticates the declared signed fields, not unknown extensions or a signer's organizational authority. Legacy receipts keep their explicit signed scope. See [receipt signing](docs/recipes/receipt-signing.md).
 
 Artifacts are retained for 90 days in the templates, subject to GitHub repository limits. This is a technical retention setting, not a regulatory opinion. If your approved retention requirement is longer, export verified receipts to controlled storage and test retrieval and access enforcement. Check output alone is not a complete evidence archive.
+
+A publication error (CLI exit 4) does not create a neutral check. The publisher fails, and required checks may remain missing or retain an older result. Resolve the error, rerun the publisher and inspect its current-head results. GitHub accepts an actually published neutral or skipped required check as passing, so do not treat local exit codes as proof of enforcement. See [GitHub required-check guidance](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
 
 ## Operator checks
 

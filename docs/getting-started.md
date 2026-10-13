@@ -16,7 +16,7 @@ This creates:
 - `.github/workflows/fqe-quality.yml`: the gate workflow.
 - `.github/workflows/fqe-publish.yml`: the trusted publisher.
 - `.github/fqe-bypass-allowlist.yml`: who can bypass (seeded with your GitHub login).
-- `.github/fqe-second-reviewers.yml`: who can unblock when bypass rate is high.
+- `.github/fqe-second-reviewers.yml`: who can independently approve oracle changes or a high-rate bypass.
 - Immutable Actions audit artifacts retain the observed bypass history.
 
 Configure actual required runners and an independent reviewer, then submit the installation through normal review. The publisher must reach the default branch before GitHub starts its `workflow_run` handler. After that bootstrap, open a dedicated probe PR and verify both checks before requiring them.
@@ -38,7 +38,7 @@ Then open `.fqe.yml`. It ships with commented examples you adapt by hand:
 #     required: true
 ```
 
-Copy an example under the live `runners:` key at the bottom of the file and delete the leading `# `. **Do not uncomment a second `runners:` line.** YAML takes the last key, so a duplicate silently discards everything you configured and leaves you with a gate that passes everything.
+Copy an example under the live `runners:` key at the bottom of the file and delete the leading `# `. **Do not uncomment a second `runners:` line.** FQE rejects duplicate top-level keys, including `runners:`, instead of choosing one. Run `fqe validate` after editing; a duplicate or malformed config blocks the gate.
 
 **On Windows**, `command: "npm"` will not start, because npm is a `.cmd` shim and fqe spawns without a shell. Use `command: "cmd"` with `args: ["/c", "npm", "test"]`. A runner that fails to spawn is reported as a failure carrying no exit code.
 
@@ -46,12 +46,12 @@ Copy an example under the live `runners:` key at the bottom of the file and dele
 
 ## Step 3: Open a PR and watch the workflow
 
-Once `.fqe.yml`, `.github/workflows/`, and the allowlists are committed to your default branch, every future PR fires the gate automatically. Two Check Runs appear on the PR:
+Once `.fqe.yml`, `.github/workflows/`, and the allowlists are committed to your default branch, every future PR fires the gate automatically. The read-only **FQE Quality** run uploads its receipt. Completion starts the default-branch **FQE Publish** workflow, which publishes two Check Runs on the exact head:
 
 | Check | What it does |
 |---|---|
-| `fqe/pass` | Runs your configured runners. PASS if all clean, FAIL if any blocked, FLAG if Wilson CI bounds exceeded. |
-| `fqe/second-reviewer-required` | Normally green. Goes red for a bypass request when the 14-day rolling bypass rate is above 10%, requiring an allowlisted second approver. |
+| `fqe/pass` | The trusted publisher verifies the source-run receipt and current authority. PASS and informational FLAG publish success; FAIL or an unsatisfied authority guard publishes failure. |
+| `fqe/second-reviewer-required` | Requires independent current-head approval for oracle/grading-rule changes, or a requested bypass above the 10% rolling rate. Missing or unverifiable authority fails closed. |
 
 Look at the Check Run detail. If the gate fails, the output panel contains a plain-English explanation of what failed, why, and how to reproduce it locally.
 
@@ -81,7 +81,7 @@ Then, from any repo with a `.fqe.yml`:
 fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/
 ```
 
-This produces the same QA-RESULT.yml and QA-RESULT.md that CI would. Same verdict. Same explainer output. You can iterate on your runner config without waiting for CI.
+This produces local QA-RESULT.yml and QA-RESULT.md using the same verdict rules and explainer. Match CI's checkout, base and runner environment when comparing results. Local PASS does not replace the publisher's current-head authority checks or a fresh native check result.
 
 If a runner fails locally, the explainer tells you exactly what to fix:
 
@@ -113,7 +113,7 @@ fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/
 5. **Do not allow bypassing**, check this if you want admins to also be gated (recommended).
 6. Save.
 
-Now `main` cannot accept a merge without a green `fqe/pass`. To bypass in an emergency, an allowlisted maintainer posts a SHA-bound PR comment: `/fqe-bypass <head-sha> <24h|48h|72h>`. The named SHA must equal the live head (any new push invalidates it), it expires on the TTL, and every bypass is logged. (The old unbounded `fqe-bypass` label was removed in v0.4.0.)
+The rule now requires both checks from the intended GitHub App. Inspect their conclusions on the current head; a local exit code does not establish a published check. To bypass in an emergency, an allowlisted maintainer posts a SHA-bound PR comment: `/fqe-bypass <head-sha> <24h|48h|72h>`. The named SHA must equal the live head (any new push invalidates it), it expires on the TTL, and every bypass is logged. A comment alone does not trigger evaluation: rerun the **FQE Publish** run associated with this head, then verify its receipt and both refreshed checks. Oracle changes still require independent approval. (The old unbounded `fqe-bypass` label was removed in v0.4.0.)
 
 ## What the gate doesn't do until you configure it
 
@@ -128,7 +128,7 @@ npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe init --with-mutation
 npm install --save-dev @stryker-mutator/core
 ```
 
-This drops in `stryker.conf.json`, `scripts/fqe_stryker_runner.js`, and a `stryker-mutation:` runner block in `.fqe.yml`. See [docs/recipes/ai-test-generation.md](recipes/ai-test-generation.md) for the rationale and the Qodo Cover layer that generates tests on PR.
+This drops in `stryker.conf.json`, `scripts/fqe_stryker_runner.js`, and a `stryker-mutation:` runner block in `.fqe.yml`. See [docs/recipes/ai-test-generation.md](recipes/ai-test-generation.md) for the mutation contract and the separate, optional AI test-proposal workflow.
 
 ## Production install (SHA-pinned)
 

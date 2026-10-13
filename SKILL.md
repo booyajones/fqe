@@ -26,23 +26,23 @@ Every operation Chris asks for must hold these. If a request would violate one, 
 
 1. **No identity claim is ever read from a file the constrained actor wrote.** The bypass requester comes from the GitHub comments API (server-recorded comment author). Receipt content is informational, never trusted for identity.
 2. **No LLM is in the verdict path.** `verdict.js` is a deterministic Node script. Same inputs produce the same output. You may surface the verdict but never author one.
-3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts + Check Run outputs (server-side, immutable).
+3. **No required state lives only in the PR branch.** Receipts persist as immutable Actions artifacts plus Check Run outputs; GitHub check results can be replaced by a later publication.
 
 ## How to use it: the cookbook
 
 ### Use case 1: Chris says "I'm about to ship X"
 
 ```bash
-# Confirm fqe/pass is green on the PR
+# Confirm both required checks are fresh on the live PR head
 gh pr checks <pr-url-or-number>
 
 # If not green, fetch the receipt
-gh run download <run-id> -n qa-receipt-<sha>
+gh run download <publisher-run-id> -n <exact-fqe-audit-v2-artifact-name>
 cat QA-RESULT.md          # human-readable
 fqe receipt parse QA-RESULT.yml | jq .verdict
 ```
 
-Surface the verdict + reasons. **Never propose `git push --no-verify` or `--force`.** If something needs to bypass, that's a deliberate human act (an allowlisted maintainer posts a SHA-bound `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment).
+Verify both required checks and the receipt match the live PR head and workflow attempt, then surface the verdict + reasons. **Never propose `git push --no-verify` or `--force`.** If something needs to bypass, that's a deliberate human act (an allowlisted maintainer posts a SHA-bound `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment).
 
 ### Use case 2: Chris says "QA this" or "verify this"
 
@@ -50,19 +50,20 @@ Locally:
 ```bash
 cd <repo>
 fqe run --commit "$(git rev-parse HEAD)" --base main --output ./out/
+rc=$?
 cat out/QA-RESULT.md
-echo "Exit: $?"   # 0=PASS  2=FAIL  3=FLAG
+echo "Exit: $rc"   # 0=PASS  2=FAIL  3=FLAG
 ```
 
-Surface the verdict. If FAIL, the reasons array tells you exactly which runner exited non-zero. If FLAG, the adversarial-stats table shows the Wilson 95% CI upper bound vs the canonical threshold.
+Surface the verdict and reasons. FAIL can mean a failed runner, missing evidence or another required gate violation. For adversarial FLAGs, inspect the Wilson upper bound and canonical threshold. A local result does not replace current-head publisher verification.
 
 ### Use case 3: Chris says "add fqe to <repo>"
 
 ```bash
 cd <repo>
-fqe init                           # adds .fqe.yml + workflows + allowlists
+fqe init --ref <reviewed-40-char-sha> # adds .fqe.yml + workflows + allowlists
 # Edit .fqe.yml to declare actual runners for this repo's artifacts
-# Commit on a branch and open a PR: the gate is now live
+# Review and bootstrap both workflows on the default branch, then verify a probe PR
 ```
 
 After init, the repo has:
@@ -91,11 +92,9 @@ fqe min-n 0.01                       # min N to defend ≤1% upper bound
 
 ### Use case 5: Bypass rate seems high
 
-```bash
-fqe bypass-tally rate --state-dir .github/fqe-state --window-days 14
-```
+Read the current-head publisher's verified receipt and `verification.json`, including its `rate` and audit-history source. The local `bypass-tally` command measures only its local JSONL state; it is not the publisher's server-authoritative rate.
 
-If `rate > 0.10`, the `fqe/second-reviewer-required` check goes red on every PR until a non-bypass-requester from `.github/fqe-second-reviewers.yml` approves the current head.
+A requested bypass above 10% requires current-head approval from `.github/fqe-second-reviewers.yml`, excluding the author and requester. Oracle/grading-rule changes require that approval even without a bypass. Ordinary clean PRs do not depend on bypass-history availability. A bypass comment alone triggers no workflow; rerun the current-head **FQE Publish** run and verify its refreshed receipt and both checks.
 
 ### Use case 6: full-suite QA (classes, policy, UAT, regression, scorecard)
 

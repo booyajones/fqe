@@ -12,7 +12,7 @@ The core pieces are:
 
 | Source | Responsibility |
 |---|---|
-| `config.js`, `classifier.js`, `runner.js` | Validate configuration, choose runners and collect execution evidence |
+| `config_schema.js`, `orchestrator.js` | Validate configuration, choose runners and collect execution evidence |
 | `junit.js` | Validate reports and count executed, skipped and failed/error cases |
 | `mutation_gate.js` | Preserve mutation counts and apply advisory or blocking thresholds |
 | `verdict.js` | Deterministic aggregation; failures and flags cannot be cleared by a later pass |
@@ -37,9 +37,13 @@ flowchart LR
 
 The evaluation job executes PR code with a read-only token and no persisted checkout credential. The publisher installs a reviewed FQE ref, consumes evidence as data and does not execute PR code. `ci-verify` requires the receipt's commit and source run/attempt to match the completed GitHub run and the currently open PR head. The source workflow must have completed successfully before a clean receipt is accepted.
 
+FQE Quality starts on configured PR and review events. FQE Publish starts only when FQE Quality completes; there is no comment trigger. After an approved bypass comment, rerun the publisher associated with the current head.
+
 The publisher resolves bypass identity from GitHub comments and reviewers from GitHub reviews. It reads allowlists at the current default branch. Only the latest non-pending, non-comment review for each account counts; it must approve this head and come from a currently allowlisted account other than the author/requester. Oracle changes always require independent review. A bypass request at a rate over 10% also requires it; ordinary clean PRs do not.
 
 Audit artifacts have immutable names binding publisher run and attempt. History is paginated and checked against server metadata. A latest completed publisher without a record, a conflicting record or incomplete inventory fails closed. The rate counts distinct audited PR heads in 14 days, not unique PRs. No history is unknown; it is never silently presented as zero.
+
+A CLI INFRA exit (4) does not create a neutral check. The generated publisher defaults both check states to failure if verification fails. If publication itself fails, its strict shell exits and a check may be missing or retain an older result; inspect fresh current-head checks after repair.
 
 ## Evidence limits
 

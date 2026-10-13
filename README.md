@@ -15,7 +15,7 @@ git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
 
-The default config blocks until you add at least one required runner. Commit the workflows through normal review first: the trusted publisher must exist on the default branch before GitHub will start its `workflow_run` handler. Open a probe PR and verify its receipt, then require `fqe/pass` in branch protection.
+The default config blocks until you add at least one required runner. Commit the workflows through normal review first: the trusted publisher must exist on the default branch before GitHub will start its `workflow_run` handler. Open a probe PR and verify its receipt, then require both `fqe/pass` and `fqe/second-reviewer-required` in branch protection.
 
 > **Before adopting on production-critical repos, read [Known limitations](#known-limitations-read-this-before-adopting-on-a-critical-path) below.** The install command above pins to a git tag, which is force-pushable. For production, use the SHA-pinned install in [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned).
 
@@ -33,34 +33,22 @@ fqe makes declared checks enforceable when the verified publisher and required b
 
 ## How it works
 
-```
-                  PR opened
-                       │
-                       ▼
-              fqe workflow fires
-                       │
-              ┌────────┴────────┐
-              │ Bypass comment? │  ← /fqe-bypass <sha>, identity from
-              │ (server-side)   │     the comments API, not a file
-              └────────┬────────┘
-                       │
-       ┌───────────────┼───────────────────┐
-       │   bypass      │   normal          │
-       │     ↓         │   ↓               │
-       │   receipt     │   run configured  │
-       │   + tally     │   runners         │
-       │               │   ↓               │
-       │               │   verdict.js      │  ← no LLM in path
-       │               │   (deterministic) │     pure JS, ~600 LOC
-       └───────────────┴───────────────────┘
-                       │
-                       ▼
-              QA-RESULT.yml + .md
-              (artifact + Check Run)
-                       │
-                       ▼
-              fqe/pass status published
-              (required check; cannot merge without)
+```text
+Exact PR head
+    |
+Read-only FQE Quality runs checks; verdict.js (~600 LOC) computes the result
+    |
+Fresh source receipt and workflow artifact
+    |
+Default-branch FQE Publish verifies head, attempt and authority
+    |  reads live comments, allowlists, current-head reviews and bypass history
+    |
+Verified receipt and audit artifact
+    |
+fqe/pass + fqe/second-reviewer-required
+    |  require both checks through repository rules
+    |
+Merge eligibility, subject to the remaining repository rules
 ```
 
 Three architectural invariants the design holds to:
@@ -76,9 +64,9 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 - **A required GitHub Check Run** (`fqe/pass`) you can wire to branch protection.
 - **Plain-English failure explanations** in the Check Run output. Every failure includes the repro command.
 - **A tamper-evident receipt** (`QA-RESULT.yml`) bound to the commit SHA, uploaded as an artifact and posted to the Check Run.
-- **A SHA-bound, self-auditing bypass.** Bypass is a PR comment, `/fqe-bypass <head-sha> <24h|48h|72h>`, by an allowlisted maintainer. The named SHA must equal the live head, so any new push invalidates it (no bypassing a clean commit then pushing bad code), it expires on a TTL, and every bypass is logged. If a bypass is requested and the rolling 14-day rate exceeds 10%, a second `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer signs off.
+- **A SHA-bound, self-auditing bypass.** Bypass is a PR comment, `/fqe-bypass <head-sha> <24h|48h|72h>`, by an allowlisted maintainer. The named SHA must equal the live head, so any new push invalidates it (no bypassing a clean commit then pushing bad code), it expires on a TTL, and every bypass is logged. If a bypass is requested and the rolling 14-day rate exceeds 10%, a second `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer approves the current head. Oracle changes require that review even without a bypass. Posting the comment does not trigger a workflow; rerun the current-head FQE Publish run and verify its refreshed receipt and both checks.
 - **Statistical guard rails on adversarial stats.** When a runner emits Wilson-CI confidence bounds (for LLM eval-style runners), fqe enforces the right threshold for the blast radius class.
-- **An answer-key guard.** `fqe oracle-guard` requires a second reviewer when a PR edits the golden masters, cassettes, coverage baseline, or `.fqe.yml` it is judged by, so a PR cannot pass by moving the goalposts.
+- **An answer-key guard.** `fqe oracle-guard` identifies oracle and grading-rule edits. The trusted publisher requires independent current-head approval when a PR changes those rules, including golden masters, tests, coverage baselines and `.fqe.yml`.
 - **Fail-closed config validation.** `fqe validate` (and `fqe run`) reject a malformed `.fqe.yml` instead of silently skipping the misconfigured check.
 - **Full-suite QA, not just a test gate.** Tag each runner with a `class` (unit, integration, e2e, regression, contract, property, uat, money, ...) and set a `policy`. A required class with no passing runner is a FAIL, and `require_for` makes money paths demand their strict classes automatically. `fqe uat` gates on acceptance criteria, `fqe golden` is a drift-catching regression engine, and `fqe qa-report` rolls a run up into one per-class scorecard. See [docs/recipes/test-taxonomy.md](docs/recipes/test-taxonomy.md).
 - **Recipes** for the repo types we built this for (Node web, Python API, financial model, MCP server, outbound comms) plus the payments QA set: property-based, partner-contract, golden-master, oracle-tamper, and flaky quarantine.
@@ -156,17 +144,19 @@ The local CLI emits the same `QA-RESULT.yml` and `QA-RESULT.md` that CI produces
 
 ## Verdict logic
 
-fqe reads exit codes and emits one of five outcomes:
+The CLI uses these exit codes. A process exit does not itself publish a GitHub check:
 
 | Code | Meaning | Effect |
 |---|---|---|
-| 0 | PASS: all runners clean | Merge allowed |
-| 1 | ERROR: fqe itself crashed | Re-run, file issue if persists |
-| 2 | FAIL: a required runner exited non-zero | Merge blocked |
-| 3 | FLAG: adversarial CI bound exceeded | Informational only, does not block |
-| 4 | INFRA: transient (GitHub API timeout, missing binary) | Neutral Check Run, does not block |
+| 0 | PASS or successful command | A verified PASS receipt publishes success; repository rules still apply |
+| 1 | ERROR: invalid input or unrecoverable error | Fails the workflow; repair and rerun |
+| 2 | FAIL: a required check or evidence contract failed | A verified FAIL receipt publishes failure |
+| 3 | FLAG: informational concern | A verified FLAG receipt publishes success, subject to current authority |
+| 4 | INFRA: cannot complete a command or judge its inputs | No automatic neutral publication; the generated workflow fails |
 
-You can read the full taxonomy in [`cli/lib/verdict.js`](cli/lib/verdict.js). It's about 600 lines, a large share of them comments recording why each check exists and which review caught the gap it closes.
+Exit codes are defined in [`cli/bin/fqe.js`](cli/bin/fqe.js).
+
+Verdict aggregation is in [`cli/lib/verdict.js`](cli/lib/verdict.js), about 600 lines including comments recording why each check exists and which review caught the gap it closes.
 
 ## Statistical guard rails
 
@@ -215,7 +205,7 @@ These are the deployment boundaries for v0.19.0. The new publisher isolates writ
 | Runs server-side | Yes | No (local-only) | Yes | Yes |
 | Deterministic verdict | Yes (~600 LOC, readable) | N/A | No (opinionated) | Depends on your code |
 | Tamper-evident receipt | Yes (SHA-bound) | No | No | Depends |
-| Server-authoritative bypass | Yes (Events API) | No | No | No (file-based) |
+| Server-authoritative bypass | Yes (comments API) | No | No | No (file-based) |
 | Statistical bounds on AI evals | Yes (Wilson CI) | No | No | No |
 | LLM in the verdict path | No | N/A | No | Depends |
 

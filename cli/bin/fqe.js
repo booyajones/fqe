@@ -25,7 +25,7 @@
  *   1  generic error (includes a malformed .fqe.yml: fail closed, never neutral)
  *   2  verdict = FAIL (build should not proceed)
  *   3  verdict = FLAG (build can proceed but is flagged)
- *   4  INFRA (fqe itself errored, e.g. gh API timeout; neutral Check Run, never blocks)
+ *   4  INFRA (cannot complete the command; no automatic Check Run publication)
  */
 
 const fs = require('node:fs');
@@ -63,7 +63,7 @@ const baselineLib = require('../lib/baseline');
 const FQE_VERSION = require('../package.json').version;
 
 // Exit code taxonomy (per council 1613ed kill-feature #5):
-//   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (neutral)
+//   0 = PASS, 1 = unrecoverable error, 2 = FAIL (block), 3 = FLAG, 4 = INFRA (command could not complete)
 const EXIT = Object.freeze({ PASS: 0, ERROR: 1, FAIL: 2, FLAG: 3, INFRA: 4 });
 
 function die(msg, code = EXIT.ERROR) {
@@ -73,8 +73,8 @@ function die(msg, code = EXIT.ERROR) {
 
 /**
  * Wrap a function so that exceptions explicitly tagged as `{infra: true}`
- * exit with EXIT.INFRA (4) instead of EXIT.ERROR (1). CI workflows map exit 4
- * to a NEUTRAL Check Run (never blocks a merge — closes council kill-feature #5).
+ * exit with EXIT.INFRA (4) instead of EXIT.ERROR (1). This exit code does not
+ * create a Check Run; the generated workflows fail on infrastructure errors.
  */
 function failInfra(msg) {
   process.stderr.write(`fqe: infra: ${msg}\n`);
@@ -674,7 +674,7 @@ const SUBCOMMANDS = {
       // fqe status publish --check fqe/pass --commit SHA --state success|failure
       //                    [--description "..."] [--output-text "..."] [--repo owner/repo]
       //
-      // Returns 0 on success, 1 on failure. Workflow integration step uses this.
+      // Returns 0 on success, 1 on invalid input, 4 on publication failure.
       const opts = parseFlags(rest);
       requireFlags(opts, ['check', 'commit', 'state']);
       if (!['success', 'failure', 'neutral', 'cancelled', 'skipped', 'timed_out'].includes(opts.state)) {
@@ -727,11 +727,8 @@ const SUBCOMMANDS = {
         input: JSON.stringify(body),
         encoding: 'utf8',
       });
-      // All failure paths below are INFRASTRUCTURE failures (gh missing, gh
-      // timed out, GitHub API 5xx). They exit 4 (INFRA) so CI maps them to a
-      // NEUTRAL Check Run that does NOT block merges. Closes council 1613ed
-      // kill-feature #5 — fqe's own bugs / GitHub flakes shouldn't lock the
-      // team out of shipping.
+      // Publication failure exits 4; no check is created by the exit code.
+      // The caller must repair and retry, then verify the actual GitHub checks.
       if (r.error && r.error.code === 'ENOENT') {
         failInfra(
           "status publish: 'gh' CLI not found on PATH. Install from https://cli.github.com/ " +
@@ -1039,10 +1036,10 @@ const SUBCOMMANDS = {
       '   0  PASS — gate is green, merge can proceed',
       '   2  FAIL — policy violation, merge blocked',
       '   3  FLAG — informational, merge can proceed but a concern was raised',
-      '   4  INFRA — fqe itself errored (gh API timeout, missing binary); Check Run is neutral, never blocks',
+      '   4  INFRA — cannot complete command; no automatic neutral check, generated workflows fail',
       '   1  ERROR — unrecoverable script error before verdict (should be rare)',
       '',
-      'docs: https://github.com/booyajones/finexio-skills/tree/main/fqe',
+      'docs: https://github.com/booyajones/fqe',
       '',
     ].join('\n'));
   },
