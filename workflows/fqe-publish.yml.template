@@ -1,0 +1,89 @@
+# Trusted publisher: only default-branch code runs with checks:write.
+# Install this on the default branch before expecting a PR gate to publish.
+name: FQE Publish
+on:
+  workflow_run:
+    workflows: [FQE Quality]
+    types: [completed]
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  actions: read
+  checks: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install fqe CLI (ref-pinned)
+        run: |
+          set -euo pipefail
+          FQE_REF="fqe-v0.19.0"
+          FQE_SRC="$(mktemp -d "${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
+          git -C "$FQE_SRC" init -q .
+          git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
+          git -C "$FQE_SRC" checkout -q --detach FETCH_HEAD
+          cd "$FQE_SRC/cli"
+          npm ci --omit=dev
+          chmod +x bin/fqe.js
+          sudo ln -sf "$PWD/bin/fqe.js" /usr/local/bin/fqe
+          fqe version
+      - name: Download source-run evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+          SOURCE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          EVIDENCE="$(mktemp -d "${RUNNER_TEMP:-/tmp}/fqe-evidence.XXXXXX")"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          gh run download "$SOURCE_RUN" --repo "$REPO" --name "qa-receipt-$SOURCE_RUN-$SOURCE_ATTEMPT" --dir "$EVIDENCE"
+      - name: Verify current authority and publish checks
+        id: verify
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FQE_SIGNING_KEY: ${{ secrets.FQE_SIGNING_KEY }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+          SOURCE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          VERIFIED="$(mktemp -d "${RUNNER_TEMP:-/tmp}/fqe-verified.XXXXXX")"
+          export VERIFIED
+          echo "VERIFIED=$VERIFIED" >> "$GITHUB_ENV"
+          state=failure
+          second=failure
+          bypass=normal
+          if [ -n "${EVIDENCE:-}" ] && [ -f "$EVIDENCE/context.json" ]; then
+            if PR_NUMBER=$(node -e 'const c=JSON.parse(require("fs").readFileSync(process.env.EVIDENCE+"/context.json","utf8"));if(!Number.isSafeInteger(c.pr)||c.pr<1)process.exit(1);console.log(c.pr)') && fqe ci-verify --repo "$REPO" --pr "$PR_NUMBER" --head "$HEAD_SHA" \
+              --run-id "$SOURCE_RUN-$SOURCE_ATTEMPT" --audit-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+              --receipt "$EVIDENCE/QA-RESULT.yml" --output "$VERIFIED" > "$VERIFIED/verification.json"; then
+              state=$(node -p 'JSON.parse(require("fs").readFileSync(process.env.VERIFIED+"/verification.json","utf8")).check_state')
+              second=$(node -p 'JSON.parse(require("fs").readFileSync(process.env.VERIFIED+"/verification.json","utf8")).second_state')
+              bypass=$(node -p 'JSON.parse(require("fs").readFileSync(process.env.VERIFIED+"/verification.json","utf8")).bypass ? "bypass" : "normal"')
+            fi
+          fi
+          echo "bypass=$bypass" >> "$GITHUB_OUTPUT"
+          if [ -f "$VERIFIED/QA-RESULT.md" ]; then
+            BODY=$(head -c 65000 "$VERIFIED/QA-RESULT.md")
+          else
+            BODY="FQE evidence or current authorization could not be verified. Download the FQE Publish logs; rerun after fixing the cause."
+          fi
+          fqe status publish --repo "$REPO" --check fqe/pass --commit "$HEAD_SHA" --state "$state" --output-text "$BODY"
+          fqe status publish --repo "$REPO" --check fqe/second-reviewer-required --commit "$HEAD_SHA" --state "$second" --description "Current-head review and server audit history: $second"
+          if [ "$state" != success ]; then exit 1; fi
+      - name: Persist verified receipt and audit record
+        if: always() && env.VERIFIED != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: fqe-audit-v2-${{ steps.verify.outputs.bypass || 'normal' }}-${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.VERIFIED }}/
+          if-no-files-found: error
+          retention-days: 90

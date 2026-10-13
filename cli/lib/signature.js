@@ -25,26 +25,16 @@ const crypto = require('node:crypto');
 
 const ALG = 'hmac-sha256';
 
-// The signature binds these fields. content_hash already covers EVERY file at the commit,
-// and inputs_hash covers the runner configs, so this tuple authenticates the full claim:
-// "at this commit, over this content, with these inputs, the verdict was X." Signing a
-// fixed scalar tuple (rather than the whole object) is robust against YAML round-trip drift
-// on verify, where a re-parsed nested field could differ by formatting and break the MAC.
-// `bypass` is included because it records HUMAN AUTHORITY to override a FAIL — if it were
-// unsigned, a signed receipt's authorization could be forged post-signing. It is an all-string
-// object (or null), so it round-trips faithfully. verdict_reasons and runners are NOT signed:
-// they are human-readable evidence, reproducible by re-running fqe, and signing nested numeric
-// arrays risks YAML round-trip drift. The recipe documents this scope explicitly.
-// `diff_scope` IS signed. It is the field that distinguishes "clean because
-// nothing was wrong" from "clean because nothing was evaluated", so leaving it
-// outside the MAC would let anyone who can rewrite a receipt after signing forge
-// exactly the claim it exists to make. Like `bypass`, it is a small object of
-// scalars (strings, an integer, booleans, nulls) and round-trips faithfully.
-const SIGNED_FIELDS = Object.freeze(['schema_version', 'fqe_version', 'commit_sha', 'content_hash', 'inputs_hash', 'verdict', 'bypass', 'diff_scope']);
+// The commit identifies the tracked tree; content_hash binds the changed file bytes.
+// Sign the workflow attempt, timestamps and evidence as well as the verdict and
+// bypass authority. yamlSerialize preserves undefined values as null, matching
+// stableStringify, so nested runner evidence survives a YAML round trip.
+const SIGNED_FIELDS = Object.freeze(['schema_version', 'fqe_version', 'commit_sha', 'content_hash', 'inputs_hash', 'verdict', 'bypass', 'diff_scope',
+  'classifier_version', 'runner_versions', 'quarantined_tests', 'run_id', 'started_at', 'finished_at', 'runners', 'runners_fired', 'adversarial_stats', 'required_classes', 'verdict_reasons', 'evidence_paths', 'human_review']);
 
 // Every field name that has EVER been part of a signed tuple. Used to sanity-check
 // a receipt's self-declared `covers` before honouring it.
-const KNOWN_SIGNABLE = new Set(['schema_version', 'fqe_version', 'commit_sha', 'content_hash', 'inputs_hash', 'verdict', 'bypass', 'diff_scope']);
+const KNOWN_SIGNABLE = new Set(SIGNED_FIELDS);
 
 /**
  * Deterministic JSON: object keys sorted recursively, so the same logical receipt always

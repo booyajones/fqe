@@ -18,14 +18,13 @@ fqe scorecard --dir ./receipts/ --format json   # for dashboards
 ## What it reports (the three adoption metrics)
 
 1. **false-red rate** (target ~0%): the fraction of FAIL verdicts that a human bypassed. A
-   bypassed FAIL is the operational signal of a red the team judged wrong. If this is high, the
+   later applied bypass of the same commit marks a candidate; a bypass is not proof the red was wrong. If this is high, the
    gate is too strict and would lose trust as a required check.
 2. **gate wall-time** (p50 / p95 / max): the gate's own runtime, from each receipt's
    `started_at`/`finished_at`. Compare it to your total CI time for the "< X%" bar (the receipt
    does not know your total CI time, so the scorecard reports the gate's time and leaves the
    ratio to you).
-3. **true catches** (target >= 1): FAIL verdicts that stuck (were not bypassed). At least one
-   real catch over the trial is the evidence that the gate earns its place.
+3. **unresolved FAILs**: failed runs with no later applied bypass of the same commit. These are candidates, not confirmed bugs. Human triage establishes true catches.
 
 Plus the verdict distribution, the bypass count, and the modeled human-review minutes.
 

@@ -1,19 +1,21 @@
 # fqe
 
-**A CI gate that runs the checks you already have, refuses to let humans skip them, and emits a tamper-evident receipt of what was checked.**
+**A deterministic gate for the checks you configure, with trusted CI publication and an authenticated record of the commit, attempt, result and evidence.**
 
-[![tests](https://img.shields.io/badge/tests-922%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.18.21-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-949%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.19.0-blue)](CHANGELOG.md)
 fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in about 600 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
+This is the v0.19.0 release candidate. Until the tag is released, install the reviewed full commit SHA and pass it to `init --ref`.
+
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.18.21 fqe init
+npx --yes -p github:booyajones/fqe#fqe-v0.19.0 fqe init
 git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
 
-That's the install. The gate is now live on every PR. To make it actually block merges, add `fqe/pass` to your branch protection's required checks (one click).
+The default config blocks until you add at least one required runner. Commit the workflows through normal review first: the trusted publisher must exist on the default branch before GitHub will start its `workflow_run` handler. Open a probe PR and verify its receipt, then require both `fqe/pass` and `fqe/second-reviewer-required` in branch protection.
 
 > **Before adopting on production-critical repos, read [Known limitations](#known-limitations-read-this-before-adopting-on-a-critical-path) below.** The install command above pins to a git tag, which is force-pushable. For production, use the SHA-pinned install in [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned).
 
@@ -27,45 +29,33 @@ The shipping engineer looks at the work. They say "yes, ship." Six hours later p
 
 In all three cases, a machine check would have caught it in under five seconds. In all three cases, no machine check was wired to the merge.
 
-fqe makes those checks unskippable.
+fqe makes declared checks enforceable when the verified publisher and required branch checks are installed.
 
 ## How it works
 
-```
-                  PR opened
-                       │
-                       ▼
-              fqe workflow fires
-                       │
-              ┌────────┴────────┐
-              │ Bypass comment? │  ← /fqe-bypass <sha>, identity from
-              │ (server-side)   │     the comments API, not a file
-              └────────┬────────┘
-                       │
-       ┌───────────────┼───────────────────┐
-       │   bypass      │   normal          │
-       │     ↓         │   ↓               │
-       │   receipt     │   run configured  │
-       │   + tally     │   runners         │
-       │               │   ↓               │
-       │               │   verdict.js      │  ← no LLM in path
-       │               │   (deterministic) │     pure JS, ~600 LOC
-       └───────────────┴───────────────────┘
-                       │
-                       ▼
-              QA-RESULT.yml + .md
-              (artifact + Check Run)
-                       │
-                       ▼
-              fqe/pass status published
-              (required check; cannot merge without)
+```text
+Exact PR head
+    |
+Read-only FQE Quality runs checks; verdict.js (~600 LOC) computes the result
+    |
+Fresh source receipt and workflow artifact
+    |
+Default-branch FQE Publish verifies head, attempt and authority
+    |  reads live comments, allowlists, current-head reviews and bypass history
+    |
+Verified receipt and audit artifact
+    |
+fqe/pass + fqe/second-reviewer-required
+    |  require both checks through repository rules
+    |
+Merge eligibility, subject to the remaining repository rules
 ```
 
 Three architectural invariants the design holds to:
 
 1. **No identity claim is read from a file the PR author wrote.** Bypass identity comes from the server-recorded comment author (the comments API), never a PR-branch file.
 2. **No LLM decides the verdict.** `verdict.js` is a deterministic Node script with table-driven unit tests. Claude reviews PRs and can write tests, but those advise and author around the gate, they never compute PASS/FAIL.
-3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts plus Check Run outputs (server-side, immutable per run).
+3. **No required state lives only in the PR branch.** Receipts persist as workflow artifacts plus Check Run outputs (server-side, auditable per run).
 
 If you need to verify any of these, read [docs/architecture.md](docs/architecture.md). If you'd rather skip the theory and start using it, jump to [Getting Started](docs/getting-started.md).
 
@@ -74,9 +64,9 @@ If you need to verify any of these, read [docs/architecture.md](docs/architectur
 - **A required GitHub Check Run** (`fqe/pass`) you can wire to branch protection.
 - **Plain-English failure explanations** in the Check Run output. Every failure includes the repro command.
 - **A tamper-evident receipt** (`QA-RESULT.yml`) bound to the commit SHA, uploaded as an artifact and posted to the Check Run.
-- **A SHA-bound, self-auditing bypass.** Bypass is a PR comment, `/fqe-bypass <head-sha> <24h|48h|72h>`, by an allowlisted maintainer. The named SHA must equal the live head, so any new push invalidates it (no bypassing a clean commit then pushing bad code), it expires on a TTL, and every bypass is logged. If the rolling 14-day rate exceeds 10%, a second `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer signs off.
+- **A SHA-bound, self-auditing bypass.** Bypass is a PR comment, `/fqe-bypass <head-sha> <24h|48h|72h>`, by an allowlisted maintainer. The named SHA must equal the live head, so any new push invalidates it (no bypassing a clean commit then pushing bad code), it expires on a TTL, and every bypass is logged. If a bypass is requested and the rolling 14-day rate exceeds 10%, a second `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer approves the current head. Oracle changes require that review even without a bypass. Posting the comment does not trigger a workflow; rerun the current-head FQE Publish run and verify its refreshed receipt and both checks.
 - **Statistical guard rails on adversarial stats.** When a runner emits Wilson-CI confidence bounds (for LLM eval-style runners), fqe enforces the right threshold for the blast radius class.
-- **An answer-key guard.** `fqe oracle-guard` requires a second reviewer when a PR edits the golden masters, cassettes, coverage baseline, or `.fqe.yml` it is judged by, so a PR cannot pass by moving the goalposts.
+- **An answer-key guard.** `fqe oracle-guard` identifies oracle and grading-rule edits. The trusted publisher requires independent current-head approval when a PR changes those rules, including golden masters, tests, coverage baselines and `.fqe.yml`.
 - **Fail-closed config validation.** `fqe validate` (and `fqe run`) reject a malformed `.fqe.yml` instead of silently skipping the misconfigured check.
 - **Full-suite QA, not just a test gate.** Tag each runner with a `class` (unit, integration, e2e, regression, contract, property, uat, money, ...) and set a `policy`. A required class with no passing runner is a FAIL, and `require_for` makes money paths demand their strict classes automatically. `fqe uat` gates on acceptance criteria, `fqe golden` is a drift-catching regression engine, and `fqe qa-report` rolls a run up into one per-class scorecard. See [docs/recipes/test-taxonomy.md](docs/recipes/test-taxonomy.md).
 - **Recipes** for the repo types we built this for (Node web, Python API, financial model, MCP server, outbound comms) plus the payments QA set: property-based, partner-contract, golden-master, oracle-tamper, and flaky quarantine.
@@ -103,7 +93,7 @@ fqe uses Claude in two places, both **around** the gate: it reviews every PR (ad
 | [FAQ](docs/faq.md) | Pre-empts the 10 questions every engineer asks. |
 | [Security](SECURITY.md) | Threat model. What fqe protects against and what it does not. |
 | [Contributing](CONTRIBUTING.md) | PR process and ground rules. |
-| [Changelog](CHANGELOG.md) | What shipped in each release (0.1.0 to 0.18.2). |
+| [Changelog](CHANGELOG.md) | Release history and the current candidate. |
 
 ## Recipes
 
@@ -154,17 +144,19 @@ The local CLI emits the same `QA-RESULT.yml` and `QA-RESULT.md` that CI produces
 
 ## Verdict logic
 
-fqe reads exit codes and emits one of five outcomes:
+The CLI uses these exit codes. A process exit does not itself publish a GitHub check:
 
 | Code | Meaning | Effect |
 |---|---|---|
-| 0 | PASS: all runners clean | Merge allowed |
-| 1 | ERROR: fqe itself crashed | Re-run, file issue if persists |
-| 2 | FAIL: a required runner exited non-zero | Merge blocked |
-| 3 | FLAG: adversarial CI bound exceeded | Informational only, does not block |
-| 4 | INFRA: transient (GitHub API timeout, missing binary) | Neutral Check Run, does not block |
+| 0 | PASS or successful command | A verified PASS receipt publishes success; repository rules still apply |
+| 1 | ERROR: invalid input or unrecoverable error | Fails the workflow; repair and rerun |
+| 2 | FAIL: a required check or evidence contract failed | A verified FAIL receipt publishes failure |
+| 3 | FLAG: informational concern | A verified FLAG receipt publishes success, subject to current authority |
+| 4 | INFRA: cannot complete a command or judge its inputs | No automatic neutral publication; the generated workflow fails |
 
-You can read the full taxonomy in [`cli/lib/verdict.js`](cli/lib/verdict.js). It's about 600 lines, a large share of them comments recording why each check exists and which review caught the gap it closes.
+Exit codes are defined in [`cli/bin/fqe.js`](cli/bin/fqe.js).
+
+Verdict aggregation is in [`cli/lib/verdict.js`](cli/lib/verdict.js), about 600 lines including comments recording why each check exists and which review caught the gap it closes.
 
 ## Statistical guard rails
 
@@ -180,20 +172,20 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.18.21.** Plus unreleased fixes on top of it. The suite is at 922 tests passing on Linux and Windows across Node 20 and 22 (one symlink test self-skips on a Windows box without developer mode, since it cannot create the symlink), CI green on every push, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.19.0.** Release candidate; the tag is created only after review. The suite contains 949 tests. CI verifies Linux and Windows across Node 20 and 22; inspect the exact commit's run rather than treating an older green as current proof, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 **Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
 What each release added: coverage-liveness (v0.9.0, no green over an empty/mis-scoped suite), inter-suite discovery + flaky/quarantine + human-review telemetry (v0.10.0), a mandatory money-idempotency invariant (v0.11.0), contract baseline from an OpenAPI spec (v0.12.0), an advisory-first mutation-on-diff judge (v0.13.0), adversarial-stat integrity hardening (v0.14.0), the money-strict profile and foot-gun caps (v0.15.0), receipt signing (v0.16.0), a full-codebase adversary sweep (v0.17.0), the shadow-trial scorecard (v0.18.0), and doc-accuracy guards (v0.18.2). See the [Changelog](CHANGELOG.md).
 
 ## Known limitations (read this before adopting on a critical path)
 
-These are the honest gaps as of 0.18.2. The architectural invariants are real and the earlier bypass/retention limitations are now fixed (head-SHA-bound TTL bypass in 0.4.0, allowlist read at default-branch HEAD and 365-day receipt retention in 0.6.0).
+These are the deployment boundaries for v0.19.0. The new publisher isolates write authority, rechecks live head/review evidence and retains audit artifacts for 90 days. Repository policy and approved archival requirements still need verification.
 
 1. **Proven on third-party OSS and earlier on an internal repo, not yet on a live production service.** The cold-plug proofs run on real third-party repos and the gate caught real bugs on an internal TypeScript service earlier, but the v0.9.0+ capabilities have not yet run against a live production money path. That proof needs a sandbox environment.
 
 2. **The mutation judge ships ADVISORY by default.** Surviving mutants are a FLAG, not a block, on purpose, so it never sprays false reds before you have measured the false-red rate on your own repo. Ratchet it to `blocking` once that rate is near zero. Its real CI-time and false-positive rate on a given repo are an operational measurement, not a published number.
 
-3. **The receipt is content-hashed and signable.** It is tamper-evident (any edit changes the hash) and, as of v0.16.0, can be cryptographically signed: `fqe receipt sign` / `fqe receipt verify` (HMAC-SHA256 over the commit + content-hash + inputs + verdict + bypass tuple, fail-closed on tamper). Sigstore keyless signing (OIDC, non-repudiable) is documented as a CI recipe in [docs/recipes/receipt-signing.md](docs/recipes/receipt-signing.md). The HMAC signing key must be kept out of untrusted runner subprocesses (fqe strips it from the runner env).
+3. **The receipt is content-hashed and signable.** It is tamper-evident (any edit changes the hash) and, as of v0.16.0, can be cryptographically signed: `fqe receipt sign` / `fqe receipt verify` (HMAC-SHA256 over the validated known receipt fields, including run identity, timestamps and runner evidence, fail-closed on tamper). Sigstore keyless signing (OIDC, non-repudiable) is documented as a CI recipe in [docs/recipes/receipt-signing.md](docs/recipes/receipt-signing.md). The HMAC signing key must be kept out of untrusted runner subprocesses (fqe strips it from the runner env).
 
 4. **The default install pins a git tag, which is force-pushable.** For production, pin to a commit SHA. See [docs/getting-started.md](docs/getting-started.md#production-install-sha-pinned).
 
@@ -213,7 +205,7 @@ These are the honest gaps as of 0.18.2. The architectural invariants are real an
 | Runs server-side | Yes | No (local-only) | Yes | Yes |
 | Deterministic verdict | Yes (~600 LOC, readable) | N/A | No (opinionated) | Depends on your code |
 | Tamper-evident receipt | Yes (SHA-bound) | No | No | Depends |
-| Server-authoritative bypass | Yes (Events API) | No | No | No (file-based) |
+| Server-authoritative bypass | Yes (comments API) | No | No | No (file-based) |
 | Statistical bounds on AI evals | Yes (Wilson CI) | No | No | No |
 | LLM in the verdict path | No | N/A | No | Depends |
 
@@ -223,7 +215,7 @@ fqe and husky are complementary. Use husky for fast local checks before push. Us
 
 ```bash
 rm .fqe.yml
-rm -r .github/workflows/fqe-quality.yml .github/workflows/fqe-second-approve.yml
+rm -r .github/workflows/fqe-quality.yml .github/workflows/fqe-publish.yml
 rm .github/fqe-bypass-allowlist.yml .github/fqe-second-reviewers.yml
 rm -r .github/fqe-state/
 ```
@@ -241,3 +233,15 @@ MIT. See [LICENSE](LICENSE).
 ## Security
 
 Security reports to `chris.wyatt@finexio.com` with subject `[fqe-security]`. See [SECURITY.md](SECURITY.md) for the threat model.
+
+## v0.19 trust and migration
+
+The evaluation workflow is read-only and does not retain checkout credentials. The default-branch publisher never executes PR code. It binds a receipt to a completed source run, its exact head and attempt; checks current GitHub comments, allowlists and head-bound approvals; and persists audit history in immutable workflow artifacts. Changes to the gate, reviewer rules and QA instructions need an authorized non-author review.
+
+Upgrade both workflows to the same reviewed SHA with `fqe init --ref <40-char-sha>` in a clean review branch. Inspect the diff before using `--force` on an existing install. Remove the retired second-approve workflow after review. Configure actual runners and at least one independent second reviewer. No artifact history is reported as no evidence, not a measured zero rate; the window covers observed retained audit records.
+
+A receipt attests what happened at verification time. A cached GitHub check is not a continuous authorization service: require re-verification before merging an old bypass or after changing access policy. Branch protection and workflow ownership remain part of the security boundary. Standard PRs are supported; merge-queue enforcement must be separately verified before adoption.
+
+The payments scaffold is a template. Its detector is a heuristic. Add real money and contract tests; use `--with-mutation` only after installing Stryker. Mutation is judged as a deterministic mutant set, not an independent random sample requiring hundreds of observations.
+
+Bypass history is read only to authorize a bypass; missing history never cancels a clean ordinary test result. For a bypass request, missing or unsupported audit schemas fail closed. New artifacts use v2 names with the server-bound source head SHA so repeated attempts cannot dilute the rate.

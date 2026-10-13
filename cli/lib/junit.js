@@ -64,6 +64,7 @@ function parseJUnit(xml) {
   let m;
   let reported = 0;
   let skipped = 0;
+  let failed = 0;
   const ids = [];
   while ((m = testcaseRe.exec(text)) !== null) {
     reported++;
@@ -71,6 +72,8 @@ function parseJUnit(xml) {
     const inner = m[3] || ''; // undefined/'' when self-closed
     const statusAttr = attr(attrs, 'status').toLowerCase();
     const isSkipped = /<skipped\b/.test(inner) || SKIPPED_STATUSES.has(statusAttr);
+    const structure = inner.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+    if (/<(?:failure|error)\b/.test(structure) || ['failed', 'failure', 'error'].includes(statusAttr)) failed++;
     if (isSkipped) skipped++;
     const cn = attr(attrs, 'classname');
     const nm = attr(attrs, 'name');
@@ -85,7 +88,33 @@ function parseJUnit(xml) {
     );
   }
 
-  return { reported, skipped, executed: reported - skipped, ids };
+  // Some reporters expose setup/teardown errors only on the suite, not a testcase.
+  let suiteTotalFailed = 0;
+  const suites = [];
+  const suiteStructure = text.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  for (const match of suiteStructure.matchAll(/<\/?testsuite\b([^>]*)>/g)) {
+    if (match[0].startsWith('</')) {
+      const suite = suites.pop();
+      if (!suite) throw new Error('junit: unmatched testsuite close');
+      const total = Math.max(suite.declared, suite.children);
+      if (suites.length) suites[suites.length - 1].children += total;
+      else suiteTotalFailed += total;
+      continue;
+    }
+    let declared = 0;
+    for (const key of ['failures', 'errors']) {
+      const value = attr(match[1], key);
+      if (value && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))) throw new Error(`junit: ${key} count is malformed`);
+      declared += Number(value || 0);
+    }
+    if (match[0].endsWith('/>')) {
+      if (suites.length) suites[suites.length - 1].children += declared;
+      else suiteTotalFailed += declared;
+    } else suites.push({ declared, children: 0 });
+  }
+  if (suites.length) throw new Error('junit: unclosed testsuite');
+  failed = Math.max(failed, suiteTotalFailed);
+  return { reported, skipped, executed: reported - skipped, failed, ids };
 }
 
 module.exports = { parseJUnit };

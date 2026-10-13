@@ -32,13 +32,13 @@ Three differences:
 
 1. **Deterministic verdict aggregation.** fqe reads exit codes from N runners and computes one verdict via about 600 lines of pure code. You can read that code. You can run it locally. You can audit it.
 2. **Tamper-evident receipts.** fqe emits a QA-RESULT.yml bound to the commit SHA. You can prove what was checked.
-3. **Server-authoritative bypass.** Your custom workflow can be bypassed by anyone with write access. fqe's bypass uses GitHub Events API identity, requires an allowlisted actor, and gets logged in a rolling rate that auto-escalates when abused.
+3. **Server-authoritative bypass.** Your custom workflow can be bypassed by anyone with write access. fqe's bypass uses GitHub comments API identity, requires an allowlisted actor, and gets logged in a rolling rate that auto-escalates when abused.
 
 If you're a 2-person team, you don't need fqe. If you're a 10-person team shipping financial models, you probably do.
 
 ## Can I use this without putting fqe between my team and production?
 
-Yes. Empty `.fqe.yml` (or no `.fqe.yml` at all) means the gate runs but always passes. Use this to deploy the workflow infrastructure without enforcing anything, then add runners one at a time as the team agrees on each rule.
+The standard scaffold blocks until required runners exist. You can deploy the workflow infrastructure before enabling branch protection; do not treat an empty gate as proof of quality. Older configs without `require_nonempty_gate` can still pass without meaningful coverage.
 
 ## What happens if fqe itself has a bug?
 
@@ -50,10 +50,10 @@ The only way fqe blocks your PR is if a runner you configured returned a non-zer
 
 Post a SHA-bound PR comment: `/fqe-bypass <head-sha> <24h|48h|72h>`. (The old unbounded `fqe-bypass` label was removed in v0.4.0.) Caveats:
 
-1. You must be on the `.github/fqe-bypass-allowlist.yml` list at the PR's BASE commit (a PR cannot add itself to the list).
+1. You must be on the `.github/fqe-bypass-allowlist.yml` list at the live default branch (a PR cannot add itself to the list).
 1b. The `<head-sha>` must equal the live head SHA, so any new push invalidates the bypass; it also expires on the stated TTL.
-2. Every bypass is logged in `bypass-tally.jsonl`.
-3. If the rolling 14-day bypass rate exceeds 10%, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer adds the `fqe-second-approved` label.
+2. Every published attempt has a server-side audit artifact; missing history fails closed.
+3. If a bypass is requested and the rolling 14-day bypass rate exceeds 10%, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer approves the current head through a GitHub review.
 
 fqe does not punish bypass. It audits it. If you're consistently bypassing, the gate is wrong, not you.
 
@@ -77,7 +77,7 @@ Delete these files from your repo:
 
 - `.fqe.yml`
 - `.github/workflows/fqe-quality.yml`
-- `.github/workflows/fqe-second-approve.yml`
+- `.github/workflows/fqe-publish.yml`
 - `.github/fqe-bypass-allowlist.yml`
 - `.github/fqe-second-reviewers.yml`
 - `.github/fqe-state/` (directory)
@@ -86,7 +86,7 @@ Then remove `fqe/pass` and `fqe/second-reviewer-required` from your branch prote
 
 ## What's the upgrade path?
 
-Tags follow semver: `fqe-v<major>.<minor>.<patch>`. To upgrade, find the new tag in github.com/booyajones/fqe, then update the `FQE_REF="fqe-v0.18.21"` line in `.github/workflows/fqe-quality.yml` (it takes a tag or a 40-char SHA). Breaking changes are called out per release in `CHANGELOG.md`.
+Tags follow semver: `fqe-v<major>.<minor>.<patch>`. To upgrade, find the new tag in github.com/booyajones/fqe, then update the `FQE_REF="fqe-v0.19.0"` line in `.github/workflows/fqe-quality.yml` (it takes a tag or a 40-char SHA). Breaking changes are called out per release in `CHANGELOG.md`.
 
 ## Who maintains it?
 
@@ -94,7 +94,7 @@ Chris Wyatt (@booyajones), with additional maintainers as the team scales. Bug r
 
 ## Will this slow my CI down?
 
-About 20 seconds per PR for the install step (clone + npm install + yq download). Once the Docker image is published (planned for v0.2), this drops to ~3 seconds. The verdict + receipt generation itself is under 1 second for a typical PR.
+Measure installation, runner execution and GitHub verification on your own repo. The templates use ref-pinned source, `npm ci`, a separate publisher and paginated audit-history calls; there is no published latency guarantee or required Docker image.
 
 If your configured runners are slow, that's your runner's cost, not fqe's. Use the `when` glob to scope runners tightly.
 

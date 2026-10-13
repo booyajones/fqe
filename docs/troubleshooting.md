@@ -18,7 +18,7 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Root cause:** an old version of the `parseFlags` helper treated `--output-text "$BODY"` as a boolean true when `$BODY` started with `--` (e.g., a YAML frontmatter delimiter `---`).
 
-**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Re-pin the workflow's `FQE_REF` to `fqe-v0.18.21` (the current tag) to pick it up. If you've pinned an older SHA, bump it.
+**Fix:** this was fixed back in v0.1.0, so every current release already carries it. Pin both workflows to the same reviewed full FQE commit SHA that contains the fix. `fqe-v0.19.0` is a release candidate, not a published tag; until release, install by the reviewed SHA and pass that SHA to `init --ref`.
 
 ### `fqe: error: 'gh' CLI not found on PATH`
 
@@ -26,7 +26,7 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Root cause:** the runner image doesn't have `gh` installed. GitHub-hosted `ubuntu-latest` has it by default. Self-hosted runners often don't.
 
-**Fix:** the workflow exits with code 4 (INFRA) here, which maps to a neutral Check Run. It does NOT block your merge. If you want to fix it: install `gh` on your runner image, OR switch to `runs-on: ubuntu-latest`.
+**Fix:** install `gh` on the trusted publisher runner, or use `runs-on: ubuntu-latest`, then rerun the failed **FQE Publish** run. `fqe status publish` exits 4 (INFRA) before it can create a Check Run. Exit 4 does not publish a neutral check. The publisher job fails, and a required check can remain missing or retain an older result. Verify fresh `fqe/pass` and `fqe/second-reviewer-required` results on the current head before merging.
 
 ### `fqe: infra: gh api call failed with exit N`
 
@@ -34,7 +34,7 @@ Exact error message, exact fix. If you hit an error not listed here, please open
 
 **Root cause:** GitHub API returned an error (rate limit, 5xx, network blip).
 
-**Fix:** wait and re-run. Exit code 4 means the Check Run is neutral. Your merge is NOT blocked. If it persists for hours, GitHub may be having an incident. Check status.github.com.
+**Fix:** resolve the API error and rerun the failed **FQE Publish** run. Check token permissions and authentication as well as rate limits, networking and [GitHub status](https://www.githubstatus.com/). Exit 4 reports a publication failure; it does not create a neutral Check Run. Verify both fresh checks on the current head after retrying. Required-check behavior depends on the checks actually stored in GitHub, not the local exit code.
 
 ### `fqe: error: required runner "X" did not run`
 
@@ -108,7 +108,7 @@ If you've added `fqe-quality.yml` to your repo and it's running, but PRs can sti
 Two paths:
 
 1. **Fix the underlying failure.** Run `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/` locally, read the explainer output, apply the fix. Usually 2-5 minutes. Pass the same `--base` CI uses, or you will be gating a different range than the one that is blocking you.
-2. **Bypass with a `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment** if you have repo-write and you're on `.github/fqe-bypass-allowlist.yml`. The comment must name the exact current head SHA (run `git rev-parse HEAD`), so any new push invalidates it and you re-post. It is valid only within its TTL, and an edited comment is rejected. Re-run the fqe check after posting so it re-evaluates. Bypass is logged in the rolling tally. If your team's bypass rate goes above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer second-approves.
+2. **Bypass with a `/fqe-bypass <head-sha> <24h|48h|72h>` PR comment** if you have repo-write and you're on `.github/fqe-bypass-allowlist.yml`. The comment must name the exact current head SHA (run `git rev-parse HEAD`), so any new push invalidates it and you re-post. It is valid only within its TTL, and an edited comment is rejected. A comment does not start a workflow: there is no `issue_comment` trigger. Rerun the **FQE Publish** run associated with this exact head so it re-reads comments and current authority. The publisher stores immutable audit artifacts and checks completed-run coverage. If you request a bypass when your team's rate is above 10% in a 14-day window, the `fqe/second-reviewer-required` check goes red until a different allowlisted reviewer approves this head. Oracle or grading-rule changes also require independent current-head approval, even without a bypass. Verify the publisher's refreshed receipt and both check results before merging.
 
 `fqe` does not punish bypass. It audits it.
 
@@ -128,5 +128,5 @@ Currently detected markers:
 ## Still stuck?
 
 1. Run `fqe explain` (in the affected repo). Paste the output.
-2. Run `node --version`, `gh --version`, `yq --version`. Paste the output.
+2. Run `node --version`, `gh --version`, `fqe version`. Paste the output.
 3. Open an issue at github.com/booyajones/fqe with the PR or run-id where the error occurred.

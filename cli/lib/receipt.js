@@ -5,7 +5,7 @@
  *
  * The receipt is the load-bearing artifact of the entire QA gate.
  * Two physical files per run, sharing identity:
- *   - QA-RESULT.yml      machine-readable (workflow reads .verdict via yq)
+ *   - QA-RESULT.yml      machine-readable (validated by the trusted publisher)
  *   - QA-RESULT.md       human-readable copy (same YAML frontmatter + markdown body)
  *
  * Why two files: GitHub Actions `yq` on a markdown file with YAML frontmatter
@@ -14,9 +14,9 @@
  *
  * Architectural invariant bindings enforced here:
  *   - commit_sha is bound at write time, validated at parse time
- *   - content_hash covers ALL files at that commit
+ *   - content_hash covers the changed file bytes; the commit identifies the tree
  *   - inputs_hash covers runner configs at that commit
- *   - bypass.requester_source MUST equal "github_events_api_v3" or parse rejects
+ *   - bypass.requester_source MUST name an allowed server API source or parse rejects
  *     (closes v5 attacker-controlled-identity flaw)
  *   - verdict is computed by verdict.js, never authored as text
  */
@@ -357,6 +357,7 @@ function parseReceiptYaml(yamlText) {
       `parseReceiptYaml: schema_version mismatch — got ${value.schema_version}, expected ${SCHEMA_VERSION}`
     );
   }
+  validateCtx(value);
   // Re-validate the identity invariant on parse too
   if (value.bypass && !REQUESTER_SOURCES_OK.has(value.bypass.requester_source)) {
     throw new Error(
@@ -414,6 +415,9 @@ function parseBlock(lines, startIdx, baseIndent) {
     const m = line.slice(ind).match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
     if (!m) { i++; continue; }
     const key = m[1];
+    if (['__proto__', 'constructor', 'prototype'].includes(key) || Object.prototype.hasOwnProperty.call(result, key)) {
+      throw new Error(`parseReceiptYaml: unsafe or duplicate key '${key}'`);
+    }
     const after = m[2];
     if (after === '' || after === undefined) {
       // nested block

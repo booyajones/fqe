@@ -54,18 +54,6 @@ the non-repudiation layer an external auditor verifies independently.
 
 ## Honest scope
 
-- **What the signature covers:** the canonical tuple `schema_version`, `fqe_version`,
-  `commit_sha`, `content_hash`, `inputs_hash`, `verdict`, and the `bypass` block. Because
-  `content_hash` covers every file at the commit and `bypass` records the human override
-  authority, tampering any of these (including injecting or altering a bypass) breaks the
-  signature.
-- **What it does NOT cover:** `verdict_reasons` and the `runners` evidence array. These are
-  human-readable, reproducible by re-running fqe, and are left out so the signed payload stays
-  stable across a YAML round-trip. Do not treat HMAC verification as proof those fields are
-  untouched; re-run fqe, or use the Sigstore bundle over the full file, to attest them.
-- HMAC proves key possession (the CI runner held `FQE_SIGNING_KEY`). It is a real step up from a
-  bare hash, and it is fully deterministic and testable offline.
-- Sigstore keyless is the SOC2 / PCI-grade answer: identity-bound, non-repudiable, logged. It
-  needs CI (the OIDC token) and so is wired as a workflow step, not the offline default.
-- The receipt is now tamper-proof against anyone who lacks the key; with Sigstore it is also
-  attributable to a specific CI identity.
+Current HMAC signatures cover commit and content hashes, inputs, verdict, bypass authority, diff scope, workflow attempt, timestamps, runner results, required classes, reasons and evidence paths. Legacy signatures remain verifiable for their original field list; verification explicitly reports present fields the old signature never covered. Do not trust those fields without a fresh verification.
+
+The commit identifies the tracked tree. The content hash binds changed working-tree bytes; it is not a hash of every receipt field. The signing key stays only in the trusted publisher. HMAC proves possession of that shared key; Sigstore is the separate identity-bound signing layer. Neither proves the business assertions were adequate or that a live payment path was tested.

@@ -2,6 +2,15 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.19.0] - Unreleased
+
+- Separate read-only PR evaluation from trusted default-branch publication. Bind source run, head and attempt, re-check current allowlists and current-head reviews, retain immutable audit history, and reject stale or malformed evidence.
+- Fail closed on missing mutation payloads and failing JUnit reports even when the child exits zero. Preserve aggregate survivor counts. Configure the actual deterministic mutation judge rather than applying Wilson sampling bounds to code mutants.
+- Sign workflow identity, timestamps and runner evidence; retain explicit legacy signature coverage. Reject duplicate and prototype receipt keys and remove stale output on unsuccessful runs.
+- Correlate later applied bypasses with prior failures, and label unresolved failures as candidates rather than proven bugs.
+- Generate from one canonical workflow source, add immutable `init --ref` pinning, remove the retired label workflow and local-only audit state, and block hollow standard installs until real runners are configured.
+
+
 ## [Unreleased]
 
 ### Fixed (doc guards)

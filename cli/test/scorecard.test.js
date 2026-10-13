@@ -85,7 +85,7 @@ test('scorecard: renderScorecard produces the three named metrics', () => {
   const text = renderScorecard(aggregateScorecard([rcpt('FAIL'), rcpt('PASS')]));
   assert.match(text, /false-red rate/);
   assert.match(text, /gate wall-time/);
-  assert.match(text, /true catches/);
+  assert.match(text, /unresolved FAILs/);
 });
 
 // M3: a framework configured ONLY via its config file (no package.json devDep/script) is detected.

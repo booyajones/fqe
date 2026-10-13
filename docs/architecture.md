@@ -1,155 +1,58 @@
 # Architecture
 
-This is the file the skeptical staff engineer reads. It explains the three architectural invariants that everything else in fqe holds, why each one matters, and what would break if any were violated.
+FQE runs declared tools and computes PASS, FLAG or FAIL from their structured evidence. The verdict path is `cli/bin/fqe.js` → `cli/lib/orchestrator.js` → `cli/lib/verdict.js`. Models can propose tests in a separate workflow; no model decides the verdict.
 
-If you'd rather see them in your terminal: `fqe explain` prints these inline.
+## Local execution
 
-## The three invariants
+`fqe run` removes prior receipt outputs before loading configuration, hashes the current checkout inputs and diff, selects runners, validates reports, computes the verdict and writes `QA-RESULT.yml` and `QA-RESULT.md`. Missing configured evidence fails at the relevant boundary. A failed run cannot leave a previous PASS receipt for the caller to reuse.
 
-fqe's design was reviewed across seven rounds by multiple LLM judges (Claude, GPT, DeepSeek, Gemini chairman). Each round caught an architectural flaw and the next iteration fixed it. **This is design-time review by LLMs, not runtime gating by LLMs.** Invariant 2 below explicitly prohibits an LLM from being in the verdict path that decides whether a PR can merge. The two roles do not conflict: LLMs are useful for surfacing critique on a design, and they are unsuitable for non-deterministic operational decisions.
+The configuration opts into required runner classes, coverage liveness, money invariants, mutation gates and other checks. Standard `init` enables `require_nonempty_gate`, so its empty scaffold blocks until required runners exist. Legacy configs that omit this flag retain their behavior; inspect their coverage rather than assuming every PASS is meaningful.
 
-The invariants below are what's left when every fixable flaw in those seven rounds was fixed.
+The core pieces are:
 
-### Invariant 1: No identity claim is read from a file the constrained actor wrote
-
-When a PR author bypasses the gate, fqe identifies them by querying the GitHub Events API:
-
-```
-GET /repos/{owner}/{repo}/issues/{pr}/events
-```
-
-That API returns the server-recorded `actor.login` field for each `labeled` event. fqe takes the actor of the most recent `labeled` event where `label.name` starts with `fqe/bypass-` or equals `fqe-bypass`.
-
-**fqe does not read identity from any of these sources:**
-
-- Commit message body
-- PR body (description)
-- Receipt content (`bypass.requester` in QA-RESULT.yml is informational, never trusted)
-- A file in the PR branch (an attacker controls those)
-
-**Why this matters:** an earlier design (gauntlet round 5) put the bypass requester in the receipt and read it back at second-approve time. The receipt lived in the PR branch. An adversarial bypass requester could have written `bypass.requester: alice` while actually being `bob`, then had Bob approve. The same-actor anti-collusion check would have passed. The fix was to source identity only from server-recorded GitHub events.
-
-**Code that enforces this:** `cli/lib/receipt.js` `buildReceipt` (via `validateCtx`) and `parseReceiptYaml` both reject a `bypass.requester_source` that is not a server-recorded GitHub source. The current bypass path is the SHA-bound `/fqe-bypass` PR comment, so the accepted sources are `github_comments_api_v3` (comment author) and `github_events_api_v3` (legacy labeled-event actor); identity never comes from a PR-branch file.
-
-### Invariant 2: No LLM is in the verdict path
-
-The verdict (PASS, FLAG, FAIL) is computed by `cli/lib/verdict.js`. It is:
-
-- A pure Node function. No `fetch`, no `spawn`, no file I/O.
-- Deterministic. Same inputs produce the same output. No clock, no random.
-- Table-driven tested. `cli/test/verdict.test.js` covers PASS, FAIL, FLAG, edge cases, attacker bypass attempts, malformed inputs.
-
-**Wilson 95% confidence intervals** for adversarial-runner attack-success-rates are computed by `cli/lib/wilson.js`. The thresholds (`outbound ≤ 0.05`, `mcp-read ≤ 0.03`, `mcp-write-or-financial ≤ 0.01`) are `Object.freeze`'d constants in `verdict.js`. Callers select a class by name; they cannot pass an arbitrary threshold.
-
-**Why this matters:** an LLM-in-the-loop verdict means:
-1. **Non-determinism.** Same PR could pass on Tuesday and fail on Wednesday.
-2. **Evaluator drift.** When Claude moves from Opus 4.7 to Opus 4.8, the gate's behavior changes silently.
-3. **An evaluator with its own failure mode.** Prompt-injection in PR content could fool the verdict.
-4. **Auditability collapse.** You can't read a model and know when it blocks.
-
-You can read about 600 lines of `verdict.js` and know exactly when fqe blocks. That readability is the design.
-
-**Code that enforces this:** the verdict path is `bin/fqe.js` → `lib/orchestrator.js` → `lib/verdict.js`. No `require` of any LLM SDK. The only places fqe talks to an LLM are in user-configured runners (e.g., a Promptfoo runner the user adds to `.fqe.yml`). Those runners feed deterministic numbers back to `verdict.js`.
-
-### Invariant 3: No required state lives only in the PR branch
-
-Every output fqe needs at decision time persists in at least one of these server-side stores:
-
-| Output | Storage |
+| Source | Responsibility |
 |---|---|
-| Receipt (QA-RESULT.yml + QA-RESULT.md) | (a) GitHub Actions workflow artifact, (b) GitHub Check Run output text |
-| Verdict | (a) GitHub Check Run conclusion (success/failure/neutral), (b) `fqe status print` reads server-side state |
-| Bypass identity | GitHub Events API (`/issues/{pr}/events`) |
-| Bypass-tally state | `.github/fqe-state/bypass-tally.jsonl` committed to the protected branch (not PR branch). Read-only from the PR's perspective. |
-| Allowlist | `.github/fqe-bypass-allowlist.yml` at the PR's BASE commit (a PR cannot modify its own allowlist) |
+| `config_schema.js`, `orchestrator.js` | Validate configuration, choose runners and collect execution evidence |
+| `junit.js` | Validate reports and count executed, skipped and failed/error cases |
+| `mutation_gate.js` | Preserve mutation counts and apply advisory or blocking thresholds |
+| `verdict.js` | Deterministic aggregation; failures and flags cannot be cleared by a later pass |
+| `receipt.js`, `signature.js` | Validate and serialize evidence; optionally sign its known scope |
+| `ci_guard.js` | Native GitHub authority, source-run binding, current reviews and audit history |
+| `bypass_guard.js`, `oracle_guard.js` | Validate bypass comments and classify grading/oracle changes |
 
-**Why this matters:** the receipt was originally committed to the PR branch as `audits/<sha>/QA-RESULT.yml`. An attacker could have edited it post-write. The mitigation is two-layer: (a) the workflow artifact is immutable per run, (b) the Check Run output text is server-side. Both are pinned to the commit SHA they were generated against.
+The Stryker runner emits a mutation report. Its kill ratio is a deterministic mutation-quality signal; it is not treated as independent trials for a Wilson attack-success interval. Wilson bounds remain available for properly configured adversarial experiments.
 
-**Code that enforces this:** the workflow template at `cli/lib/init.js` `FILES['.github/workflows/fqe-quality.yml']` uses `actions/upload-artifact@v4` plus an explicit `fqe status publish` step. The receipt's `commit_sha` field is checked at `status publish` time against `github.event.pull_request.head.sha`.
+## GitHub execution and authority
 
-## What the verdict logic actually does
-
-`computeVerdict` runs a fixed sequence of passes over its input. Each pass may only
-ADD a FLAG or a FAIL. No pass clears one, which is why the order does not matter to
-the verdict and why a new pass cannot weaken an existing guarantee. That property is
-not left to convention: `test/source_hygiene.test.js` fails the build if either
-accumulator is assigned anything but the literal `true`. Its reach is honest rather
-than total, and worth knowing: it is a regex over stripped source, so it catches
-every *direct* assignment but not aliasing (`let h = hasFail; h = false`),
-destructuring, or property writes. `verdict.js` uses plain directly-assigned locals,
-so that is sufficient for the code as written, and the guard is what makes changing
-that a visible decision.
-
-Order does not matter to the *verdict*. It can matter to the `reasons` list: a
-malformed adversarial count makes `wilson95()` throw inside Pass 3, so Passes 4-12
-never run and their reasons never appear. That fails closed, so the merge decision
-is unaffected, but a receipt read alongside this table may hold fewer reasons than
-the table implies.
-
-```
-Pass 1   required runner declared but did not run            -> FAIL
-Pass 2   runner ran: exit_code non-numeric / NaN / non-zero  -> FAIL
-           (an ACTIVE quarantine downgrades it to FLAG; an
-            EXPIRED quarantine does not shield it)
-           passed only after a retry                         -> FLAG
-Pass 3   adversarial stats: Wilson 95% upper bound is
-           RECOMPUTED here from raw (successes, n). Any
-           runner-supplied ci_95 is IGNORED.
-           bound > canonical threshold for blast_radius      -> FLAG
-           ...same breach on mcp-write-or-financial          -> FAIL
-           missing / unknown blast_radius                    -> FAIL
-Pass 4   a runner owing adversarial stats emitted none       -> FAIL
-Pass 5   a required test class has no runner that passed     -> FAIL
-Pass 6   coverage-liveness: declared report missing, stale
-           or unparseable / too few non-skipped tests ran /
-           inventory reconciliation impossible               -> FAIL
-           ran fewer tests than were collected               -> FLAG (FAIL if strict)
-Pass 7   a test suite exists that no runner targets          -> FLAG (FAIL if strict)
-Pass 8   require_money_idempotency on, but no passing runner
-           PROVED the idempotency invariant with coverage    -> FAIL
-Pass 9   mutation judge: surviving mutants on the diff       -> FLAG (FAIL if blocking)
-Pass 10  money-looking code changed, no money policy set     -> FLAG (FAIL if strict)
-Pass 11  a policy require_for glob matches no file           -> FLAG (FAIL if strict)
-Pass 12  require_nonempty_gate on, but the gate has no teeth -> FAIL
-
-if hasFail: verdict = FAIL (exit 2)
-elif hasFlag: verdict = FLAG (exit 3)
-else: verdict = PASS (exit 0)
+```mermaid
+flowchart LR
+  PR[Exact PR head] --> Q[Read-only FQE Quality]
+  Q --> A[Source receipt artifact]
+  A --> P[Default-branch FQE Publish]
+  G[Live GitHub head, allowlists, comments and reviews] --> P
+  H[Immutable audit history] --> P
+  P --> C[Required checks]
+  P --> R[Verified receipt and audit artifact]
 ```
 
-That is the whole decision surface: about 600 lines, no LLM, no clock, no I/O, no
-randomness. Same inputs always produce the same output.
+The evaluation job executes PR code with a read-only token and no persisted checkout credential. The publisher installs a reviewed FQE ref, consumes evidence as data and does not execute PR code. `ci-verify` requires the receipt's commit and source run/attempt to match the completed GitHub run and the currently open PR head. The source workflow must have completed successfully before a clean receipt is accepted.
 
-The recompute in Pass 3 is worth dwelling on, because the earlier version of this
-document described the opposite behavior. Until v0.14.0 the gate trusted the
-interval a runner reported. A runner could then report a real 50-out-of-100
-attack run alongside a fabricated interval of [0, 0.0001] and sail past the 0.01
-money bar. The statistical method is policy, so it now lives in the deterministic
-core: a runner supplies raw counts and nothing else.
+FQE Quality starts on configured PR and review events. FQE Publish starts only when FQE Quality completes; there is no comment trigger. After an approved bypass comment, rerun the publisher associated with the current head.
 
-## What fqe deliberately does NOT do
+The publisher resolves bypass identity from GitHub comments and reviewers from GitHub reviews. It reads allowlists at the current default branch. Only the latest non-pending, non-comment review for each account counts; it must approve this head and come from a currently allowlisted account other than the author/requester. Oracle changes always require independent review. A bypass request at a rate over 10% also requires it; ordinary clean PRs do not.
 
-Bounded scope is a trust signal. fqe does not:
+Audit artifacts have immutable names binding publisher run and attempt. History is paginated and checked against server metadata. A latest completed publisher without a record, a conflicting record or incomplete inventory fails closed. The rate counts distinct audited PR heads in 14 days, not unique PRs. No history is unknown; it is never silently presented as zero.
 
-- **Decide what's a good code change.** That's code review.
-- **Run static analysis.** Use ESLint, Ruff, Semgrep. fqe runs them via your `.fqe.yml` and reads their exit codes.
-- **Replace your existing CI.** It runs alongside. Your Playwright, your Jest, your pytest all keep running.
-- **Score subjective quality.** No "code beauty" runner. No "this commit message is mid" runner.
-- **Block based on coverage delta.** Coverage gates are configurable in your own CI, not in fqe.
-- **Auto-merge anything.** Verdict says yes or no. Merge is a human action.
+A CLI INFRA exit (4) does not create a neutral check. The generated publisher defaults both check states to failure if verification fails. If publication itself fails, its strict shell exits and a check may be missing or retain an older result; inspect fresh current-head checks after repair.
 
-## Three commitments that shape every decision
+## Evidence limits
 
-1. **Engineers don't get locked out by fqe's own bugs.** Exit code 4 (INFRA) emits a Check Run with conclusion `neutral`. GitHub API timeouts, missing `gh` binary, transient runner crashes all map here. **A neutral conclusion does NOT block merges in GitHub's branch protection model: required checks treat `neutral` as success.** If you observe `neutral` blocking, the issue is your branch-protection setting "Require branches to be up to date before merging" combined with a state quirk, not `fqe` policy. The exit-code taxonomy (0 PASS, 1 ERROR, 2 FAIL, 3 FLAG, 4 INFRA/neutral) is defined in `cli/bin/fqe.js`, and the verdict logic that produces it is pinned in `cli/test/verdict.test.js`.
+Receipts describe what configured runners reported. A source job that controls its own tests can manufacture weak evidence; protected grading rules and independent review are necessary. Optional HMAC signing in the trusted publisher authenticates the validated known fields, including runner evidence, run identity and timestamps. It does not prove that the product works or that the signer has the right organizational authority.
 
-2. **Bypass is a deliberate, audited act.** Every bypass writes to `bypass-tally.jsonl`, posts to a Check Run, gets archived in `audits/<sha>/`. Rolling rate above 10% in 14 days flips the `fqe/second-reviewer-required` check to FAIL, requiring an allowlisted second approver.
+A cached green GitHub check is a point-in-time result. Expiration or access changes need a rerun; they do not automatically invalidate a previously posted check. Publisher bootstrap, branch protection, forks, review events and merge queues need dedicated native acceptance tests. Artifact retention is 90 days by default and is not a compliance guarantee. See [SECURITY.md](../SECURITY.md) for deployment controls and [writing a runner](writing-a-runner.md) for the evidence contract.
 
-3. **Engineers can read the source and run it locally.** No proprietary binaries. No closed-source dependency. `fqe explain` prints the audit. `fqe run --commit $(git rev-parse HEAD) --base origin/main --output ./out/` reproduces the CI behavior on your laptop.
+The engine self-hosts its spec-mutation, requirement-trace and ledger-reconciliation checks. These checks join the stable required `test` aggregator with unit tests, documented-count validation and packed installation tests.
 
-## See also
+Publisher signatures attest to validated commit/run binding and current server authority, while recording the source job's runner claims. They do not establish honest runner output: PR code can forge data inside its own evaluation job. Protected grading rules, independent review and meaningful negative controls remain necessary.
 
-- [docs/getting-started.md](getting-started.md), the 5-minute onboarding.
-- [docs/writing-a-runner.md](writing-a-runner.md), how to add a runner to your `.fqe.yml`.
-- [docs/troubleshooting.md](troubleshooting.md), exact-error to exact-fix lookup.
-- [SECURITY.md](../SECURITY.md), threat model and reporting.
-- The actual verdict source: `cli/lib/verdict.js` (about 600 lines, read it).
+Bypass history is read only to authorize a bypass; missing history never cancels a clean ordinary test result. For a bypass request, missing or unsupported audit schemas fail closed. New artifacts use v2 names with the server-bound source head SHA so repeated attempts cannot dilute the rate.
