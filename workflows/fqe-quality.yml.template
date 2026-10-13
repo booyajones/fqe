@@ -24,7 +24,7 @@ jobs:
       - name: Install fqe CLI (ref-pinned)
         run: |
           set -euo pipefail
-          FQE_REF="fqe-v0.19.0"
+          FQE_REF="fqe-v0.19.1"
           FQE_SRC="$(mktemp -d "${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
           git -C "$FQE_SRC" init -q .
           git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"

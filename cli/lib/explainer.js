@@ -33,6 +33,34 @@ function explainReason(reason, ctx = {}) {
   const commitCmd = ctx.commit_sha ? `--commit ${ctx.commit_sha}` : '--commit $(git rev-parse HEAD)';
   const repro = `fqe run ${commitCmd} ${baseCmd} --output ./out/`;
 
+  if (reason === 'CI authority guard: changed grading rules require an authorized non-author approval of this head') {
+    return {
+      code: 'CI_ORACLE_REVIEW_REQUIRED',
+      plain_english: 'This PR changes tests, grading rules or other test oracles. The trusted publisher has not found an eligible independent approval of the current head, so both FQE checks remain blocked.',
+      fix: 'Ask a reviewer already listed in the default branch\'s .github/fqe-second-reviewers.yml to approve this exact head. The PR author and bypass requester cannot provide that approval. A new push requires a new current-head approval. After approval, verify the refreshed FQE Publish receipt and both check results; rerun the current-head publisher if needed.',
+      repro_command: '# Inspect this head\'s FQE Publish logs, verified receipt and GitHub reviews.\n# A local fqe run cannot verify server-side review authority.',
+    };
+  }
+
+  if (reason === 'CI authority guard: bypass rate exceeds 10%; a different authorized reviewer must approve this head') {
+    return {
+      code: 'CI_BYPASS_REVIEW_REQUIRED',
+      plain_english: 'A valid bypass was requested, but the audited 14-day bypass rate exceeds 10%. An eligible independent reviewer has not approved this head, so the bypass is not applied and both FQE checks remain blocked.',
+      fix: 'Ask a reviewer already listed in the default branch\'s .github/fqe-second-reviewers.yml, other than the PR author or bypass requester, to approve the current head. Verify that the bypass comment is still valid, then rerun the current-head FQE Publish run and inspect its refreshed receipt and both checks. Posting a comment alone does not trigger a workflow.',
+      repro_command: '# Inspect this head\'s FQE Publish verified receipt, audit rate and GitHub reviews.\n# A local fqe run or local bypass tally cannot satisfy this authority guard.',
+    };
+  }
+
+  const bypass = reason.match(/^BYPASS_OK: by ([A-Za-z0-9][A-Za-z0-9-]{0,38}), (24h|48h|72h), bound to ([a-f0-9]{12}), (\d+\.\d+)h remaining\.$/);
+  if (bypass) {
+    return {
+      code: 'CI_BYPASS_REQUEST_VALID',
+      plain_english: `The publisher found a valid ${bypass[2]} bypass comment from ${bypass[1]}, bound to head ${bypass[3]}, with ${bypass[4]} hours remaining at verification time. This confirms the request, not that the bypass was applied.`,
+      fix: 'Read the remaining authority failures and the receipt\'s bypass.applied field. Satisfy any independent-review requirement, then verify a fresh current-head publisher result before merging. Do not treat a valid comment alone as merge authorization.',
+      repro_command: '# Inspect this head\'s FQE Publish verified receipt and both GitHub checks.',
+    };
+  }
+
   // Pattern 0: the runner could not be started at all. Must be matched BEFORE
   // the generic "did not run", which it would otherwise fall through to.
   let m = reason.match(/^required runner "([^"]+)" FAILED TO START \(([^)]*)\)/);
@@ -281,7 +309,7 @@ function explainVerdict(verdictOutput, ctx = {}) {
     sections.push('');
     sections.push(`**Fix:** ${ex.fix}`);
     sections.push('');
-    sections.push('**Reproduce locally:**');
+    sections.push(ex.code.startsWith('CI_') ? '**Verify in GitHub:**' : '**Reproduce locally:**');
     sections.push('```bash');
     sections.push(ex.repro_command);
     sections.push('```');
