@@ -1,6 +1,6 @@
 # Getting started
 
-Install and verify in a sandbox before requiring the gate on an application. This is the v0.19.1 release candidate. Until its tag exists, use the reviewed full commit SHA in the install command and `--ref`.
+Install and verify in a sandbox before requiring the gate on an application. This guide targets v0.19.1. Until its tag exists, use the reviewed full commit SHA in the install command and `--ref`.
 
 ## Step 1: Add fqe to your repo (one command)
 
