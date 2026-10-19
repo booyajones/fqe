@@ -2,6 +2,13 @@
 
 All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Semver: MAJOR for invariant changes, MINOR for new features under stable invariants, PATCH for bug fixes.
 
+## [0.19.2] - 2026-10-18
+
+- Preserve an `unverified` publisher audit artifact when source evidence or PR context is missing, while retaining failure checks. Unverified records satisfy audit completeness without diluting the bypass rate; no verified evidence remains unknown.
+- Report both simultaneous authority blocks and accept inline comments in strict reviewer allowlists.
+- Correct `fqe explain` guidance for comment identity, publisher audit storage and infrastructure errors.
+- Pin the engine and both generated workflows to the matching release. Upgrade both workflows together.
+
 ## [0.19.1] - 2026-10-13
 
 - Explain expected publisher authority blocks for oracle/grading-rule changes and high-rate bypasses with current-head reviewer and publisher-verification guidance. Valid bypass request details no longer appear as unknown failures when an authority guard blocks application.
@@ -17,12 +24,6 @@ All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.co
 
 
 ## [Unreleased]
-
-### Fixed (Argon review follow-up)
-
-- Preserve an `unverified` publisher audit artifact when source evidence or PR context is missing, while retaining failure checks. Unverified records satisfy audit completeness without diluting the bypass rate; no verified evidence remains unknown.
-- Report both simultaneous authority blocks and accept inline comments in strict reviewer allowlists.
-- Correct `fqe explain` guidance for comment identity, publisher audit storage and infrastructure errors.
 
 ### Fixed (doc guards)
 

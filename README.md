@@ -2,15 +2,15 @@
 
 **A deterministic gate for the checks you configure, with trusted CI publication and an authenticated record of the commit, attempt, result and evidence.**
 
-[![tests](https://img.shields.io/badge/tests-954%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.19.1-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-954%20passing-brightgreen)](cli/test/) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![status](https://img.shields.io/badge/status-v0.19.2-blue)](CHANGELOG.md)
 fqe is an orchestrator. It does not lint, test, or judge. It runs the runners you configure, reads their exit codes, and computes one deterministic verdict in about 600 lines of pure JavaScript with no dependencies. You can read it, run it locally, and audit it.
 
 It also emits a tamper-evident receipt and uses a server-authoritative bypass mechanism, so the gate cannot be skipped silently.
 
-This is the v0.19.1 source. The installation commands below require the `fqe-v0.19.1` GitHub release to exist. Before publication, use a full reviewed commit SHA with `--ref` for generated workflows.
+This is the v0.19.2 source. The installation commands below require the `fqe-v0.19.2` GitHub release to exist. Before publication, use a full reviewed commit SHA with `--ref` for generated workflows.
 
 ```bash
-npx --yes -p github:booyajones/fqe#fqe-v0.19.1 fqe init
+npx --yes -p github:booyajones/fqe#fqe-v0.19.2 fqe init
 git add .fqe.yml .github/
 git commit -m "Add fqe quality gate"
 ```
@@ -172,14 +172,14 @@ Wilson over normal approximation because it stays well-defined at p=0 and p=1. S
 
 ## Status
 
-**v0.19.1.** Expected CI authority blocks now explain the required current-head review and publisher verification. The suite contains 954 tests. CI verifies Linux and Windows across Node 20 and 22; inspect the exact commit's run rather than treating an older green as current proof, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
+**v0.19.2.** Failed publisher attempts retain audit evidence without diluting bypass statistics. Reviewer allowlist comments, simultaneous authority explanations and CLI guidance are corrected. The suite contains 954 tests. CI verifies Linux and Windows across Node 20 and 22; inspect the exact commit's run rather than treating an older green as current proof, and the gate self-hosts (fqe runs its own spec-mutation, requirement-trace, and reconcile checks on itself). The repo is open source under MIT. Public source: github.com/booyajones/fqe.
 **Proven cold on real third-party code, not just demos.** fqe is plugged into a fork of [more-itertools](https://github.com/more-itertools/more-itertools) (Python, ~720 tests) and [semver](https://github.com/dtolnay/semver) (Rust) and runs their own untouched suites through the gate on real GitHub Actions, with a planted mis-scoped run proven to turn the gate red. Three stacks proven (TypeScript, Python, Rust).
 
 What each release added: coverage-liveness (v0.9.0, no green over an empty/mis-scoped suite), inter-suite discovery + flaky/quarantine + human-review telemetry (v0.10.0), a mandatory money-idempotency invariant (v0.11.0), contract baseline from an OpenAPI spec (v0.12.0), an advisory-first mutation-on-diff judge (v0.13.0), adversarial-stat integrity hardening (v0.14.0), the money-strict profile and foot-gun caps (v0.15.0), receipt signing (v0.16.0), a full-codebase adversary sweep (v0.17.0), the shadow-trial scorecard (v0.18.0), and doc-accuracy guards (v0.18.2). See the [Changelog](CHANGELOG.md).
 
 ## Known limitations (read this before adopting on a critical path)
 
-These are the deployment boundaries for v0.19.1. The new publisher isolates write authority, rechecks live head/review evidence and retains audit artifacts for 90 days. Repository policy and approved archival requirements still need verification.
+These are the deployment boundaries for v0.19.2. The new publisher isolates write authority, rechecks live head/review evidence and retains audit artifacts for 90 days. Repository policy and approved archival requirements still need verification.
 
 1. **Proven on third-party OSS and earlier on an internal repo, not yet on a live production service.** The cold-plug proofs run on real third-party repos and the gate caught real bugs on an internal TypeScript service earlier, but the v0.9.0+ capabilities have not yet run against a live production money path. That proof needs a sandbox environment.
 

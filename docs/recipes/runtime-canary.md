@@ -77,7 +77,7 @@ jobs:
       - name: reconcile or halt
         run: |
           set +e
-          npx --yes -p github:booyajones/fqe#fqe-v0.19.1 fqe \
+          npx --yes -p github:booyajones/fqe#fqe-v0.19.2 fqe \
             reconcile --ledger ledger.json
           RC=$?; set -e
           case "$RC" in
