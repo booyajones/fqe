@@ -39,7 +39,8 @@ test('publisher keeps an audit file when evidence or authorization fails', { ski
     const verified = fs.readFileSync(path.join(workspace, 'env'), 'utf8').trim().slice('VERIFIED='.length);
     const markdown = fs.readFileSync(path.join(verified, 'QA-RESULT.md'), 'utf8');
     assert.match(markdown, scenario === 'verified' ? /^Verified receipt\n$/ : /could not be verified/, scenario);
-    assert.equal(fs.readFileSync(path.join(workspace, 'output'), 'utf8'), 'bypass=normal\n');
+    assert.equal(fs.readFileSync(path.join(workspace, 'output'), 'utf8'),
+      `bypass=${scenario === 'verified' ? 'normal' : 'unverified'}\n`);
     const checks = fs.readFileSync(path.join(workspace, 'publish'), 'utf8').trim().split('\n');
     assert.equal(checks.length, 2);
     for (const check of checks) assert.ok(check.includes('--state ' + (scenario === 'verified' ? 'success' : 'failure')), check);
@@ -47,4 +48,5 @@ test('publisher keeps an audit file when evidence or authorization fails', { ski
     assert.ok(checks[1].includes('--check fqe/second-reviewer-required '));
     if (scenario === 'rejected') assert.equal(fs.statSync(path.join(verified, 'verification.json')).size, 0);
   }
+  assert.ok(template.includes("steps.verify.outputs.bypass || 'unverified'"));
 });

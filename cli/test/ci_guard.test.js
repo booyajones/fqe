@@ -69,6 +69,28 @@ test('audit history counts distinct heads and refuses conflicting attempt record
   assert.equal(repeated.denominator, 1);
   assert.equal(repeated.rate, 1);
 });
+test('unverified attempts preserve audit completeness without diluting the bypass rate', () => {
+  const unverified = artifact('fqe-audit-v2-unverified-cccccccccccccccccccccccccccccccccccccccc-12-1', 12);
+  const unknown = rate([unverified]);
+  assert.equal(unknown.numerator, 0);
+  assert.equal(unknown.denominator, 0);
+  assert.equal(unknown.rate, null);
+  const mixed = rate([
+    artifact('fqe-audit-v2-normal-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-10-1'),
+    artifact('fqe-audit-v2-bypass-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-11-1', 11),
+    unverified,
+  ]);
+  assert.equal(mixed.numerator, 1);
+  assert.equal(mixed.denominator, 2);
+  assert.equal(mixed.rate, 0.5);
+  const previousBypass = rate([
+    artifact('fqe-audit-v2-bypass-cccccccccccccccccccccccccccccccccccccccc-10-1'),
+    unverified,
+  ]);
+  assert.equal(previousBypass.rate, 1);
+  assert.equal(previousBypass.denominator, 1);
+  assert.throws(() => rate([{ ...unverified, expired: true }]), /expired/);
+});
 test('missing, expired, misbound or unreadable audit evidence cannot claim a zero rate', () => {
   assert.equal(rate([]).rate, null);
   for (const a of [

@@ -20,7 +20,7 @@ All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.co
 
 ### Fixed (Argon review follow-up)
 
-- Preserve a publisher audit artifact when source evidence or PR context is missing, while retaining failure checks.
+- Preserve an `unverified` publisher audit artifact when source evidence or PR context is missing, while retaining failure checks. Unverified records satisfy audit completeness without diluting the bypass rate; no verified evidence remains unknown.
 - Report both simultaneous authority blocks and accept inline comments in strict reviewer allowlists.
 - Correct `fqe explain` guidance for comment identity, publisher audit storage and infrastructure errors.
 

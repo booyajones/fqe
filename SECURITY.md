@@ -18,7 +18,7 @@ Only an unedited, unexpired `/fqe-bypass <current-head-sha> <24h|48h|72h>` comme
 
 Current-head reviews are checked against the current reviewer allowlist. The author and bypass requester cannot second-approve. A later change request or dismissal invalidates an earlier approval. Oracle and grading-rule changes need independent approval even without a bypass.
 
-For bypass requests, the 14-day bypass rate uses immutable Actions audit artifacts and server run metadata. Missing, expired, duplicate, misbound, unreadable or truncated history blocks verification. Each latest completed publisher run must have an audit record. The denominator counts distinct audited PR heads, including the current one; it is not a count of unique PRs. An empty history is unknown, not a measured zero. Rerun a failed publisher to repair a missing latest record.
+For bypass requests, the 14-day bypass rate uses immutable Actions audit artifacts and server run metadata. Missing, expired, duplicate, misbound, unreadable or truncated history blocks verification. Each latest completed publisher run must have an audit record. Unverified attempts retain an `unverified` record for completeness, but do not enter the rate. The denominator counts distinct heads with verified publisher evidence, including the current requested bypass; it is not a count of unique PRs. A history with no verified evidence is unknown, not a measured zero. Older `normal` records retain their original meaning. Rerun a failed publisher to repair a missing latest record.
 
 Posting a bypass comment does not trigger a workflow. Rerun the FQE Publish run associated with the current head and verify both refreshed checks and its receipt.
 

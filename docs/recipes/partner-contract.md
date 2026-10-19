@@ -107,7 +107,9 @@ TypeScript shape is the same, swap the command for your runner:
 
 Once it is a runner, `fqe run` fires it whenever a matching file changes, reads its exit code, and folds it into the one verdict and receipt. No special invocation needed beyond the `.fqe.yml` block above.
 
-Exit codes (the contract command's own exit, which fqe reads): **0 = PASS, 2 = FAIL (merge blocked), 4 = INFRA** (the live partner was unreachable during a scheduled refresh, neutral, so a partner outage does not block unrelated merges).
+The required contract runner must start and exit 0. A non-zero exit, including 4, produces FAIL; a live partner outage during a scheduled refresh does not automatically become neutral. Keep refreshes separate from offline PR replay. Retain the cassette freshness guard.
+
+An fqe CLI exit 4 (INFRA) means the command could not produce a usable result; it does not publish a neutral check. The generated publisher fails if verification fails. Repair the cause. Rerun the affected command. Rerun the current-head publisher. Verify a fresh receipt and both current-head checks before merging.
 
 ## The 10-minute on-ramp
 
