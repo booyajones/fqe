@@ -52,6 +52,17 @@ test('exit code taxonomy lists all 5 codes including INFRA=4', () => {
   assert.match(data.exit_code_taxonomy[1], /ERROR/);
 });
 
+test('explain describes current bypass identity, publisher audit storage and infrastructure failure', () => {
+  const data = explain({ dir: freshDir() });
+  assert.match(data.invariants[0].plain_english, /GitHub comments API/);
+  assert.doesNotMatch(data.invariants[0].plain_english, /Events API|labeled:fqe\/bypass/);
+  assert.match(data.invariants[2].plain_english, /default-branch publisher/);
+  assert.match(data.invariants[2].plain_english, /artifacts/);
+  assert.doesNotMatch(data.invariants[2].plain_english, /committed to audits\//);
+  assert.match(data.exit_code_taxonomy[4], /no automatic neutral/i);
+  assert.doesNotMatch(data.exit_code_taxonomy[4], /never blocks/);
+});
+
 test('explain() returns null config when no .fqe.yml present', () => {
   const data = explain({ dir: freshDir() });
   assert.equal(data.config.present, false);

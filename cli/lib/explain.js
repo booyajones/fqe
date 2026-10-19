@@ -67,11 +67,10 @@ const INVARIANTS = [
     n: 1,
     name: 'No identity from attacker-writable sources',
     plain_english:
-      'When someone bypasses the gate, fqe identifies them via the GitHub Events API ' +
-      '(server-recorded actor on the labeled:fqe/bypass-* event). It NEVER reads identity ' +
-      'from a file the bypassing actor wrote (commit message, PR body, receipt content). ' +
-      'This means a junior engineer cannot pretend to be the CTO by writing "bypassed by ctom" ' +
-      'in a commit — the GitHub API is the only authority.',
+      'When someone requests a bypass, fqe reads the server-recorded comment author ' +
+      'from the GitHub comments API and checks the current default-branch allowlist. ' +
+      'The /fqe-bypass comment names the current head SHA and expires after its TTL. ' +
+      'PR-branch files and comment text cannot self-attest the requester identity.',
     why_it_matters:
       'Self-attested identity is the v1 design that the gauntlet caught in iteration v5. ' +
       'Without this invariant, every "bypass" is a write-it-yourself permission slip.',
@@ -92,10 +91,10 @@ const INVARIANTS = [
     n: 3,
     name: 'No required state lives only in the PR branch',
     plain_english:
-      'Receipts (QA-RESULT.yml + QA-RESULT.md) persist as GitHub Actions workflow artifacts ' +
-      'AND are posted as Check Run outputs — both server-side, immutable per run. The ' +
-      'receipt is also committed to audits/<sha>/ on the protected branch after merge. ' +
-      'fqe never depends on PR-branch files for gate decisions.',
+      'The protected default-branch publisher verifies source-run identity, the live PR head ' +
+      'and current authorization before publishing checks. Verified receipts and audit records ' +
+      'persist as GitHub Actions artifacts, and receipts appear in Check Run outputs. ' +
+      'PR-branch state alone cannot authorize a bypass or validate audit history.',
     why_it_matters:
       'This prevents an attacker from manipulating a file in their own PR to forge a ' +
       'PASS receipt against a stale commit SHA.',
@@ -184,7 +183,7 @@ function explain(opts = {}) {
       0: 'PASS — gate is green; merge can proceed',
       2: 'FAIL — policy violation; merge blocked',
       3: 'FLAG — informational; merge can proceed but a concern was raised',
-      4: 'INFRA — fqe itself errored (e.g., GitHub API timeout); Check Run is neutral, never blocks',
+      4: 'INFRA: fqe could not complete the command; no automatic neutral Check Run is published',
       1: 'ERROR — unrecoverable script/CLI error before verdict; should be rare',
     },
   };

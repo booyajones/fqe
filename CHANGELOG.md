@@ -18,6 +18,12 @@ All notable changes to fqe. Format: [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+### Fixed (Argon review follow-up)
+
+- Preserve a publisher audit artifact when source evidence or PR context is missing, while retaining failure checks.
+- Report both simultaneous authority blocks and accept inline comments in strict reviewer allowlists.
+- Correct `fqe explain` guidance for comment identity, publisher audit storage and infrastructure errors.
+
 ### Fixed (doc guards)
 
 - **Nothing kept the two doc guards in step, and they share two pieces of logic by COPY.** `check_test_count.js` cannot `require` `doc_accuracy.test.js` (a suite cannot spawn itself) and no test reads that script at all, so a change to `isNestedCheckout` or the skip-list in one file and not the other was invisible to all 921 tests. That is not hypothetical: the two lists HAD drifted, `check_test_count.js` having been missing `.fqe-out` and `reports` since v0.18.2, and the nested-worktree fix had to be hand-written into both files across two commits. A test now compares both copies — the function bodies with comments stripped, and the skip-lists as sets — so the next divergence is loud. Found by review, which noted the fix for a sibling-miss was itself unguarded against becoming one.
