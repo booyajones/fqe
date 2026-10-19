@@ -24,7 +24,9 @@ fqe coverage-ratchet --report coverage.json \
 - `--patch`: coverage % of the changed lines (compute with `diff-cover` for Python, or `vitest --changed` coverage for TS). Omit to skip the patch rule.
 - `--bump`: on a PASS that raised total coverage, writes the new (higher) baseline. Use this in a post-merge job, not on the PR.
 
-Exit codes: **0 = pass, 2 = FAIL (merge blocked), 4 = INFRA** (coverage report unreadable, neutral, never blocks on fqe's own inability to read a file).
+Exit codes: **0 = pass, 2 = FAIL, 4 = INFRA** (coverage report unreadable; no usable ratchet result). Exit 4 does not automatically publish a neutral check. The CI steps below fail on a non-zero exit. When used as an fqe runner, that failure enters the gate verdict; the generated publisher fails if verification fails.
+
+Restore the coverage report. Rerun the ratchet. For the published gate, verify a fresh receipt and both checks on the current head before merging.
 
 ## Wire it into CI
 
@@ -37,7 +39,7 @@ Add to your test workflow, after producing a coverage report:
 
       - name: coverage ratchet
         run: |
-          npx --yes -p github:booyajones/fqe#fqe-v0.19.1 fqe coverage-ratchet \
+          npx --yes -p github:booyajones/fqe#fqe-v0.19.2 fqe coverage-ratchet \
             --report coverage/coverage-summary.json \
             --baseline coverage-baseline.json \
             --patch-threshold 80

@@ -5,9 +5,23 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { buildReceipt, serializeReceipt } = require('../lib/receipt');
-const { currentApprovers, githubBypassRate, verifyCiReceipt } = require('../lib/ci_guard');
+const { actorsFromYaml, currentApprovers, githubBypassRate, verifyCiReceipt } = require('../lib/ci_guard');
 const sha = 'a'.repeat(40);
 const review = (id, login, state = 'APPROVED', commit_id = sha) => ({ id, user: { login }, state, commit_id });
+
+test('allowlist subset accepts inline comments without accepting invalid identities or other YAML forms', () => {
+  assert.deepEqual(actorsFromYaml('# team\nallowed_actors: # reviewers\n  - alice # oncall\n  - bob\t# backup\n'), ['alice', 'bob']);
+  assert.deepEqual(actorsFromYaml('allowed_actors: [] # empty\n'), []);
+  assert.deepEqual(actorsFromYaml('allowed_actors:\n  - alice\n'), ['alice']);
+  for (const text of [
+    'allowed_actors:\n  - ali_ce # invalid\n',
+    'allowed_actors:\n  - alice#comment\n',
+    'allowed_actors:\n  - "alice" # quoted\n',
+    'allowed_actors: [alice] # flow list\n',
+    'allowed_actors:\n  - alice\nother: true # unknown key\n',
+    'allowed_actors:\n  - ' + 'a'.repeat(40) + ' # too long\n',
+  ]) assert.throws(() => actorsFromYaml(text), /allowlist/);
+});
 
 test('second approval excludes the author, requester, removed users and old-head approvals', () => {
   assert.deepEqual(currentApprovers({ headSha: sha, author: 'author', requester: 'requester',
@@ -54,6 +68,28 @@ test('audit history counts distinct heads and refuses conflicting attempt record
   const repeated = rate([artifact('fqe-audit-v2-bypass-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-10-1'), artifact('fqe-audit-v2-normal-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-11-1', 11)]);
   assert.equal(repeated.denominator, 1);
   assert.equal(repeated.rate, 1);
+});
+test('unverified attempts preserve audit completeness without diluting the bypass rate', () => {
+  const unverified = artifact('fqe-audit-v2-unverified-cccccccccccccccccccccccccccccccccccccccc-12-1', 12);
+  const unknown = rate([unverified]);
+  assert.equal(unknown.numerator, 0);
+  assert.equal(unknown.denominator, 0);
+  assert.equal(unknown.rate, null);
+  const mixed = rate([
+    artifact('fqe-audit-v2-normal-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-10-1'),
+    artifact('fqe-audit-v2-bypass-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-11-1', 11),
+    unverified,
+  ]);
+  assert.equal(mixed.numerator, 1);
+  assert.equal(mixed.denominator, 2);
+  assert.equal(mixed.rate, 0.5);
+  const previousBypass = rate([
+    artifact('fqe-audit-v2-bypass-cccccccccccccccccccccccccccccccccccccccc-10-1'),
+    unverified,
+  ]);
+  assert.equal(previousBypass.rate, 1);
+  assert.equal(previousBypass.denominator, 1);
+  assert.throws(() => rate([{ ...unverified, expired: true }]), /expired/);
 });
 test('missing, expired, misbound or unreadable audit evidence cannot claim a zero rate', () => {
   assert.equal(rate([]).rate, null);
@@ -142,6 +178,29 @@ test('only a live server comment can create a bypass, and a high rate requires a
   assert.equal(approved.bypass, true);
   assert.equal(approved.receipt.bypass.requester, 'author');
   assert.equal(approved.receipt.run_id, '10-1');
+});
+
+test('simultaneous oracle and high-bypass-rate failures retain both reasons and remain blocked', t => {
+  const overrides = {
+    'repos/org/repo/pulls/1/files?per_page=100': [[{ filename: '.fqe.yml' }]],
+    'repos/org/repo/issues/1/comments?per_page=100': [[{ user: { login: 'author' },
+      created_at: '2026-10-12T13:00:00Z', updated_at: '2026-10-12T13:00:00Z', body: `/fqe-bypass ${sha} 24h` }]],
+  };
+  const blocked = verify(t, overrides);
+  assert.ok(blocked.rate.rate > 0.1);
+  assert.ok(blocked.receipt.verdict_reasons.includes('CI authority guard: changed grading rules require an authorized non-author approval of this head'));
+  assert.ok(blocked.receipt.verdict_reasons.includes('CI authority guard: bypass rate exceeds 10%; a different authorized reviewer must approve this head'));
+  assert.equal(blocked.receipt.verdict, 'FAIL');
+  assert.equal(blocked.check_state, 'failure');
+  assert.equal(blocked.second_state, 'failure');
+  assert.equal(blocked.bypass, false);
+  assert.equal(blocked.receipt.bypass.applied, false);
+  const approved = verify(t, { ...overrides, 'repos/org/repo/pulls/1/reviews?per_page=100': [[review(1, 'reviewer')]] });
+  assert.equal(approved.receipt.verdict, 'PASS');
+  assert.equal(approved.check_state, 'success');
+  assert.equal(approved.second_state, 'success');
+  assert.equal(approved.bypass, true);
+  assert.equal(approved.receipt.bypass.applied, true);
 });
 
 test('generated evaluation and publisher can pin the same immutable ref and reject shell text', t => {

@@ -22,7 +22,7 @@ jobs:
       - name: Install fqe CLI (ref-pinned)
         run: |
           set -euo pipefail
-          FQE_REF="fqe-v0.19.1"
+          FQE_REF="fqe-v0.19.2"
           FQE_SRC="$(mktemp -d "${RUNNER_TEMP:-/tmp}/fqe-src.XXXXXX")"
           git -C "$FQE_SRC" init -q .
           git -C "$FQE_SRC" fetch -q --depth=1 https://github.com/booyajones/fqe.git "$FQE_REF"
@@ -60,7 +60,7 @@ jobs:
           echo "VERIFIED=$VERIFIED" >> "$GITHUB_ENV"
           state=failure
           second=failure
-          bypass=normal
+          bypass=unverified
           if [ -n "${EVIDENCE:-}" ] && [ -f "$EVIDENCE/context.json" ]; then
             if PR_NUMBER=$(node -e 'const c=JSON.parse(require("fs").readFileSync(process.env.EVIDENCE+"/context.json","utf8"));if(!Number.isSafeInteger(c.pr)||c.pr<1)process.exit(1);console.log(c.pr)') && fqe ci-verify --repo "$REPO" --pr "$PR_NUMBER" --head "$HEAD_SHA" \
               --run-id "$SOURCE_RUN-$SOURCE_ATTEMPT" --audit-run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
@@ -75,6 +75,7 @@ jobs:
             BODY=$(head -c 65000 "$VERIFIED/QA-RESULT.md")
           else
             BODY="FQE evidence or current authorization could not be verified. Download the FQE Publish logs; rerun after fixing the cause."
+            printf '%s\n' "$BODY" > "$VERIFIED/QA-RESULT.md"
           fi
           fqe status publish --repo "$REPO" --check fqe/pass --commit "$HEAD_SHA" --state "$state" --output-text "$BODY"
           fqe status publish --repo "$REPO" --check fqe/second-reviewer-required --commit "$HEAD_SHA" --state "$second" --description "Current-head review and server audit history: $second"
@@ -83,7 +84,7 @@ jobs:
         if: always() && env.VERIFIED != ''
         uses: actions/upload-artifact@v4
         with:
-          name: fqe-audit-v2-${{ steps.verify.outputs.bypass || 'normal' }}-${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: fqe-audit-v2-${{ steps.verify.outputs.bypass || 'unverified' }}-${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.VERIFIED }}/
           if-no-files-found: error
           retention-days: 90

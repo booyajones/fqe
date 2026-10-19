@@ -762,8 +762,7 @@ const SUBCOMMANDS = {
     try {
       reportText = fs.readFileSync(opts.report, 'utf8');
     } catch (e) {
-      // A missing/unreadable coverage report is an infra problem, not a policy
-      // violation: neutral, do not block the merge on fqe's own inability to read.
+      // Missing coverage cannot produce a usable verdict or an automatic neutral check.
       return failInfra(`coverage-ratchet: cannot read report ${opts.report}: ${e.message}`);
     }
     const currentTotal = coverageRatchet.parseCoverage(reportText);
@@ -807,7 +806,7 @@ const SUBCOMMANDS = {
     //                   [--changed "a.ts,b.ts"] [--min-mutants 1]
     //   OR (Python/cosmic-ray): --killed N --surviving N [--threshold 70]
     // Rejects tests that run code but would not catch it breaking.
-    // exit 0 pass / 2 FAIL (blocks) / 4 INFRA (insufficient mutants -> neutral).
+    // exit 0 pass / 2 FAIL (blocks) / 4 INFRA (insufficient evidence; no automatic check).
     const opts = parseFlags(args);
     const threshold = opts.threshold !== undefined ? parseFloat(opts.threshold) : 70;
     const minMutants = opts['min-mutants'] !== undefined ? parseInt(opts['min-mutants'], 10) : 1;
@@ -842,9 +841,9 @@ const SUBCOMMANDS = {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 
     if (result.insufficient) {
-      // Cannot judge (no/too-few mutants, or unreadable): neutral, never block.
+      // Insufficient evidence cannot produce a usable verdict or an automatic neutral check.
       for (const r of result.reasons) process.stderr.write(`  ${r}\n`);
-      return failInfra('mutation-gate: insufficient data to judge; neutral.');
+      return failInfra('mutation-gate: insufficient data to judge; no usable verdict.');
     }
     if (!result.pass) {
       for (const r of result.reasons) process.stderr.write(`  ${r}\n`);

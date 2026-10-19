@@ -42,9 +42,9 @@ The standard scaffold blocks until required runners exist. You can deploy the wo
 
 ## What happens if fqe itself has a bug?
 
-Exit code 4 (INFRA) maps to a neutral Check Run. It does NOT block merges. fqe's own bugs, GitHub API timeouts, missing binaries, and transient network failures all route here.
+Exit code 4 (INFRA) means the command could not produce a usable result. It does not automatically publish a neutral Check Run. Other errors can exit 1; a required runner that cannot start produces a FAIL verdict.
 
-The only way fqe blocks your PR is if a runner you configured returned a non-zero exit code (FAIL), or if a configured adversarial stat exceeded its Wilson CI threshold (FLAG, informational, also doesn't block by default).
+The generated publisher fails when verification fails and attempts to publish failure checks. If publication itself fails, a required check can remain missing or retain an older result. Repair the cause. Rerun the current-head publisher. Verify its fresh receipt and both current-head checks before merging. Runner failures, financial risk thresholds, missing required evidence and unmet review authority can also block the gate.
 
 ## How do I bypass the gate?
 
@@ -86,7 +86,7 @@ Then remove `fqe/pass` and `fqe/second-reviewer-required` from your branch prote
 
 ## What's the upgrade path?
 
-Tags follow semver: `fqe-v<major>.<minor>.<patch>`. To upgrade, find the new tag in github.com/booyajones/fqe, then update the `FQE_REF="fqe-v0.19.1"` line in `.github/workflows/fqe-quality.yml` (it takes a tag or a 40-char SHA). Breaking changes are called out per release in `CHANGELOG.md`.
+Tags follow semver: `fqe-v<major>.<minor>.<patch>`. To upgrade, find the new tag in github.com/booyajones/fqe, then update the `FQE_REF="fqe-v0.19.2"` line in `.github/workflows/fqe-quality.yml` (it takes a tag or a 40-char SHA). Breaking changes are called out per release in `CHANGELOG.md`.
 
 ## Who maintains it?
 

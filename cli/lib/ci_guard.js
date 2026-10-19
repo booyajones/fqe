@@ -66,7 +66,7 @@ function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun,
   }
   const records = new Map();
   for (const a of artifacts) {
-    const match = /^fqe-audit-v2-(normal|bypass)-([a-f0-9]{40})-(\d+)-(\d+)$/.exec(a.name || '');
+    const match = /^fqe-audit-v2-(normal|bypass|unverified)-([a-f0-9]{40})-(\d+)-(\d+)$/.exec(a.name || '');
     if (!match) {
       if ((a.name || '').startsWith('fqe-audit-') && Date.parse(a.created_at) >= cutoff) throw new Error('audit schema is unsupported; do not authorize a bypass over unknown history');
       continue;
@@ -90,7 +90,7 @@ function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun,
     const key = `${id}-${attempt}`;
     if (key === currentRun) continue;
     if (records.has(key)) throw new Error('duplicate audit record for one workflow attempt');
-    records.set(key, { head: match[2], bypass: match[1] === 'bypass' });
+    records.set(key, { head: match[2], bypass: match[1] === 'bypass', unverified: match[1] === 'unverified' });
   }
   for (const run of completed) {
     if (!Number.isSafeInteger(run.id) || !Number.isSafeInteger(run.run_attempt)) throw new Error('publisher history has no attempt identity');
@@ -102,16 +102,18 @@ function githubBypassRate({ repo, now = new Date(), windowDays = 14, currentRun,
     records.set(currentRun, { head: currentHead, bypass: currentBypass });
   }
   const heads = new Map();
-  for (const r of records.values()) heads.set(r.head, heads.get(r.head) === true || r.bypass);
+  for (const r of records.values()) {
+    if (!r.unverified) heads.set(r.head, heads.get(r.head) === true || r.bypass);
+  }
   const denominator = heads.size;
   const numerator = [...heads.values()].filter(Boolean).length;
   return { numerator, denominator, rate: denominator ? numerator / denominator : null,
     window_days: windowDays, source: 'github_actions_artifacts',
-    note: 'Distinct audited PR heads; repeated workflows and reruns cannot pad the denominator. Any applied bypass for a head counts. The current requested bypass is included. No evidence is never a measured zero.' };
+    note: 'Distinct heads with verified publisher evidence; unverified attempts preserve audit completeness but do not affect the rate. Repeated workflows and reruns cannot pad the denominator. Any applied bypass for a head counts. The current requested bypass is included. No verified evidence is never a measured zero.' };
 }
 
 function actorsFromYaml(text) {
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+  const lines = text.split(/\r?\n/).map(l => l.replace(/\s+#.*$/, '').trim()).filter(l => l && !l.startsWith('#'));
   if (lines[0] === 'allowed_actors: []' && lines.length === 1) return [];
   if (lines.shift() !== 'allowed_actors:') throw new Error('allowlist must declare allowed_actors');
   return lines.map(line => {
@@ -179,9 +181,8 @@ function verifyCiReceipt({ repo, pr, headSha, runId, auditRunId = runId, receipt
   const secondSatisfied = !bypass.bypass || (rate.rate != null && (rate.rate <= 0.1 || reviewers.length > 0));
   if (!oracleSatisfied || !secondSatisfied) {
     receipt.verdict = 'FAIL';
-    receipt.verdict_reasons.push(!oracleSatisfied
-      ? 'CI authority guard: changed grading rules require an authorized non-author approval of this head'
-      : 'CI authority guard: bypass rate exceeds 10%; a different authorized reviewer must approve this head');
+    if (!oracleSatisfied) receipt.verdict_reasons.push('CI authority guard: changed grading rules require an authorized non-author approval of this head');
+    if (!secondSatisfied) receipt.verdict_reasons.push('CI authority guard: bypass rate exceeds 10%; a different authorized reviewer must approve this head');
   }
   if (receipt.bypass) receipt.bypass.applied = oracleSatisfied && secondSatisfied;
   return { receipt, bypass: bypass.bypass && oracleSatisfied && secondSatisfied, reviewers, rate, oracle,

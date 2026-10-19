@@ -98,7 +98,9 @@ def test_idempotent_apply(key, amount):
 
 There is nothing to wire. Property tests run under your normal test runner, so they flow through the existing fqe gate exactly like every other test. Your test command is already a runner in `.fqe.yml`, so a property added today is gated today, no new config.
 
-A failing property is a normal test failure: a non-zero exit from vitest/pytest, which `fqe run` reads and maps to FAIL. Exit codes (the test command's own exit): **0 = pass, 2 = FAIL (merge blocked), 4 = INFRA** (runner could not start, neutral, never blocks on fqe's own failure to execute).
+A failing property in a non-quarantined runner is a normal test failure: a non-zero exit from vitest/pytest, including 4, enters the FAIL verdict. A required runner that cannot start also produces FAIL. Money-class runners are always required and cannot be quarantined.
+
+An fqe CLI exit 4 (INFRA) means the command could not produce a usable result; it does not publish a neutral check. The generated publisher fails if verification fails. Repair the cause. Rerun the tests. Rerun the current-head publisher. Verify a fresh receipt and both current-head checks before merging.
 
 ## The 10-minute on-ramp
 
