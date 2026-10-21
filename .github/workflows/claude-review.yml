@@ -11,9 +11,17 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
+# A new push makes the review of the old head moot: cancel it instead of paying
+# for it to finish (7 of the 90 runs to date kept going after a newer push).
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: ubuntu-latest
+    # Runs so far take 5 min median, 10 max. Without this a stuck run gets GitHub's 6 h default.
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: write
@@ -50,5 +58,7 @@ jobs:
             summarize and to call out anything that should block (a human or the
             fqe gate decides; you advise). If the code is clean, say so plainly.
 
+          # Recent reviews use 4 to 16 turns; 30 caps a looping run at about twice that.
           claude_args: |
+            --max-turns 30
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
